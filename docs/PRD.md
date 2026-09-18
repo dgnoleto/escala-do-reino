@@ -4,7 +4,7 @@
 
 **Piloto previsto:** Ministério Shalom.
 
-**Versão:** consolidação inicial, 17 de setembro de 2026.
+**Versão:** consolidação atualizada em 18 de setembro de 2026.
 
 **Situação:** definição do produto; sem implementação, arquitetura ou escolha de tecnologias.
 
@@ -108,14 +108,12 @@ O estado do convite e o estado da vaga são distintos: uma vaga com convite pend
 
 ### 7.1 Prazo de resposta
 
-**Decidido:** haverá dois modos configuráveis de prazo:
+**Decidido:** cada igreja configura a antecedência de encerramento das confirmações. O limite é o início do evento menos essa antecedência e vale para **ambos os modos**. “12 horas antes” é apenas um exemplo, não um valor fixo do produto.
 
-- **Fixo:** 24 horas, sem edição do valor nesse modo.
-- **Livre:** prazo configurável até um limite antes do evento.
+- **Fixo:** a duração nominal continua sendo 24 horas, sem edição. O convite vence no primeiro momento entre envio + 24 horas e o limite de confirmação antes do evento. Portanto, o limite pode reduzir o tempo efetivamente disponível para responder.
+- **Livre:** o convite vence no limite de confirmação configurado pela igreja.
 
-**Pendente:** o valor do limite do modo livre, a precedência entre prazo e limite do evento, o tratamento de convites enviados perto do início e o prazo para urgências. “12 horas antes” foi apenas um exemplo e não é uma decisão.
-
-Não reduzir automaticamente as 24 horas nem inventar uma exceção urgente antes de resolver essas pendências.
+A precedência do limite sobre as 24 horas está decidida. As necessidades de substituição após esse limite, inclusive durante o evento, são atendidas pelas opções da seção 8.2, cujo detalhamento operacional ainda contém pendências. Não interpretar o encerramento normal como impedimento para buscar uma substituição urgente.
 
 ## 8. Substituições
 
@@ -142,7 +140,19 @@ Foi apresentado e usado como referência de fluxo, mas deve continuar identifica
 
 A prevenção de dupla ocupação é um requisito obrigatório. O chamado coletivo não deve ser confundido com vários convites individuais que reservam todos os destinatários.
 
-**Pendente:** regras operacionais de troca de modo durante uma busca em andamento, sem violar a exclusividade dos modos, e prazos aplicáveis à substituição urgente.
+**Pendente:** regras operacionais de troca de modo durante uma busca em andamento, sem violar a exclusividade dos modos.
+
+### 8.2 Prazo e acionamento das substituições
+
+**Decidido:** a substituição precisa oferecer uma opção **com prazo configurado** e uma opção de **chamado imediato**, inclusive quando o evento já estiver em andamento. Por exemplo, uma pessoa escalada para a portaria pode passar mal e precisar ser substituída durante o serviço.
+
+Essas opções tratam do prazo e da urgência. Não alteram os modos exclusivos de destinatários: escolha individual ou chamado automático ao grupo de elegíveis. Não autorizam usar ambos os modos de destinatários simultaneamente.
+
+Uma necessidade pode surgir 3 horas ou 1 hora e 30 minutos antes do evento. Esses horários são exemplos de quando o imprevisto acontece, não durações definidas para responder ao chamado.
+
+**Proposto, ainda sem confirmação:** a igreja estabelecer um prazo padrão para substituição e o líder poder ajustá-lo em cada chamado.
+
+**Pendente:** quem configura o prazo de substituição, se haverá padrão e ajuste por chamado, como esse prazo se relaciona com o encerramento normal das confirmações e qual é o significado operacional e o vencimento exato do chamado imediato. “Imediato” não define, por si só, um tempo de expiração nem dispensa aceite e verificação de conflitos.
 
 ## 9. Mudanças na programação e conflitos
 
@@ -179,6 +189,7 @@ Ausências durante o evento estão cobertas pelo fluxo de cancelamento e substit
 - Biblioteca de letras/cifras e repertório avançado.
 - Geração automática de toda a escala.
 - Integrações e operação offline não especificadas.
+- Check-in de presença no local do evento/igreja, registrado como evolução futura na seção 16.
 
 ## 12. Cenários verificáveis de aceite
 
@@ -192,7 +203,7 @@ Os cenários são critérios para a implementação futura, não testes já exec
 | C04 | Um serviço de transmissão inclui preparação antes do evento e atravessa vários períodos. | Convites incompatíveis são bloqueados em todo o intervalo, inclusive preparação. O mesmo vale para sonoplastia. |
 | C05 | Um convite individual expira sem resposta. | A reserva é liberada e a vaga continua pendente, permitindo substituição. |
 | C06 | Membro recusa o convite ou a liderança cancela o convite pendente. | A reserva é liberada; a vaga não é considerada preenchida. |
-| C07 | Um membro confirmado cancela depois do limite normal de resposta. | A necessidade de substituição pode ser acionada; o prazo urgente continua sujeito à decisão pendente. |
+| C07 | Um membro confirmado cancela depois do limite normal de resposta. | A substituição pode ser acionada, com opção de prazo configurado ou chamado imediato. O detalhamento do prazo e do vencimento imediato continua pendente. |
 | C08 | Duas pessoas tentam aceitar a mesma vaga de chamado coletivo ao mesmo tempo. | Só uma aceitação válida preenche a vaga; as demais recebem o encerramento. O mecanismo sem reserva coletiva depende da validação da proposta. |
 | C09 | Uma pessoa elegível ao receber o chamado passa a ter compromisso incompatível antes de aceitar. | O aceite é revalidado e não preenche a vaga se houver incompatibilidade. |
 | C10 | Uma duração da programação muda e cria sobreposição com compromisso existente. | O novo conflito é sinalizado, sem troca silenciosa de responsáveis. |
@@ -204,6 +215,11 @@ Os cenários são critérios para a implementação futura, não testes já exec
 | C16 | Configuração é alterada na web. | O app passa a observar a configuração aplicável, respeitando as regras ainda pendentes sobre mudanças em compromissos existentes. |
 | C17 | Uma vaga já está em busca individual e alguém tenta manter também um chamado automático ativo. | Os dois modos não operam simultaneamente para essa vaga. |
 | C18 | Música, dança ou teatro recebem duração padrão configurada pela igreja. | A programação usa a configuração aplicável; 5, 15 e 20 minutos não são valores globais obrigatórios. |
+| C19 | Um convite no modo fixo é enviado quando faltam mais de 24 horas para o limite de confirmação. | Vence em envio + 24 horas. |
+| C20 | Um convite no modo fixo é enviado quando faltam menos de 24 horas para o limite de confirmação. | Vence no limite, mesmo sem completar 24 horas; a duração nominal do modo permanece não editável. |
+| C21 | Um convite usa o modo livre. | Vence no limite calculado a partir da antecedência configurada pela igreja. |
+| C22 | A igreja configura uma antecedência diferente de 12 horas. | O limite configurado é aplicado aos dois modos; 12 horas não é um padrão obrigatório. |
+| C23 | Durante o evento, uma pessoa escalada para a portaria passa mal e precisa ser substituída. | A liderança pode acionar substituição imediata da vaga existente, respeitando aptidão, disponibilidade, conflitos, aceite e o modo exclusivo de destinatários. O vencimento exato depende da definição pendente. |
 
 ## 13. Como avaliar o piloto
 
@@ -222,9 +238,8 @@ Não há metas numéricas aprovadas. A coleta e a definição precisa de cada in
 
 | Tema | Questão em aberto |
 | --- | --- |
-| Prazo livre | Qual é o limite antes do evento? |
-| Prazo fixo e proximidade do evento | Como conciliar 24 horas não editáveis com o início do evento e o limite de resposta? Qual regra prevalece? |
-| Urgência | Como convidar e substituir perto do início ou durante o evento? Qual prazo se aplica? |
+| Prazo de substituição | Quem configura? Haverá padrão da igreja e ajuste pelo líder por chamado? Como se relaciona com o limite normal de confirmação? A proposta de ajuste por chamado ainda não foi confirmada. |
+| Chamado imediato | Qual é seu funcionamento operacional e seu vencimento exato, inclusive durante o evento? |
 | Hierarquia de configuração | O evento pode sobrescrever o padrão da igreja? Quais configurações seguem essa hierarquia? |
 | Chamado coletivo | Confirmar o fluxo sem reserva coletiva, com revalidação e primeira aceitação válida. |
 | Troca de modo | Como encerrar uma busca antes de adotar o outro modo de substituição? |
@@ -244,3 +259,15 @@ As últimas questões de detalhamento não impõem soluções: registram lacunas
 Primeiro, validar regras de negócio, fluxos e programação dos eventos. Depois, definir arquitetura e desenhar a aplicação. Somente então iniciar código em incrementos verificáveis, com apoio de IA, respeitando o fato de que o responsável pelo projeto não programa.
 
 Cada incremento deve ter um comportamento concreto para demonstrar, critérios de aceite e registro do que foi ou não verificado. Questões em aberto devem ser resolvidas antes de implementar a parte que depende delas. Este PRD não escolhe stack, banco de dados, provedor, integração, formato mobile ou solução de arquitetura.
+
+## 16. Evolução futura — fora do MVP
+
+### Check-in de presença para apoiar substituições urgentes
+
+**Ideia registrada em 18/09/2026 para avaliação futura, explicitamente fora do MVP:** permitir check-in de presença no local do evento ou na igreja, ajudando a liderança a identificar membros aptos que já estejam presentes ao buscar um substituto urgente.
+
+**Exemplo:** Alberto está escalado para a portaria e passa mal. João também é habilitado para a portaria e fez check-in no local. A liderança pode identificá-lo como uma pessoa presente e acioná-lo para a substituição.
+
+O check-in seria uma informação de apoio à busca. Não equivale a aptidão, disponibilidade, aceite ou atribuição automática e não substitui as regras de conflitos e confirmação.
+
+**Detalhes futuros em aberto:** método de check-in, como a presença será atualizada e por quanto tempo será considerada válida. Não há decisão sobre GPS, rastreamento, raio de distância ou qualquer mecanismo específico. Um check-in não presume presença permanente, nem autoriza geração automática de escala.
