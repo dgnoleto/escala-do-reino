@@ -2,32 +2,37 @@
 
 **Organize os eventos e as equipes da sua igreja.**
 
-Projeto de um gestor de horários, programação e escalas para eventos de igrejas. O piloto previsto é o **Ministério Shalom**.
+Projeto em definição, com piloto previsto no **Ministério Shalom**, focado em organizar e conduzir o culto: quem está agora, quem vem depois e quem entra quando alguém falta.
 
 ## Etapa atual
 
-Este repositório contém a documentação inicial do produto. **Não há aplicação implementada, stack escolhida ou arquitetura definida.** As regras confirmadas, propostas e pendências estão identificadas no [PRD — documento de requisitos do produto](docs/PRD.md).
+Este repositório contém somente documentação. **Não há aplicação implementada, arquitetura definida ou tecnologias escolhidas.**
 
-## Problema e proposta
+- [PRD — escopo do MVP e critérios de aceite](docs/PRD.md).
+- [Evolução futura — decisões preservadas e pendências](docs/EVOLUCAO-FUTURA.md).
 
-Líderes montam escalas separadamente, por WhatsApp ou pessoalmente. Quando um membro participa de várias equipes, pode receber funções incompatíveis no mesmo horário. Recusas e faltas exigem buscar substitutos sem uma visão comum da programação.
+A consolidação de 18/09/2026 reduz o MVP. Regras anteriores de convites, reservas, prazos e aceite eletrônico foram adiadas e não são exigências da primeira versão.
 
-O Escala do Reino pretende reunir programação, disponibilidade, convites, confirmações e substituições, mantendo visíveis os responsáveis e os conflitos. Abrange eventos como cultos, simpósios e retiros, com equipes como louvor, dança, teatro, transmissão, sonoplastia, portaria, crianças, cozinha e limpeza.
+## Como funcionará o piloto
 
-## Canais previstos
+Líderes organizam a programação e as escalas. Membros **apenas consultam** a programação, suas responsabilidades e o andamento do culto. Se alguém faltar, o líder combina a substituição fora do aplicativo e registra a mudança, sem exigir aceite eletrônico do substituto.
 
-| Canal | Finalidade |
+Uma pessoa designada como responsável pelo andamento inicia e avança manualmente as etapas principais. A tela destaca a etapa atual e mostra a anterior, quando existir, e a próxima. O vencimento do tempo previsto não avança a programação automaticamente.
+
+| Canal | Finalidade no MVP |
 | --- | --- |
-| Web | Administração e planejamento: cadastros, configurações, eventos, programação e montagem das escalas. |
-| App mobile | Operação: consulta, disponibilidade, respostas aos convites, cancelamento de participação, notificações e substituições de vagas existentes. |
+| Web | Cadastros, configurações, modelos, eventos, programação e planejamento das escalas, conforme permissões. |
+| Mobile | Consulta para os membros e execução pelos líderes autorizados: ausência, substituição e andamento, respeitando a permissão específica de avanço. |
 
-O app não terá cadastros administrativos nem criação de eventos ou escalas iniciais, inclusive para administradores. Ambos os canais trabalharão sobre os mesmos dados e respeitarão as permissões. O formato tecnológico do app permanece aberto.
+Não há cadastros administrativos no mobile, inclusive para administradores. Ambos os canais compartilham os mesmos dados. O piloto pressupõe internet; o formato tecnológico do app permanece aberto.
 
-## Como o projeto deve avançar
+A proposta não elimina WhatsApp ou conversas: os combinados e o aceite da substituição continuam fora do sistema no MVP.
 
-1. Validar regras de negócio, fluxos e programação dos eventos, resolvendo as pendências que afetarem cada etapa.
-2. Definir a arquitetura com base nessas regras.
-3. Desenhar a aplicação e seus fluxos de uso.
-4. Desenvolver com apoio de IA em incrementos pequenos e verificáveis, usando os cenários do PRD como critérios de aceite.
+## Próximas etapas
 
-As propostas registradas não devem ser tratadas como decisões aprovadas. Exemplos de horários e durações não são padrões universais. O PRD descreve comportamento esperado, e não funcionalidades já entregues.
+1. Validar as regras e pendências do piloto.
+2. Definir arquitetura.
+3. Desenhar a aplicação.
+4. Implementar em incrementos pequenos e verificáveis com apoio de IA.
+
+Decisões confirmadas, propostas e pendências devem permanecer distintas. O trabalho de documentação foi consolidado para retomada na próxima sessão; não há cronograma de lançamento ou automação de retomada.
