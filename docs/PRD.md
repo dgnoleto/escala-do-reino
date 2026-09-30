@@ -4,7 +4,7 @@
 
 **Piloto:** Ministério Shalom.
 
-**Consolidação:** 18 de setembro de 2026.
+**Consolidação:** 30 de setembro de 2026.
 
 **Situação:** documentação; sem código, arquitetura ou tecnologias escolhidas.
 
@@ -14,7 +14,7 @@ O MVP é a primeira versão utilizável, focada no **culto**. Deve ajudar a resp
 
 **Decisão final de escopo:** líderes organizam e atualizam; membros apenas consultam. O líder registra ausências e substituições após combinar com as pessoas fora do aplicativo. **Não há exigência de aceite eletrônico do substituto no MVP.**
 
-Esse recorte substitui o desenho anterior que exigia convites, reservas provisórias, prazos e confirmações pelos membros. Essas regras estão preservadas em [Evolução futura](EVOLUCAO-FUTURA.md), fora dos requisitos ativos desta versão. A possibilidade anteriormente discutida de o membro enviar link ou tom também não vale no MVP: os líderes preenchem, os membros consultam.
+Esse recorte substitui o desenho anterior que exigia convites de participação, reservas provisórias, prazos e confirmações pelos membros. Convite de acesso à igreja é outro conceito e está incluído no MVP. Essas regras estão preservadas em [Evolução futura](EVOLUCAO-FUTURA.md), fora dos requisitos ativos desta versão. A possibilidade anteriormente discutida de o membro enviar link ou tom também não vale no MVP: os líderes preenchem, os membros consultam.
 
 Neste documento, **decidido** identifica requisitos confirmados; **proposto** não equivale a aprovado; **pendente** indica detalhamento ainda necessário. Os comportamentos descritos não estão implementados.
 
@@ -24,33 +24,43 @@ As lideranças organizam equipes separadamente, por WhatsApp ou pessoalmente. Me
 
 O piloto deve permitir conduzir o culto, resolver ausências e manter os participantes informados sem perguntar continuamente quem é o próximo. A coordenação e o aceite de substituições continuam externos; não se promete eliminar WhatsApp.
 
-## 3. Responsabilidades e permissões
+## 3. Acesso, responsabilidades e permissões
 
 Há um cadastro único de cada membro por igreja. Uma pessoa pode integrar várias equipes e ter várias funções habilitadas. A liderança habilita a aptidão; o membro não se habilita.
 
+### 3.1 Entrada na igreja
+
+**Decidido:** login com Google ou Apple, com acesso à igreja por convite associado a um membro previamente cadastrado. Fazer login, por si só, não libera dados da igreja. A pessoa não escolhe livremente igreja, equipe ou privilégios e não pode consultar dados de outra igreja sem autorização.
+
+Uma pessoa convidada pode não ter função habilitada e ainda assim consultar o cronograma geral. Convite de acesso não é convite para participar de uma escala. O procedimento de emissão, associação e revogação do acesso e quem pode executá-lo ainda precisam de detalhamento.
+
+### 3.2 Papéis e limites
+
 | Papel | Responsabilidade |
 | --- | --- |
-| Administrador | Administra a igreja e seus cadastros na web. A condição de administrador não libera cadastros no mobile nem substitui a designação de responsável pelo andamento. |
-| Líder de liturgia | Define a sequência principal: abertura e responsável, bloco de louvor e liderança, danças/oportunidades, dízimos/ofertas e pregação. Não escala integrantes das equipes dos outros líderes. |
-| Líder de equipe | Preenche a escala de sua equipe: cantores, instrumentistas, dançarinos, transmissão, sonoplastia e demais funções pertinentes. Habilita aptidões apenas no seu âmbito; registra ausências e substituições sob sua responsabilidade. |
-| Responsável pelo andamento do evento | Usuário específico designado para o evento, sem necessidade de ser administrador global. Somente ele inicia e avança manualmente as etapas principais. |
-| Membro | Apenas consulta programação, escala e andamento. Não edita oportunidades, músicas, tom, links ou cadastros, nem envia aceite, recusa ou pedido de alteração no MVP. |
+| Administrador | Administra a igreja e cadastros na web, conforme permissões. Ser administrador não concede automaticamente controle do culto nem cadastros no mobile. |
+| Líder da liturgia do evento | Define a sequência principal e coordena sua execução. No MVP, é também o único responsável pelo andamento: inicia, avança, devolve para pendente, cancela a atividade em execução, corrige horários e encerra o culto. Acompanha todos os bastidores do evento. |
+| Líder de equipe/atividade | Organiza e escala sua própria equipe e habilita suas aptidões. Pode realocar pessoas enquanto sua atividade ainda não começou. Depois de iniciada, a substituição fica exclusivamente com o líder da liturgia. Consulta e gerencia os bastidores sob sua responsabilidade, sem controlar o andamento principal. |
+| Membro | Consulta o cronograma macro e, quando escalado, os detalhes da própria participação. Não edita programação, música, tom, link ou cadastros, nem responde convites de participação no MVP. |
 
-Ver o cronograma não concede permissão para editá-lo. Líderes e administradores que não forem o responsável designado também não iniciam nem avançam a sequência principal. O procedimento de designação e eventual troca desse responsável ainda precisa ser detalhado.
+**A liderança da liturgia é designada por edição do evento:** o culto de domingo pode ter uma pessoa, o de quarta outra e o de sábado outra. No MVP, não existe um operador separado com permissão autônoma de andamento; o líder da liturgia acumula essa responsabilidade. Delegar o controle às demais lideranças fica para evolução futura.
+
+O líder da liturgia não monta inicialmente as equipes dos outros líderes. Sua atuação excepcional durante uma atividade em execução permite registrar substituições combinadas externamente, respeitando aptidão e conflitos. Não exige que ele seja administrador global.
+
+**Pendente:** quem designa e troca o líder da liturgia e qual o procedimento durante um culto já iniciado. O controle por edição deve permanecer inequívoco; não autorizar líderes de outros cultos automaticamente.
 
 ## 4. Web e mobile
 
 | Ação | Web | Mobile |
 | --- | --- | --- |
-| Cadastrar, editar, renomear e excluir tipos, modelos, atividades, durações padrão, membros, funções e ministérios/equipes | Administração conforme permissões | Não, inclusive para administrador |
+| Cadastrar, editar, renomear e excluir tipos, modelos, atividades, durações padrão, membros, funções, equipes e motivos de cancelamento | Conforme permissão administrativa | Não, inclusive para administrador |
 | Habilitar aptidões e alterar configurações | Liderança/administração no âmbito autorizado | Não |
-| Criar evento e planejar programação e escala inicial | Lideranças conforme responsabilidade | Não |
-| Cadastrar oportunidades e preencher detalhes/músicas | Líder autorizado | Não como cadastro de planejamento |
-| Consultar programação, escala e andamento | Conforme acesso | Membros e lideranças |
-| Registrar ausência e substituir em escala existente | Liderança autorizada | Liderança autorizada |
-| Iniciar/avançar etapa principal | Somente responsável designado | Somente responsável designado |
+| Criar evento, planejar programação, checklist e escala inicial, preencher oportunidades/músicas | Lideranças conforme responsabilidade | Não como cadastro de planejamento |
+| Consultar cronograma e detalhes autorizados | Sim | Sim |
+| Registrar ausência e substituir em escala existente | Conforme responsabilidade e estado da atividade | Conforme responsabilidade e estado da atividade |
+| Iniciar/avançar, devolver para pendente, cancelar atividade em execução, corrigir horários e encerrar culto | Somente líder da liturgia desse evento | Somente líder da liturgia desse evento |
 
-O mobile é uma extensão de consulta e execução, não um painel de administração. As mudanças operacionais devem refletir nos mesmos dados consultados na web, e o planejamento web deve refletir no mobile.
+O mobile é uma extensão de consulta e execução, não um painel de administração. Os mesmos dados sustentam os dois canais e as permissões valem para qualquer forma de executar a ação, não apenas para a exibição de botões. A posição exata dos controles e o detalhamento operacional do checklist serão resolvidos no desenho, preservando esses limites.
 
 ## 5. Modelo de culto, atividades e escalas
 
@@ -64,14 +74,11 @@ Uma atividade pode abranger **o evento inteiro ou apenas parte dele**. Isso é i
 
 É possível ajustar a edição específica, por exemplo realizar um culto sem transmissão. A preparação antes do início conta no intervalo de ocupação e nos conflitos quando estiver configurada. Durações padrão são configuráveis; exemplos de 5, 15 ou 20 minutos não são valores universais.
 
-### 5.1 Participação aberta e específica
+### 5.1 Participação específica no MVP
 
-| Forma | Regra no MVP |
-| --- | --- |
-| Aberta | Abrange todos os membros aptos da equipe convidados a participar, sem fluxo eletrônico de aceitar/recusar, reserva individual, vaga obrigatória para cada integrante ou substituição obrigatória por cada ausência. |
-| Específica | Os líderes definem nominalmente quem exercerá cada responsabilidade. A indicação é registrada na escala, sem confirmação eletrônica individual. |
+Os líderes definem nominalmente quem exercerá cada responsabilidade. Não há confirmação eletrônica individual; o combinado ocorre fora do aplicativo.
 
-Na participação aberta, “convidados” descreve o público chamado a participar, não uma funcionalidade de convites automatizados. Essa forma não garante presença nem elimina conflito de alguém que já exerce função incompatível. A apresentação exata dessa incompatibilidade em uma atividade aberta ainda precisa ser detalhada; não se deve transformar todos os integrantes em presenças confirmadas.
+**Participação aberta foi retirada do MVP em 30/09**, para evitar confundir pessoas aptas com pessoas efetivamente escaladas. O desenho anterior foi preservado em evolução futura. Ter uma função habilitada não significa estar escalado naquele evento nem garante presença.
 
 ### 5.2 Conflitos de escala
 
@@ -79,7 +86,9 @@ Durante todo o período de louvor, uma pessoa só pode exercer uma função entr
 
 Transmissão e sonoplastia ocupam todo o intervalo definido do serviço, incluindo preparação/testes configurados, mesmo atravessando períodos. Atividades simultâneas não significam permissão para uma pessoa acumular funções incompatíveis.
 
-Verificar conflitos ao montar ou substituir na escala e após mudanças de horário ou duração. Mostrar os compromissos, intervalos e lideranças envolvidos. Não trocar pessoas silenciosamente nem tratar uma alocação incompatível como válida. O tratamento de conflitos já existentes e a forma de negociação entre equipes precisam de detalhamento; o motor amplo de regras configuráveis fica para evolução futura.
+Verificar conflitos ao montar ou substituir na escala e após mudanças de horário ou duração. Mostrar os compromissos, intervalos e lideranças envolvidos. Não trocar pessoas silenciosamente nem tratar uma alocação incompatível como válida. Ao tentar escalar alguém para cantar no louvor quando já está na dança, bloquear essa alocação e explicar o impedimento. Oferecer a seleção de outra pessoa e listar os habilitados para cantar sem conflito conhecido na escala. A lista não garante disponibilidade real nem aceite; o líder combina externamente. Se não houver candidatos, não criar uma alocação incompatível automaticamente.
+
+A resolução de conflitos já existentes após mudança da programação e a forma de negociação entre equipes ainda precisam de detalhamento; o motor amplo de regras configuráveis fica para evolução futura.
 
 ## 6. Planejamento de duração
 
@@ -91,30 +100,74 @@ Somar a sequência principal, sem contar novamente atividades paralelas ou compo
 
 Duração de atividade não é prazo de resposta a convite. Prazos de convite pertencem somente ao documento de evolução futura.
 
-## 7. Condução do culto
+## 7. Condução, contagem de tempo e interrupções
 
-A tela deve mostrar de forma simples:
+### 7.1 Tela e controle manual
 
-- Etapa anterior, quando houver.
-- Etapa atual destacada.
-- Próxima etapa, com responsável e tempo previsto.
+Mostrar etapa anterior quando houver, etapa atual destacada e próxima etapa com responsável e duração prevista. O louvor pode ser acompanhado como um único bloco, sem música atual.
 
-Somente o responsável designado inicia e avança manualmente a etapa principal. O vencimento do tempo previsto nunca avança sozinho: mostrar o tempo excedido e aguardar a ação humana. A execução real pode ultrapassar o previsto.
+Somente o líder da liturgia do evento controla o andamento no MVP. Nenhum vencimento de tempo, checklist pendente, cancelamento ou retorno para pendente provoca avanço automático. Quando não houver atividade principal em execução, mostrar esse estado e manter a próxima prevista visível.
 
-O louvor pode aparecer apenas como bloco, sem identificar música atual. Apoios paralelos aparecem relacionados à programação; avançar a sequência principal não encerra automaticamente transmissão, sonoplastia ou outro serviço contínuo.
+Apoios paralelos continuam independentes: avançar, cancelar ou interromper a sequência principal não encerra transmissão, sonoplastia ou outros serviços contínuos.
 
-**Pendentes:** como corrigir avanço acidental, como registrar/corrigir marcações de tempo e como lidar com troca do responsável durante o evento. Não inventar avanço automático, desfazer ou aprovação enquanto esses fluxos não forem validados.
+### 7.2 Cronômetro regressivo por atividade
 
-## 8. Ausência e substituição manual
+**Requisito do MVP:** as atividades têm duração prevista. Iniciar uma atividade da sequência principal manualmente inicia seu cronômetro regressivo. Uma atividade de cinco minutos começa em 05:00.
 
-1. O líder identifica e registra a ausência de uma pessoa escalada em sua equipe.
-2. Combina com um substituto fora do aplicativo.
-3. Registra a substituição na responsabilidade existente, respeitando aptidão, permissões e conflitos.
-4. A escala compartilhada passa a mostrar a mudança; o histórico registra o ocorrido e as pessoas pertinentes são avisadas.
+A contagem representa o tempo desde o início registrado, compartilhado entre as telas. Atualizar a página ou entrar depois não reinicia a duração. Ao chegar a zero, manter a atividade em execução e mostrar **Tempo excedido**, contando o excesso até seu encerramento manual.
 
-O substituto **não precisa aceitar pelo aplicativo**. A mudança registrada não é prova de presença física. Também não existe, no MVP, chamado automático individual/coletivo ou reserva provisória.
+**O culto não possui cronômetro próprio.** Sua duração prevista continua sendo informação de planejamento, não um contador de execução. Um bloco simultâneo de louvor de vinte minutos possui uma contagem de vinte minutos; não há três contagens somadas por canto, instrumentos e dança.
 
-Se Alberto passa mal na portaria durante o culto, a liderança pode combinar com uma pessoa apta e atualizar a escala naquele momento. Na participação aberta, a ausência de um integrante não cria automaticamente uma vaga para substituição.
+Corrigir o horário de início recalcula a contagem aplicável, preservando a alteração no histórico. A apresentação de contagens de serviços paralelos além da etapa principal ainda não foi detalhada e não deve ser inventada; seus intervalos de serviço continuam sujeitos às regras de conflitos.
+
+### 7.3 Cancelar atividade iniciada
+
+O líder da liturgia seleciona **Cancelar atividade**, escolhe obrigatoriamente um motivo previamente cadastrado na web e confirma. Exemplos de motivos: falha técnica, falta de energia ou acidente. A lista é configurável; não exige relato pessoal detalhado, justificativa livre nem cadastro de motivo na tela operacional.
+
+O cancelamento encerra a contagem e identifica a atividade como cancelada, preservando início, fim real, duração realizada, eventual excesso, motivo, responsável pela atividade e autor do registro. Não retoma a etapa anterior e não inicia a próxima. Editar ou retirar uma atividade futura não altera a contagem da atividade atual.
+
+Se o ocorrido não puder ser registrado por falha de conexão, o líder registra depois o horário em que a atividade realmente parou. Guardar também o horário de registro e seu autor, para não atribuir o período sem conexão à execução da atividade.
+
+### 7.4 Devolver para pendente
+
+O líder da liturgia pode devolver uma atividade iniciada para pendente, inclusive para corrigir avanço acidental. Essa ação interrompe a contagem atual e preserva a tentativa como execução interrompida.
+
+**Não retomar automaticamente a contagem da atividade anterior.** A proposta inicial de restaurar automaticamente essa contagem foi substituída por esta regra.
+
+Ao iniciar novamente a atividade devolvida, começar pela **duração prevista inteira**. Preservar o tempo da tentativa anterior: três minutos executados antes do retorno e cinco depois continuam sendo duas execuções registradas, totalizando oito minutos realizados, não cinco.
+
+Não há limite de dois minutos no MVP. Essa possibilidade foi mencionada como proposta futura, não como regra aprovada. Devolver para pendente não é uma função de pausa com retomada do saldo.
+
+### 7.5 Intervalos entre atividades
+
+Registrar, sem cronômetro visível, os momentos em que a sequência principal fica sem atividade em execução:
+
+- Começa após término normal, cancelamento ou retorno para pendente da atividade atual.
+- Termina quando outra atividade é iniciada manualmente, inclusive a mesma atividade reiniciada.
+- Se uma ação manual termina uma etapa e inicia outra no mesmo momento, o intervalo é zero.
+- Não contar a espera anterior à primeira atividade.
+- Não considerar serviços paralelos encerrados ou ociosos por causa desse intervalo.
+- Usar os horários reais informados nas correções posteriores e recalcular os intervalos afetados, mantendo o histórico.
+
+Chamar o dado de **intervalo entre atividades**. Não concluir automaticamente que houve desperdício, falha ou culpa. Os registros entram no MVP; relatórios e análises ficam para depois.
+
+### 7.6 Encerrar culto
+
+O líder da liturgia encerra o culto manualmente, mesmo se o horário previsto já tiver passado. Encerrar também qualquer intervalo aberto. Se ainda houver atividade em andamento, a ação deve explicitar seu encerramento e distinguir conclusão de cancelamento, respeitando a exigência de motivo quando houver cancelamento.
+
+O término previsto não encerra automaticamente o culto. A marcação do fim não cria cronômetro do evento.
+
+## 8. Ausência, substituição e retirada de atividade
+
+O líder combina a substituição fora do aplicativo e registra a pessoa apta na responsabilidade existente, respeitando permissões e conflitos. **Não exigir aceite eletrônico do substituto.** A mudança não é prova de presença física.
+
+Antes de a atividade começar, o líder da própria equipe pode realocar seus integrantes. Durante sua execução, apenas o líder da liturgia pode registrar a substituição. Essa restrição também vale para uma função de serviço que já tenha iniciado, mesmo que seja paralela à sequência principal; a forma de registrar o início desses serviços precisa ser detalhada.
+
+Mudanças pertinentes aparecem para os usuários autorizados e geram avisos dentro da aplicação. Preservar o histórico. Não há chamado automatizado, reserva provisória ou exigência de check-in.
+
+Ao retirar uma atividade futura da programação, oferecer substituir por outra ou retirar sem substituição, recalculando a previsão do término. Não garantir que o culto terminará antes: etapas posteriores podem exceder suas durações. Retirar atividade futura não é cancelar a execução atual.
+
+**Pendente:** detalhar o fluxo por canal de substituição por outra atividade, sem transformar o mobile em cadastro de atividades novas. A exclusão/desativação de membros, funções ou equipes vinculados a eventos é uma questão diferente; a proposta de desativar preservando histórico ainda requer confirmação.
 
 ## 9. Oportunidades, músicas e sonoplastia
 
@@ -128,7 +181,7 @@ Informações para louvor, oportunidade e dança:
 - Cantor/intérprete de referência, sem confundir com compositor.
 - Tom escolhido, independente do tom do vídeo; opcional para dança.
 - URL do YouTube com miniatura.
-- **Proposta:** observação curta, ainda a validar.
+- Observação curta.
 
 Se a miniatura não estiver disponível, nome e link continuam utilizáveis. Não há player embutido, upload de arquivos, biblioteca, letras ou cifras. O link é uma referência; não pressupõe integração além disso. Teatro não está incluído neste exemplo de ficha musical.
 
@@ -136,64 +189,120 @@ Se a miniatura não estiver disponível, nome e link continuam utilizáveis. Nã
 
 A oportunidade que precisa de playback gera aviso para **toda a equipe de sonoplastia**, sem confirmação exigida, para o apoio no horário pertinente.
 
-Quem canta providencia arquivo, tom e versão fora do sistema. O aplicativo não controla a entrega. O líder pode cancelar manualmente a oportunidade sem material e realocar a programação, avisando os envolvidos.
+Quem canta providencia arquivo, tom e versão fora do sistema. O aplicativo não controla a entrega. A liderança pode retirar a oportunidade ainda não iniciada conforme sua responsabilidade; durante a execução, o cancelamento é exclusivo do líder da liturgia e exige motivo cadastrado. A realocação gera os avisos pertinentes dentro da aplicação.
 
 A orientação operacional de providenciar material 30 minutos antes do culto não se converte em cancelamento automático: o sistema não sabe se houve entrega.
 
-### 9.3 Dependências entre equipes
+### 9.3 Checklist simples de preparação
 
-A visão desejada é de relações configuráveis, não uma regra fixa embutida apenas para determinados ministérios. Exemplo: música e instrumentos organizados liberam repertório/escala para a dança; a dança pode preparar rascunho antes e finalizar depois.
+**Decidido para o MVP:** representar necessidades de preparação por um checklist de itens definidos pelas lideranças no planejamento do culto. Exemplo: playback preparado.
 
-Confirmar a organização de uma equipe não significa colher aceite de um membro. **O motor amplo de dependências está fora do MVP.** O mínimo de informação ou estado a compartilhar entre equipes no piloto ainda está pendente; não se promete liberação automática complexa.
+A atividade entra na programação mesmo com itens pendentes e aparece para as lideranças como **Preparação pendente**. Quando se torna a próxima da sequência, destacar essa pendência para a liturgia. O líder da liturgia pode mantê-la, substituí-la ou cancelá-la manualmente conforme seu estado.
 
-## 10. Consulta, avisos e confiabilidade
+Não bloquear inclusão ou início por checklist incompleto, não substituir pessoas automaticamente e não usar gatilho de “50% do tempo”. Uma pendência de preparação não é necessariamente uma falha da pessoa escalada.
 
-Os participantes do culto consultam um cronograma compartilhado. Visibilidade seletiva por equipe ou usuário fica para evolução futura.
+Checklist não concede acesso e não constitui um motor automático de dependências entre equipes. **Pendente:** quem pode marcar/desmarcar cada item, correções e forma de operação por canal. Não exigir aceite dos membros.
 
-O mobile deve priorizar imagens/fotos, ícones, cartões e miniaturas, com pouco texto. Ações precisam de rótulos curtos e os estados não podem depender apenas de cor.
+## 10. Consulta, avisos, conexão e histórico
 
-Avisar alterações pertinentes de programação, ausência e substituição, respeitando os destinatários envolvidos. O aviso da sonoplastia alcança toda a equipe. Canal e entrega de notificações continuam pendentes; não pressupor push, e-mail ou integração WhatsApp.
+### 10.1 Cronograma, escala e bastidores
 
-**Internet é pressuposto do piloto.** Indicar conexão e informação desatualizada é requisito. O comportamento exato durante falha de conexão, tentativas de atualização e retorno da conexão ainda precisa de definição; não prometer edição offline ou sincronização automática já resolvida.
+**Decisão final:** usar a separação natural entre cronograma, escala e bastidores. Não há configuração de atividade pública/privada ou de visibilidade seletiva.
 
-Manter histórico básico das mudanças para entender o que ocorreu e apoiar futuros indicadores. O histórico deve permitir identificar a alteração, seu momento e o responsável pelo registro; os campos e a política de correção/retenção precisam ser definidos antes de implementar essa parte. Não exigir justificativa para ignorar alerta de duração.
+| Informação | Quem consulta |
+| --- | --- |
+| Cronograma macro | Todos com acesso autorizado à igreja, mesmo sem função cadastrada ou sem estar escalado: títulos das etapas, ordem, durações previstas, atual, próxima e cronômetro da atividade em execução. |
+| Detalhes da própria escala | A pessoa escalada consulta função, horário, música, tom e orientações pertinentes à sua participação. Aptidão cadastrada, sozinha, não libera detalhes de outras escalas. |
+| Bastidores | Líderes das equipes/atividades consultam preparação e gestão sob sua responsabilidade; o líder da liturgia consulta os bastidores de todo o evento. Inclui checklist, ausências, substituições, motivos de cancelamento e histórico pertinente. |
+
+“Todos” não significa acesso aberto na internet. As permissões administrativas de manutenção continuam restritas ao respectivo papel. Detalhar dados pessoais mínimos, acesso administrativo ao histórico e revogação, sem expor cadastro completo ou detalhes pessoais desnecessários no cronograma.
+
+Membros apenas consultam; ver não concede edição. A interface mobile prioriza imagens, ícones, cartões e miniaturas, com pouco texto. Rótulos curtos explicam ações e estados, sem depender apenas de cores.
+
+### 10.2 Avisos internos
+
+**Notificações somente dentro da aplicação no MVP.** Avisar alterações pertinentes de programação, ausência e substituição, respeitando destinatários e nível de acesso. O aviso operacional para sonoplastia alcança toda a equipe e não exige confirmação.
+
+Não incluir compartilhamento com WhatsApp, e-mail, Instagram ou outros aplicativos nesta versão, nem prometer envio externo automático. O compartilhamento é evolução futura. Combinados externos entre pessoas continuam ocorrendo por conta delas.
+
+### 10.3 Conexão e informação desatualizada
+
+O piloto pressupõe internet. Ao perder conexão ou deixar de conseguir atualizar os dados, a tela fica **somente para consulta da última informação disponível**. Conteúdo continua legível; controles indisponíveis podem ficar opacos. Mostrar ícone, mensagem textual e horário da última atualização.
+
+O cronômetro local pode continuar como referência baseada no último início recebido, explicitamente desatualizada: outra pessoa/aparelho pode ter alterado o estado. Não permitir edição offline ou tratá-la como execução confirmada e atual.
+
+Quando a atualização voltar, buscar primeiro o estado atual. Se necessário, o líder da liturgia corrige horários reais de início/fim/cancelamento, preservando horário do registro, autor e valores anteriores. Não presumir que toda falha de um aparelho interrompeu o culto.
+
+**Pendente técnico/funcional:** critério para detectar desatualização, situação em que nenhuma informação foi carregada e tratamento de uma ação enviada cuja confirmação não chegou. Esses casos devem ser definidos sem inventar fila de edição offline.
+
+### 10.4 Ações repetidas e telas simultâneas
+
+Mesmo com um único líder da liturgia, toque duplo, demora ou dois aparelhos não podem avançar duas etapas nem aplicar a mesma ação duas vezes. Uma tela desatualizada não deve sobrescrever silenciosamente um estado mais recente.
+
+Indicar processamento da ação e atualizar o estado antes de aceitar operações incompatíveis. Essa proteção é requisito de confiabilidade do MVP, não delegação do controle a outros líderes; a implementação será definida na arquitetura.
+
+### 10.5 Histórico por um ano
+
+**Decidido:** manter histórico de cadastros, alterações e ações de usuários por **um ano**, substituindo a proposta de três meses. Registrar autor, momento, ação e, nas alterações, valores anteriores e novos pertinentes.
+
+Para execução, preservar duração prevista, início/fim reais, tempo realizado, excesso, execuções interrompidas, cancelamentos/motivos, intervalos e respectivas correções. Distinguir responsável pela atividade de quem registrou/corrigiu a ação. Esses registros não são prova automática de culpa ou presença.
+
+Correção não apaga a tentativa anterior. Detalhes da retenção e expiração dos registros, proteção de dados pessoais e escopo de eventos de acesso/login ainda precisam ser definidos. Retenção do histórico não significa apagar automaticamente cadastros ou eventos após um ano.
+
+Cópias de segurança e restauração são assunto separado, a definir na arquitetura. Não há garantia de volume em GB nem conclusão sobre custos nesta etapa. Não exigir justificativa para ignorar alerta de duração.
 
 ## 11. Escopo e exclusões
 
-**No MVP:** modelo de culto simples; cadastros e planejamento web; aptidões e permissões; participação aberta/específica; escala por líderes; conflitos; previsão de duração com alerta ignorável; consulta compartilhada; andamento principal manual por responsável designado; ausência e substituição manual; ficha musical simples; avisos pertinentes; histórico básico; indicação de conexão/informação desatualizada.
+**No MVP:** acesso por convite com Google/Apple; modelo de culto simples; cadastros e planejamento web; aptidões/permissões; escala nominal por líderes; conflitos com sugestões de candidatos habilitados; duração prevista e alerta ignorável; cronograma macro, detalhes da própria escala e bastidores; checklist simples; controle manual exclusivo do líder da liturgia por evento; cronômetro regressivo por atividade com excesso; cancelamento por motivo cadastrado; retorno para pendente com reinício integral; registro de intervalos; encerramento manual do culto; ausência/substituição manual; ficha musical simples com observação; avisos internos; histórico de um ano; consulta desatualizada e correção posterior; proteção contra ações duplicadas.
 
-**Fora do MVP, preservado em evolução futura:** disponibilidade autodeclarada, convites, prazos, reservas provisórias, confirmação/recusa pelo membro, pedidos de mudança, chamados automatizados, check-in, visibilidade seletiva, dashboards, operação completa de retiros e turnos, motor amplo de regras/dependências e offline.
+**Fora do MVP:** participação aberta; disponibilidade autodeclarada; convites de participação, prazos, reservas e confirmação/recusa; pedidos de mudança; chamados automatizados; check-in; compartilhamento externo; dashboards; delegação do andamento aos líderes de atividades; operação completa de retiros/turnos; motor amplo de regras/dependências; edição offline.
 
-Também não estão incluídos chat geral, comunicação ampla de incidentes sem relação com escala/ausência, gestão financeira, letras/cifras/repertório avançado, upload/player e geração automática da escala inteira. Dízimos e ofertas são somente atividades da programação.
+Também não estão incluídos chat geral, incidentes amplos sem relação com escala/ausência, gestão financeira, letras/cifras/repertório avançado, upload/player ou geração automática de escala inteira. Dízimos e ofertas são atividades da programação.
 
 ## 12. Cenários de aceite do MVP
 
-São critérios para implementação futura, não testes já executados. Não substituem as decisões pendentes.
+Critérios para implementação futura, não testes de software já executados. Os identificadores desta consolidação substituem a lista anterior.
 
 | ID | Situação | Resultado esperado |
 | --- | --- | --- |
-| M01 | Membro consulta oportunidade e música. | Vê os dados, mas não edita nome, tom, link ou programação. |
-| M02 | Líder combina substituição de pessoa ausente fora do app. | Registra o substituto apto sem aceite eletrônico, respeitando conflitos e permissões; mudança aparece na escala e no histórico. |
-| M03 | Membro participa de várias equipes e já está como dançarino no louvor. | Não é tratado como alocação válida cantar ou tocar nesse mesmo período, mesmo em outra música. |
-| M04 | A mesma pessoa recebe responsabilidade numa oportunidade depois do louvor. | Pode ser escalada se não houver outra incompatibilidade. |
-| M05 | Transmissão inclui preparação e atravessa blocos. | Seu intervalo completo entra na verificação de conflitos e não termina ao avançar o bloco principal. |
-| M06 | Duração de uma etapa é alterada e surge conflito. | Compromissos e lideranças envolvidos são sinalizados; ninguém é trocado silenciosamente. |
-| M07 | A programação ultrapassa a duração prevista do culto. | Mostra excedente e alerta; líder pode salvar/publicar sem aprovação ou justificativa adicional. |
-| M08 | Canto, instrumentos e dança compõem os mesmos 20 minutos de louvor; transmissão ocorre em paralelo. | O bloco conta 20 minutos na sequência, não 60, e transmissão não é somada de novo. |
-| M09 | O tempo da etapa atual termina. | Mostra tempo excedido; etapa não avança automaticamente. |
-| M10 | Responsável designado inicia/avança o culto. | Atualiza anterior, atual e próxima; demais usuários acompanham. |
-| M11 | Outro líder ou administrador tenta avançar sem ser responsável designado. | Não pode iniciar/avançar a etapa principal. |
-| M12 | Modelo inclui transmissão por padrão. | Cria a atividade prevista sem escalar ou confirmar pessoas; uma edição pode ser ajustada para não ter transmissão. |
-| M13 | Um integrante deixa de comparecer a participação aberta. | Não surge reserva, confirmação ou vaga/substituição obrigatória por integrante; presença não é presumida. |
-| M14 | Integrante de participação aberta já tem função incompatível. | A forma aberta não elimina o conflito nem presume presença confirmada. |
-| M15 | Líder tenta habilitar função fora de sua equipe ou membro tenta habilitar-se. | Operação não é permitida por esse papel. |
-| M16 | Administrador usa mobile. | Não pode fazer cadastros administrativos ou criar evento/escala inicial por esse canal. |
-| M17 | Miniatura YouTube falha. | Nome e link continuam disponíveis, sem depender de player. |
-| M18 | Oportunidade requer playback. | Toda a equipe de sonoplastia é avisada, sem aceite obrigatório. |
-| M19 | Material não foi entregue no prazo operacional. | Sistema não cancela sozinho; líder pode cancelar manualmente e realocar, registrando e comunicando a mudança. |
-| M20 | Conexão falha ou informação fica desatualizada. | Estado é indicado; comportamento das ações nessa condição depende da decisão pendente. |
-| M21 | Alguém passa mal na portaria durante o culto. | Líder pode registrar ausência e substituição combinada externamente; não há chamado automatizado ou requisito de check-in. |
-| M22 | Participante visualiza estado pelo mobile. | Tem rótulo/indicação compreensível além da cor, com atual e próximo claros. |
+| M01 | Pessoa faz login Google/Apple sem convite vinculado à igreja. | Login não libera dados da igreja ou escolha autônoma de permissões. |
+| M02 | Pessoa autorizada não tem função cadastrada nem está escalada. | Consulta o cronograma macro, sem bastidores ou detalhes de outras escalas. |
+| M03 | Pessoa escalada consulta sua participação. | Vê função, horário e música/tom/orientações pertinentes, sem poder editar. |
+| M04 | Líder de equipe consulta bastidores. | Vê o âmbito sob sua responsabilidade; a liturgia vê todo o evento, conforme papéis. |
+| M05 | Líder da liturgia de domingo não é o de quarta. | Cada evento aplica sua própria designação; controlar um não concede controle do outro. |
+| M06 | Líder de equipe ou administrador que não é a liturgia tenta iniciar/avançar/devolver a atual para pendente. | Ação não permitida. |
+| M07 | Atividade de cinco minutos é iniciada. | Contagem começa em 05:00; outra tela usa o mesmo início e atualizar a página não reinicia. |
+| M08 | Tempo previsto chega a zero. | Exibe tempo excedido, mantém etapa atual e não inicia outra. Não existe cronômetro do culto. |
+| M09 | Liturgia devolve atividade atual para pendente. | Contagem para, tentativa fica interrompida, abre intervalo; anterior não retoma e próxima não inicia. |
+| M10 | Atividade pendente é iniciada novamente. | Começa com duração prevista inteira, preservando o tempo da tentativa anterior. |
+| M11 | Liturgia cancela atividade em execução. | Escolhe motivo cadastrado; encerra contagem e preserva tempos/motivo/autoria, sem iniciar outra. |
+| M12 | Tenta cadastrar motivo durante cancelamento mobile. | Cadastro administrativo não está disponível; motivos são previamente mantidos na web. |
+| M13 | Atividade termina e nenhuma outra inicia. | Registra intervalo sem contador visível; encerra quando uma atividade inicia. Antes da primeira não há intervalo. |
+| M14 | Uma ação manual conclui a atual e inicia a próxima no mesmo instante. | Intervalo é zero, sem avanço duplicado. |
+| M15 | Culto é encerrado pela liturgia. | Fecha intervalo aberto; explicita conclusão/cancelamento da atividade ainda em execução. Horário previsto não encerra sozinho. |
+| M16 | Falta de energia/internet impede registrar parada às 19h30; conexão retorna às 19h35. | Consulta apenas durante falha; depois permite registrar parada real e guarda também momento/autor do registro, recalculando tempos. |
+| M17 | Internet aparenta funcionar, mas dados não atualizam. | Indica informação desatualizada e última atualização; bloqueia alterações como na perda de conexão. |
+| M18 | Conexão retorna após mudança feita em outro aparelho. | Busca estado atual antes de permitir correções; não sobrescreve silenciosamente. |
+| M19 | Toque repetido ou dois aparelhos tentam a mesma transição. | Não executa avanço duplo; estado mais recente é respeitado. |
+| M20 | Líder realoca pessoa da própria equipe antes do início. | Pode registrar substituto apto sem conflito, após combinado externo e sem aceite eletrônico. |
+| M21 | Equipe tenta substituir durante sua atividade em execução. | Apenas liturgia registra a substituição; vale também para serviço paralelo já iniciado. |
+| M22 | Tentam escalar para cantar alguém já escalado na dança do mesmo louvor. | Bloqueia e explica; oferece habilitados para cantar sem conflito, sem afirmar disponibilidade real ou aceite. |
+| M23 | Mesma pessoa participa em oportunidade posterior sem incompatibilidade. | Alocação permitida; exclusividade do louvor não ocupa automaticamente todo o culto. |
+| M24 | Transmissão/sonoplastia inclui preparação e atravessa etapas. | Intervalo completo participa dos conflitos; avanço/interrupção principal não encerra o serviço. |
+| M25 | Canto, instrumentos e dança compartilham bloco de 20 minutos com transmissão paralela. | Planejamento soma 20 minutos pelo bloco, sem duplicar componentes/apoios. |
+| M26 | Duração planejada ultrapassa a previsão do culto. | Alerta ignorável, sem bloquear salvar/publicar ou exigir justificativa/aprovação. |
+| M27 | Mudança de horário cria conflito em escala existente. | Sinaliza compromissos/lideranças; não troca pessoas nem resolve sozinho. |
+| M28 | Modelo inclui transmissão por padrão. | Inclui atividade sem escalar pessoas automaticamente; edição pode ser ajustada para culto sem transmissão. |
+| M29 | Atividade tem checklist pendente e torna-se a próxima. | Mantém na programação, destaca preparação pendente para liturgia, sem bloqueio, troca automática ou gatilho de 50%. |
+| M30 | Miniatura musical não carrega. | Nome/link continuam; tom escolhido é independente do vídeo; observação curta disponível. |
+| M31 | Oportunidade requer playback. | Avisa toda a sonoplastia dentro da aplicação, sem aceite exigido; entrega de material é externa. |
+| M32 | Material não foi entregue. | Não cancela automaticamente; retirada/cancelamento segue estado, permissão e motivo quando iniciado. |
+| M33 | Retiram atividade futura sem substituí-la. | Recalcula previsão, não garante término antecipado e não altera contador atual. |
+| M34 | Administrador usa mobile. | Sem cadastro administrativo, motivos novos ou criação de evento/escala inicial. |
+| M35 | Membro tenta habilitar aptidão ou líder habilita fora da sua equipe. | Operação impedida. |
+| M36 | Alteração/correção é registrada. | Histórico guarda autor, momento, valores pertinentes e execuções anteriores; retenção de um ano. |
+| M37 | Usuário quer compartilhar aviso externo. | MVP contém apenas notificações internas, sem recurso de compartilhamento externo. |
+| M38 | Estado aparece no mobile. | Texto/ícone explicam além da cor; conteúdo de consulta permanece legível mesmo desatualizado. |
 
 ## 13. Avaliação do piloto
 
@@ -203,21 +312,25 @@ Observar conflitos antecipados, responsabilidades específicas ainda descobertas
 
 Recolher feedback após 2–3 meses de uso do piloto é a orientação acordada, não compromisso de data de lançamento. Coordenação externa continuará existindo; não medir sucesso como eliminação obrigatória do WhatsApp. Dashboards e cuidados para interpretação dos dados estão em evolução futura.
 
-## 14. Pendências para a próxima sessão
+## 14. Pendências remanescentes
 
-| Tema | O que ainda precisa ser definido |
+As regras já fechadas não dependem de rediscussão para serem documentadas. Os pontos abaixo permanecem abertos para as etapas que dependem deles.
+
+| Tema | O que falta fechar |
 | --- | --- |
-| Andamento | Correção de avanço acidental, marcações humanas e designação/troca do responsável. |
-| Conexão | Comportamento exato sem conexão, indicação de atualização e recuperação, sem prometer offline. |
-| Dependências mínimas | O que compartilhar sobre organização/rascunho no piloto sem construir motor amplo. |
-| Participação aberta | Representação dos elegíveis e de pessoas com função incompatível sem criar confirmação ou vaga por integrante. |
-| Conflitos e mudanças | Tratamento de conflito já existente, negociação entre líderes e atualização da programação sem mudar responsáveis silenciosamente. |
-| Alterações operacionais | Limites da edição/cancelamento/realocação em evento em andamento e sua apresentação por canal, preservando ausência de cadastros mobile. |
-| Intervalos e cadastros | Detalhes de preparação/deslocamento e tratamento de exclusão de cadastros vinculados. |
-| Histórico | Campos, correções e retenção dos registros básicos. |
-| Música | Validar observação curta; sem ampliar biblioteca ou edição para membros. |
-| Acesso e avisos | Autenticação, canais de notificação e forma de entrega. |
-| Mobile | Formato tecnológico e desenho da experiência, ainda não escolhidos. |
+| Convite de acesso | Quem emite/revoga, associação segura ao membro existente, convite enviado à pessoa errada, validade e tratamento de contas Google/Apple da mesma pessoa. |
+| Liderança por evento | Quem designa/troca a liturgia e procedimento de transferência durante evento iniciado, sem dois controles concorrentes. |
+| Checklist | Quem marca/desmarca itens, correções e operação por canal; não reintroduzir bloqueio ou automação de dependências. |
+| Cadastros vinculados | Confirmar desativação em vez de exclusão para membros/funções/equipes já utilizados, preservando referências. Retirar atividade da programação já tem regra própria. |
+| Mudanças e conflitos | Resolução quando alteração cria conflito já existente, comunicação/negociação entre líderes e cálculo da programação restante após correções de horários. |
+| Serviços paralelos | Registro de início/fim e apresentação do tempo dos apoios, sem subordiná-los ao avanço principal e sem ampliar o piloto para turnos. |
+| Edição em execução | Fluxo de substituição por outra atividade e reordenação por canal, respeitando ausência de cadastros novos no mobile. |
+| Conexão e correções | Detecção de informação desatualizada, primeira carga sem dados, resposta perdida de ação já enviada e limites/validação da edição de horários reais. |
+| Histórico e privacidade | Detalhes dos registros de acesso/login, campos mínimos, política de expiração de um ano e acesso administrativo aos dados, sem apagar cadastro/evento por inferência. |
+| Segurança operacional | Plano de cópia/restauração e verificação das permissões de igreja/evento; resolver na arquitetura antes da implementação dependente. |
+| Mobile e arquitetura | Tecnologia ainda não escolhida. Flutter é apenas candidato sugerido; avaliar arquitetura, segurança e desenho após regras. |
+
+**Retiradas ou substituições de escopo em 30/09:** participação aberta sai do MVP; visibilidade seletiva por atividade foi descartada, sem backlog de público/privado; o responsável separado pelo andamento foi substituído pelo líder da liturgia de cada evento; notificações externas/compartilhamento ficam futuros; retenção anterior de três meses passa a um ano; retorno não retoma cronômetro anterior.
 
 ## 15. Governança e sequência de trabalho
 
