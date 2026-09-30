@@ -83,7 +83,7 @@ Os relatórios futuros poderão analisar execuções interrompidas, reinícios, 
 
 Ao interpretar dados:
 
-- Separar atraso de início de excesso de duração.
+- Separar atraso real de início, atraso no registro e excesso de duração. Culto previsto para 19h e abertura iniciada às 19h15 tem atraso inicial, não quinze minutos de excesso da abertura. Se a abertura começou às 19h15 e só foi registrada às 19h18, a correção preserva esses dois momentos e a previsão original.
 - Não atribuir automaticamente falha técnica à pessoa.
 - Considerar quantidade de participações e precisão das marcações humanas.
 - Não criar ranking punitivo.
