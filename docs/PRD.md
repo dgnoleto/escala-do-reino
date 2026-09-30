@@ -32,13 +32,13 @@ Há um cadastro único de cada membro por igreja. Uma pessoa pode integrar vári
 
 **Decidido:** login com Google ou Apple, com acesso à igreja por convite associado a um membro previamente cadastrado. Fazer login, por si só, não libera dados da igreja. A pessoa não escolhe livremente igreja, equipe ou privilégios e não pode consultar dados de outra igreja sem autorização.
 
-Uma pessoa convidada pode não ter função habilitada e ainda assim consultar o cronograma geral. Convite de acesso não é convite para participar de uma escala. O procedimento de emissão, associação e revogação do acesso e quem pode executá-lo ainda precisam de detalhamento.
+Uma pessoa convidada pode não ter função habilitada e ainda assim consultar o cronograma geral. Convite de acesso não é convite para participar de uma escala. **Somente admin pode enviar convites de acesso.** Associação, validade e procedimento de revogação ainda precisam de detalhamento.
 
 ### 3.2 Papéis e limites
 
 | Papel | Responsabilidade |
 | --- | --- |
-| Administrador | Administra a igreja e cadastros na web, conforme permissões. Ser administrador não concede automaticamente controle do culto nem cadastros no mobile. |
+| Administrador | Permissão independente para administrar a igreja e seus cadastros na web, enviar convites de acesso e designar/trocar lideranças. Não concede automaticamente controle do culto nem cadastros no mobile. |
 | Líder da liturgia do evento | Define a sequência principal e coordena sua execução. No MVP, é também o único responsável pelo andamento: inicia, avança, devolve para pendente, cancela a atividade em execução, corrige horários e encerra o culto. Acompanha todos os bastidores do evento. |
 | Líder de equipe/atividade | Organiza e escala sua própria equipe e habilita suas aptidões. Pode realocar pessoas enquanto sua atividade ainda não começou. Depois de iniciada, a substituição fica exclusivamente com o líder da liturgia. Consulta e gerencia os bastidores sob sua responsabilidade, sem controlar o andamento principal. |
 | Membro | Consulta o cronograma macro e, quando escalado, os detalhes da própria participação. Não edita programação, música, tom, link ou cadastros, nem responde convites de participação no MVP. |
@@ -47,7 +47,9 @@ Uma pessoa convidada pode não ter função habilitada e ainda assim consultar o
 
 O líder da liturgia não monta inicialmente as equipes dos outros líderes. Sua atuação excepcional durante uma atividade em execução permite registrar substituições combinadas externamente, respeitando aptidão e conflitos. Não exige que ele seja administrador global.
 
-**Pendente:** quem designa e troca o líder da liturgia e qual o procedimento durante um culto já iniciado. O controle por edição deve permanecer inequívoco; não autorizar líderes de outros cultos automaticamente.
+**Decidido:** somente admin pode designar e trocar lideranças. A permissão admin é independente e pode ser acumulada com liderança de atividade ou liturgia. São válidos os perfis somente admin, somente líder da liturgia, somente líder de atividade e suas combinações autorizadas. Não exigir liderança de liturgia para tornar um líder de atividade admin.
+
+Ser admin não habilita conduzir um evento no qual a pessoa não foi designada líder da liturgia. **Pendente:** procedimento da transferência durante um culto já iniciado, preservando controle inequívoco por evento e evitando ações concorrentes da liderança anterior e da nova.
 
 ## 4. Web e mobile
 
@@ -118,7 +120,7 @@ A contagem representa o tempo desde o início registrado, compartilhado entre as
 
 **O culto não possui cronômetro próprio.** Sua duração prevista continua sendo informação de planejamento, não um contador de execução. Um bloco simultâneo de louvor de vinte minutos possui uma contagem de vinte minutos; não há três contagens somadas por canto, instrumentos e dança.
 
-Corrigir o horário de início recalcula a contagem aplicável, preservando a alteração no histórico. A apresentação de contagens de serviços paralelos além da etapa principal ainda não foi detalhada e não deve ser inventada; seus intervalos de serviço continuam sujeitos às regras de conflitos.
+Corrigir o horário real de início recalcula a contagem aplicável, preservando a alteração no histórico. A duração da atividade é contada desde seu início real, nunca consumida pelo atraso anterior à sua execução. Serviços paralelos não têm cronômetro nem acionamento individual de início/fim no MVP: acompanham os marcos do culto, conforme a seção 7.7.
 
 ### 7.3 Cancelar atividade iniciada
 
@@ -157,11 +159,39 @@ O líder da liturgia encerra o culto manualmente, mesmo se o horário previsto j
 
 O término previsto não encerra automaticamente o culto. A marcação do fim não cria cronômetro do evento.
 
+### 7.7 Serviços paralelos no MVP
+
+**Decidido:** serviços paralelos como transmissão e sonoplastia começam, para fins de execução na aplicação, junto do início real do culto e terminam junto do encerramento real. Não possuem horários de início/fim próprios para operar nem controles ou contadores individuais. O tempo é derivado dos marcos do culto.
+
+Avançar, cancelar ou devolver uma atividade principal para pendente não encerra esses serviços. Ao corrigir os marcos reais do culto, atualizar as referências derivadas dos apoios.
+
+Essa simplificação da execução é distinta da preparação antes do culto, já prevista no planejamento e nos conflitos. **Pendente:** confirmar como a preparação configurada será representada em conjunto com o vínculo automático dos serviços ao culto, sem introduzir controle operacional individual.
+
+### 7.8 Horário previsto, horário real e momento do registro
+
+**Decidido:** o líder da liturgia do evento pode corrigir horários reais de início e fim. Recalcular duração realizada, contagem restante/excesso e intervalos afetados. Preservar previsão original, valores anteriores, momento da correção e autor. Corrigir uma marcação de execução não muda silenciosamente o planejamento.
+
+Distinguir três informações:
+
+| Informação | Significado |
+| --- | --- |
+| Horário previsto | O que foi planejado para acontecer. |
+| Horário real | Quando a atividade efetivamente começou ou terminou, inclusive quando informado depois. |
+| Momento do registro | Quando a ação foi registrada na aplicação. |
+
+**Exemplo de atraso real:** culto previsto para 19h, com abertura realmente iniciada às 19h15. Guardar previsão de 19h e início real de 19h15. Se a abertura dura cinco minutos, começa com 05:00 a partir das 19h15 e tem referência de término às 19h20. Os quinze minutos anteriores são atraso de início, não excesso da abertura nem intervalo entre atividades.
+
+**Exemplo de registro tardio:** abertura começou às 19h15, mas foi acionada no aplicativo às 19h18. A liturgia corrige o início para 19h15; nessa situação, uma duração prevista de cinco minutos deixa dois minutos restantes às 19h18. O momento do registro/correção permanece preservado.
+
+**Exemplo de parada sem conexão:** atividade parou às 19h20 e foi registrada às 19h25. Usar 19h20 para duração real e intervalos, mantendo 19h25 como momento do registro.
+
+Não aceitar fim anterior ao início ou duração negativa; explicar os horários incompatíveis e solicitar sua correção. Horários e autoria não são prova de culpa de quem era responsável pela atividade.
+
 ## 8. Ausência, substituição e retirada de atividade
 
 O líder combina a substituição fora do aplicativo e registra a pessoa apta na responsabilidade existente, respeitando permissões e conflitos. **Não exigir aceite eletrônico do substituto.** A mudança não é prova de presença física.
 
-Antes de a atividade começar, o líder da própria equipe pode realocar seus integrantes. Durante sua execução, apenas o líder da liturgia pode registrar a substituição. Essa restrição também vale para uma função de serviço que já tenha iniciado, mesmo que seja paralela à sequência principal; a forma de registrar o início desses serviços precisa ser detalhada.
+Antes de a atividade começar, o líder da própria equipe pode realocar seus integrantes. Durante sua execução, apenas o líder da liturgia pode registrar a substituição. Para serviços paralelos, essa restrição passa a valer com o início real do culto, pois acompanham seus marcos sem acionamento individual.
 
 Mudanças pertinentes aparecem para os usuários autorizados e geram avisos dentro da aplicação. Preservar o histórico. Não há chamado automatizado, reserva provisória ou exigência de check-in.
 
@@ -201,7 +231,13 @@ A atividade entra na programação mesmo com itens pendentes e aparece para as l
 
 Não bloquear inclusão ou início por checklist incompleto, não substituir pessoas automaticamente e não usar gatilho de “50% do tempo”. Uma pendência de preparação não é necessariamente uma falha da pessoa escalada.
 
-Checklist não concede acesso e não constitui um motor automático de dependências entre equipes. **Pendente:** quem pode marcar/desmarcar cada item, correções e forma de operação por canal. Não exigir aceite dos membros.
+Checklist não concede acesso e não constitui um motor automático de dependências entre equipes. Não exigir aceite dos membros.
+
+**Decidido:** checklist é operado pelas lideranças de liturgia e de atividade, não por membros comuns. O líder de atividade marca somente o checklist sob sua responsabilidade. Haverá itens simples e itens que exigem validação de duas lideranças; no item conjunto, uma única confirmação não conclui a preparação.
+
+Exemplo: entrega e verificação da música do louvor ou dança pela sonoplastia. A proposta de detalhamento é registrar separadamente quem confirma a entrega e quem confirma o recebimento/verificação.
+
+**Proposto, a confirmar:** a liturgia acompanha todos os itens, mas não confirma em nome dos dois líderes exigidos; pode seguir com a atividade pendente, conforme a regra geral já aprovada. **Pendentes:** indicação dos dois validadores, significado de cada confirmação, desmarcação/correções, alcance da marcação pela liturgia e operação por canal. Não tratar essa proposta de detalhe como aprovada.
 
 ## 10. Consulta, avisos, conexão e histórico
 
@@ -233,7 +269,9 @@ O cronômetro local pode continuar como referência baseada no último início r
 
 Quando a atualização voltar, buscar primeiro o estado atual. Se necessário, o líder da liturgia corrige horários reais de início/fim/cancelamento, preservando horário do registro, autor e valores anteriores. Não presumir que toda falha de um aparelho interrompeu o culto.
 
-**Pendente técnico/funcional:** critério para detectar desatualização, situação em que nenhuma informação foi carregada e tratamento de uma ação enviada cuja confirmação não chegou. Esses casos devem ser definidos sem inventar fila de edição offline.
+Se uma ação de início foi enviada, mas sua confirmação não chegou, mostrar que o resultado ainda não está confirmado. Ao recuperar a conexão, consultar o estado salvo antes de tentar novamente, sem criar segunda execução por engano. Tela antiga em outro aparelho deve se atualizar e informar mudança de estado antes de uma ação incompatível.
+
+**Pendente técnico/funcional:** critério de detecção de desatualização, primeira carga sem dados e implementação da recuperação de resposta perdida, preservando o comportamento acima e sem inventar fila de edição offline.
 
 ### 10.4 Ações repetidas e telas simultâneas
 
@@ -303,6 +341,14 @@ Critérios para implementação futura, não testes de software já executados. 
 | M36 | Alteração/correção é registrada. | Histórico guarda autor, momento, valores pertinentes e execuções anteriores; retenção de um ano. |
 | M37 | Usuário quer compartilhar aviso externo. | MVP contém apenas notificações internas, sem recurso de compartilhamento externo. |
 | M38 | Estado aparece no mobile. | Texto/ícone explicam além da cor; conteúdo de consulta permanece legível mesmo desatualizado. |
+| M39 | Líder de atividade recebe permissão admin sem ser líder da liturgia. | Pode exercer administração e liderança da atividade, sem ganhar controle do culto. |
+| M40 | Usuário sem admin tenta convidar ou designar/trocar liderança. | Operação impedida; ser líder da liturgia ou de atividade não basta. |
+| M41 | Abertura prevista às 19h começa realmente às 19h15 e dura cinco minutos. | Preserva previsão; contagem usa 19h15–19h20. Espera inicial não vira excesso nem intervalo entre atividades. |
+| M42 | Abertura começou às 19h15, mas foi registrada às 19h18. | Liturgia pode corrigir para 19h15; duração de cinco minutos deixa dois restantes às 19h18, com valores anteriores/autoria preservados. |
+| M43 | Correção informa fim anterior ao início. | Não aceita duração negativa; explica inconsistência e pede correção. |
+| M44 | Início foi enviado, mas a confirmação se perdeu. | Mostra resultado não confirmado e consulta estado salvo ao recuperar; não cria nova execução por repetição. |
+| M45 | Culto inicia, atravessa intervalos e depois encerra. | Serviços paralelos acompanham início/fim reais do culto, sem botões, horários operacionais ou contadores próprios. |
+| M46 | Item de checklist exige dois líderes e somente um confirmou. | Permanece pendente; não bloqueia a atividade. Membro comum ou líder de outra atividade não marca fora de sua responsabilidade. |
 
 ## 13. Avaliação do piloto
 
@@ -318,14 +364,14 @@ As regras já fechadas não dependem de rediscussão para serem documentadas. Os
 
 | Tema | O que falta fechar |
 | --- | --- |
-| Convite de acesso | Quem emite/revoga, associação segura ao membro existente, convite enviado à pessoa errada, validade e tratamento de contas Google/Apple da mesma pessoa. |
-| Liderança por evento | Quem designa/troca a liturgia e procedimento de transferência durante evento iniciado, sem dois controles concorrentes. |
-| Checklist | Quem marca/desmarca itens, correções e operação por canal; não reintroduzir bloqueio ou automação de dependências. |
+| Convite de acesso | Emissão é exclusiva de admin. Detalhar revogação, associação segura ao membro existente, convite enviado à pessoa errada, validade e contas Google/Apple da mesma pessoa. |
+| Liderança por evento | Designação/troca é exclusiva de admin. Detalhar a transferência durante evento iniciado, sem dois controles concorrentes. |
+| Checklist | Lideranças operam e cada líder de atividade marca apenas seu âmbito; itens conjuntos exigem duas validações. Detalhar validadores, alcance da liturgia, desmarcação, correções e canal; não reintroduzir bloqueio. |
 | Cadastros vinculados | Confirmar desativação em vez de exclusão para membros/funções/equipes já utilizados, preservando referências. Retirar atividade da programação já tem regra própria. |
 | Mudanças e conflitos | Resolução quando alteração cria conflito já existente, comunicação/negociação entre líderes e cálculo da programação restante após correções de horários. |
-| Serviços paralelos | Registro de início/fim e apresentação do tempo dos apoios, sem subordiná-los ao avanço principal e sem ampliar o piloto para turnos. |
+| Serviços paralelos | Início/fim acompanham o culto, sem controle individual. Confirmar representação da preparação prévia planejada nos conflitos, sem cronometrá-la ou criar turnos. |
 | Edição em execução | Fluxo de substituição por outra atividade e reordenação por canal, respeitando ausência de cadastros novos no mobile. |
-| Conexão e correções | Detecção de informação desatualizada, primeira carga sem dados, resposta perdida de ação já enviada e limites/validação da edição de horários reais. |
+| Conexão e correções | Detecção de desatualização, primeira carga sem dados e detalhamento da recuperação de resposta perdida. Correção pela liturgia com histórico, recálculo e rejeição de horários impossíveis já está decidida; detalhar casos de sobreposição entre registros corrigidos. |
 | Histórico e privacidade | Detalhes dos registros de acesso/login, campos mínimos, política de expiração de um ano e acesso administrativo aos dados, sem apagar cadastro/evento por inferência. |
 | Segurança operacional | Plano de cópia/restauração e verificação das permissões de igreja/evento; resolver na arquitetura antes da implementação dependente. |
 | Mobile e arquitetura | Tecnologia ainda não escolhida. Flutter é apenas candidato sugerido; avaliar arquitetura, segurança e desenho após regras. |
