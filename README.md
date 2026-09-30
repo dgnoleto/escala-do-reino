@@ -17,20 +17,20 @@ O MVP é focado no culto. Convites de participação, reservas, prazos e aceite 
 
 Líderes planejam a programação e as escalas com nomes definidos. Os membros apenas consultam: todos com acesso autorizado à igreja veem o cronograma macro; quem está escalado vê também os detalhes da própria participação. Líderes acompanham os bastidores sob sua responsabilidade, e a liturgia acompanha todo o evento.
 
-Cada edição de culto tem seu **líder da liturgia**, que também controla exclusivamente o andamento no MVP. Pode ser uma pessoa no domingo e outra na quarta-feira.
+Cada edição de culto tem seu **líder da liturgia**, que também controla exclusivamente o andamento no MVP. Pode ser uma pessoa no domingo e outra na quarta-feira. Somente admin convida usuários e designa/troca lideranças. Admin é uma permissão independente, acumulável com liderança de atividade ou liturgia, sem conceder automaticamente controle do culto.
 
-As atividades têm cronômetro regressivo e, ao passar de zero, indicação de tempo excedido. **O culto não tem cronômetro próprio.** Nenhuma contagem avança a programação automaticamente.
+As atividades têm cronômetro regressivo e, ao passar de zero, indicação de tempo excedido. **O culto não tem cronômetro próprio.** Nenhuma contagem avança a programação automaticamente. Serviços paralelos acompanham o início e o encerramento reais do culto, sem acionamento ou cronômetro individual.
 
 O líder da liturgia pode cancelar uma atividade iniciada com motivo previamente cadastrado ou devolvê-la para pendente. Nenhuma dessas ações retoma a anterior ou inicia a próxima. Reiniciar uma atividade pendente usa a duração prevista inteira e preserva a execução interrompida. Intervalos entre atividades são registrados sem contador visível, para relatórios futuros.
 
-Substituições são combinadas fora do aplicativo e registradas sem aceite eletrônico. Antes do início, cada líder pode realocar sua equipe; durante a atividade, a substituição fica com a liturgia. O checklist de preparação informa pendências sem bloquear a programação.
+Substituições são combinadas fora do aplicativo e registradas sem aceite eletrônico. Antes do início, cada líder pode realocar sua equipe; durante a atividade, a substituição fica com a liturgia. O checklist de preparação informa pendências sem bloquear a programação e pode exigir confirmação de duas lideranças. Líderes de atividade marcam apenas seu próprio âmbito; os detalhes de validação conjunta estão identificados no PRD.
 
 | Canal | Finalidade no MVP |
 | --- | --- |
 | Web | Cadastros, configurações, modelos, eventos, programação e planejamento das escalas, conforme permissões. |
 | Mobile | Consulta e operação autorizada de eventos existentes, sem cadastros administrativos. |
 
-O piloto pressupõe internet. Sem conexão ou atualização, permanece apenas consulta da última informação, com aviso visível. A liturgia pode corrigir horários após a recuperação. Notificações são somente internas; compartilhamento externo é futuro. O histórico será mantido por um ano.
+O piloto pressupõe internet. Sem conexão ou atualização, permanece apenas consulta da última informação, com aviso visível. A liturgia pode corrigir horários reais, inclusive após a recuperação, recalculando tempos e preservando o histórico. Horário planejado, horário real e momento do registro são distintos: começar quinze minutos atrasado não consome a duração da primeira atividade. Notificações são somente internas; compartilhamento externo é futuro. O histórico será mantido por um ano.
 
 ## Próximas etapas
 
