@@ -1,12 +1,14 @@
 # Evolução futura — Escala do Reino
 
-**Consolidação:** 18/09/2026. **Todo este documento está fora do MVP.**
+**Consolidação:** 30/09/2026. **Todo este documento está fora do MVP.**
 
 O [PRD](PRD.md) define o recorte ativo: líderes operam, membros consultam, substituições são combinadas fora do aplicativo. As decisões abaixo preservam a visão e o desenho anterior para avaliação futura; não devem ser reintroduzidas automaticamente na primeira versão.
 
 **Decidido para evolução** preserva uma regra já expressa, sem prometer entrega. **Proposto** requer confirmação. **Pendente** requer detalhamento. Não há datas de lançamento ou tecnologia escolhida.
 
-## 1. Disponibilidade, convites e confirmação
+## 1. Disponibilidade, convites de participação e confirmação
+
+Os convites desta seção são para servir em uma escala. Não se confundem com o convite de acesso à igreja, que já pertence ao MVP.
 
 ### Regras preservadas para evolução
 
@@ -53,7 +55,7 @@ Os modos de destinatários são exclusivos, nunca simultâneos para a mesma vaga
 
 ### Outras pendências e avisos desse fluxo
 
-Detalhar representação da disponibilidade e sua ausência/alteração, autorização de negociações, combinação de regras divergentes, hierarquia de configurações e reconfirmação após mudanças relevantes. Notificar convites, responsabilidades, recusas/cancelamentos/expirações, substituições, preenchimento e mudanças pertinentes. Canal não escolhido; não pressupor WhatsApp.
+Detalhar representação da disponibilidade e sua ausência/alteração, autorização de negociações, combinação de regras divergentes, hierarquia de configurações e reconfirmação após mudanças relevantes. Notificar convites, responsabilidades, recusas/cancelamentos/expirações, substituições, preenchimento e mudanças pertinentes. Na evolução desses convites, canais externos ainda não foram escolhidos; não pressupor WhatsApp. A decisão atual do MVP é de notificações somente internas.
 
 Cenários futuros: convite pendente de dança bloqueia cantor no mesmo louvor; expiração libera; cancelamento tardio permite substituição; duas aceitações simultâneas não ocupam a mesma vaga duas vezes; prazo fixo é truncado pelo limite quando necessário. Esses não são critérios de aceite ativos do MVP.
 
@@ -65,15 +67,19 @@ Exemplo: Alberto está na portaria e passa mal; João também é habilitado e fe
 
 Check-in não é aptidão, disponibilidade, aceite ou escala automática e não elimina conflito. Método, atualização e validade da presença ficam abertos. Não presumir GPS, rastreamento, raio de distância ou presença permanente.
 
-## 3. Visibilidade seletiva
+## 3. Participação aberta
 
-Visão futura de cronogramas por equipe/usuário conforme o evento. No MVP, os participantes do culto veem o cronograma compartilhado. Ver nunca significa poder editar. Regras de seleção e autorização ainda precisam ser detalhadas.
+**Adiada em 30/09:** forma de participação em que todos os aptos da equipe são convidados a participar, sem confirmação eletrônica individual, reserva por integrante ou vaga obrigatória para substituir cada ausência.
+
+Esse desenho não garante presença nem elimina conflito de alguém com função incompatível. Sua representação exigiria distinguir aptidão, participação potencial e escala efetiva. No MVP, somente a escala com nomes definidos pelos líderes está ativa.
 
 ## 4. Dashboards e aprendizado
 
 Dashboards futuros restritos a líderes e autorizados poderão comparar previsto/realizado, excedentes, antecipações, interrupções, cancelamentos e motivos; filtros mensais/trimestrais e eventual resumo compartilhável estão na visão futura. Campos, acesso e compartilhamento precisam de desenho específico.
 
-O histórico básico pertence ao MVP para viabilizar aprendizado posterior. Recolher feedback após 2–3 meses de uso não é data prometida de lançamento.
+O histórico básico e os registros de execução pertencem ao MVP, com retenção de **um ano**, para viabilizar aprendizado posterior. Recolher feedback após 2–3 meses de uso não é data prometida de lançamento.
+
+Os relatórios futuros poderão analisar execuções interrompidas, reinícios, excesso e intervalos entre atividades a partir dos registros do MVP. Não somar apenas a última tentativa: uma execução interrompida seguida de reinício preserva o tempo de ambas. Distinguir correção de toque errado de interrupção real. Um intervalo da sequência principal não presume ociosidade das equipes de apoio.
 
 Ao interpretar dados:
 
@@ -105,9 +111,17 @@ Se não houver confirmação ao assumir após tolerância configurável, avisar 
 
 Relações devem ser configuráveis, não codificadas apenas como dependência fixa entre ministérios. Exemplo: organização de músicas e instrumentos libera repertório/escala para dança, que pode preparar rascunho antes e finalizar depois.
 
-Confirmação de organização é diferente de aceite do membro. Motor amplo de dependências e combinação de regras de acúmulo estão adiados; o mínimo necessário ao piloto permanece uma pendência do PRD, sem automação complexa prometida.
+Confirmação de organização é diferente de aceite do membro. Motor amplo de dependências e combinação de regras de acúmulo estão adiados. O MVP usa checklist simples de preparação: atividade permanece na programação e a pendência é destacada quando ela vira a próxima, sem bloquear início ou conceder permissões.
 
-## 7. Limites e ideias não aprovadas
+## 7. Delegação, compartilhamento e limite para retorno
+
+**Ideia futura:** o líder da liturgia inicia a primeira atividade e líderes das demais passam a poder iniciar ou devolver suas atividades, conforme regras a detalhar. No MVP, todo controle de andamento permanece exclusivamente com o líder da liturgia daquela edição do evento.
+
+**Proposta futura, sem aprovação como regra:** permitir retorno para pendente somente até dois minutos após o início e, depois, apenas cancelar. Não aplicar esse limite no MVP nem confundi-lo com pausa/retomada. Atualmente, reiniciar atividade pendente usa a duração prevista inteira e preserva a execução interrompida.
+
+**Compartilhamento externo futuro:** permitir compartilhar avisos com outros aplicativos. Canais, formato, conteúdo e permissões ainda precisam ser definidos. Não presumir integração, envio automático ou suporte a redes específicas. No MVP, notificações são apenas internas.
+
+## 8. Limites e ideias não aprovadas
 
 Offline é futuro; piloto pressupõe internet. Integrações não especificadas não são compromissos. Chat geral, incidentes amplos, finanças, biblioteca de letras/cifras, player, upload e geração automática de escala inteira não têm entrega aprovada.
 
