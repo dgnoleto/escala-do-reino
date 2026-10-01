@@ -558,7 +558,7 @@ export default function PlanningView() {
             </p>
 
             <div className="sugg-header">
-              <Info size={14} color="#6366f1" />
+              <Info size={14} color="var(--primary)" />
               <span>Candidatos habilitados sem conflito conhecido na escala:</span>
             </div>
 
@@ -621,7 +621,7 @@ export default function PlanningView() {
         }
 
         .duration-gauge-box {
-          background: rgba(0, 0, 0, 0.25);
+          background: var(--bg-inset);
           border: 1px solid var(--border-subtle);
           padding: 16px 20px;
           border-radius: var(--radius-lg);
@@ -705,8 +705,8 @@ export default function PlanningView() {
           width: 32px;
           height: 32px;
           border-radius: 50%;
-          background: rgba(99, 102, 241, 0.15);
-          color: var(--primary-light);
+          background: var(--primary-surface);
+          color: var(--primary);
           display: flex;
           align-items: center;
           justify-content: center;
@@ -756,7 +756,7 @@ export default function PlanningView() {
         }
 
         .musics-planning-box {
-          background: rgba(0, 0, 0, 0.2);
+          background: var(--bg-inset);
           border: 1px solid var(--border-subtle);
           border-radius: var(--radius-md);
           padding: 12px;
@@ -783,7 +783,7 @@ export default function PlanningView() {
           align-items: center;
           justify-content: space-between;
           padding: 6px 10px;
-          background: rgba(255, 255, 255, 0.04);
+          background: var(--bg-surface);
           border-radius: var(--radius-sm);
           font-size: 12px;
         }
@@ -820,7 +820,7 @@ export default function PlanningView() {
           align-items: center;
           gap: 12px;
           padding: 10px 14px;
-          background: rgba(255, 255, 255, 0.04);
+          background: var(--bg-surface);
           border: 1px solid var(--border-subtle);
           border-radius: var(--radius-md);
         }

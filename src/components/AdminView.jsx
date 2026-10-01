@@ -142,7 +142,7 @@ export default function AdminView() {
         <div className="grid-2">
           <div className="card">
             <h2 className="tab-sec-title">
-              <UserPlus size={18} color="#6366f1" /> Enviar Convite de Acesso
+              <UserPlus size={18} color="var(--primary)" /> Enviar Convite de Acesso
             </h2>
             <p className="tab-sec-desc">
               O convite permite à pessoa entrar na igreja pelo login Google/Apple. Conforme o PRD 3.1:
@@ -216,7 +216,7 @@ export default function AdminView() {
       {activeAdminTab === 'liturgy' && (
         <div className="card">
           <h2 className="tab-sec-title">
-            <Shield size={18} color="#6366f1" /> Designação da Liderança da Liturgia por Evento
+            <Shield size={18} color="var(--primary)" /> Designação da Liderança da Liturgia por Evento
           </h2>
           <p className="tab-sec-desc">
             A liderança da liturgia é designada por edição do evento (o culto de domingo pode ter uma pessoa, o de quarta outra).
@@ -263,7 +263,7 @@ export default function AdminView() {
         <div className="grid-2">
           <div className="card">
             <h2 className="tab-sec-title">
-              <Tag size={18} color="#6366f1" /> Cadastrar Motivo de Cancelamento
+              <Tag size={18} color="var(--primary)" /> Cadastrar Motivo de Cancelamento
             </h2>
             <p className="tab-sec-desc">
               Conforme o <strong>PRD 7.3 e Cenário M12</strong>, durante a execução do culto o cancelamento de uma
@@ -312,7 +312,7 @@ export default function AdminView() {
       {activeAdminTab === 'members' && (
         <div className="card">
           <h2 className="tab-sec-title">
-            <Users size={18} color="#6366f1" /> Membros Cadastrados & Habilitação de Aptidões
+            <Users size={18} color="var(--primary)" /> Membros Cadastrados & Habilitação de Aptidões
           </h2>
           <p className="tab-sec-desc">
             Cada membro possui cadastro único na igreja. A liderança habilita aptidões (ex: Canto, Dança, Bateria);
@@ -408,7 +408,7 @@ export default function AdminView() {
           font-size: 13px;
           font-weight: 600;
           color: var(--text-secondary);
-          background: rgba(255, 255, 255, 0.04);
+          background: var(--bg-surface);
           border: 1px solid var(--border-subtle);
           cursor: pointer;
           transition: all var(--transition-fast);
@@ -417,7 +417,7 @@ export default function AdminView() {
 
         .admin-tab-btn:hover {
           color: var(--text-primary);
-          background: rgba(255, 255, 255, 0.08);
+          background: var(--bg-card-hover);
         }
 
         .admin-tab-btn.active {
@@ -453,7 +453,7 @@ export default function AdminView() {
           align-items: center;
           justify-content: space-between;
           padding: 12px 14px;
-          background: rgba(255, 255, 255, 0.03);
+          background: var(--bg-surface);
           border: 1px solid var(--border-subtle);
           border-radius: var(--radius-md);
           font-size: 13px;
@@ -476,7 +476,7 @@ export default function AdminView() {
         }
 
         .current-event-leader-box {
-          background: rgba(0, 0, 0, 0.2);
+          background: var(--bg-inset);
           border: 1px solid var(--border-subtle);
           padding: 20px;
           border-radius: var(--radius-lg);
@@ -549,7 +549,7 @@ export default function AdminView() {
 
         .skill-pill {
           font-size: 11px;
-          background: rgba(255, 255, 255, 0.05);
+          background: var(--bg-surface);
           padding: 2px 8px;
           border-radius: var(--radius-full);
           border: 1px solid var(--border-subtle);

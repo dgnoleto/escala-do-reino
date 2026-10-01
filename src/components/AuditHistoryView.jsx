@@ -29,7 +29,7 @@ export default function AuditHistoryView() {
         </div>
 
         <div className="retention-info-chip">
-          <Clock size={24} color="#6366f1" />
+          <Clock size={24} color="var(--primary)" />
           <div>
             <div className="ret-title">365 Dias de Retenção</div>
             <div className="ret-desc">Substituiu a proposta de 3 meses</div>
@@ -116,7 +116,7 @@ export default function AuditHistoryView() {
           align-items: center;
           gap: 14px;
           padding: 14px 18px;
-          background: rgba(99, 102, 241, 0.1);
+          background: var(--primary-surface);
           border: 1px solid var(--border-active);
           border-radius: var(--radius-lg);
         }

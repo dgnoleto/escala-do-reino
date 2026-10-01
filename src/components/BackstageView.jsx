@@ -108,7 +108,7 @@ export default function BackstageView() {
         </div>
 
         <div className="backstage-summary-chip">
-          <ShieldAlert size={28} color="#6366f1" />
+          <ShieldAlert size={28} color="var(--primary)" />
           <div>
             <div className="chip-val">
               {event.checklist.filter(c => !c.completed).length} Pendências
@@ -124,7 +124,7 @@ export default function BackstageView() {
           <div className="card">
             <div className="section-header-row">
               <div className="section-title-box">
-                <CheckSquare size={18} color="#6366f1" />
+                <CheckSquare size={18} color="var(--primary)" />
                 <h2>Checklist de Preparação (PRD 9.3)</h2>
               </div>
 
@@ -258,7 +258,7 @@ export default function BackstageView() {
         <div className="roster-management-column">
           <div className="card">
             <div className="section-title-box">
-              <Users size={18} color="#6366f1" />
+              <Users size={18} color="var(--primary)" />
               <h2>Escala Nominal & Substituições (PRD 8)</h2>
             </div>
 
@@ -390,7 +390,7 @@ export default function BackstageView() {
             {eligibleCandidates.length > 0 && (
               <div className="suggested-candidates-box">
                 <div className="sugg-header">
-                  <Info size={14} color="#6366f1" />
+                  <Info size={14} color="var(--primary)" />
                   <span>Candidatos habilitados sem conflito conhecido na escala:</span>
                 </div>
                 <div className="sugg-list">
@@ -458,7 +458,7 @@ export default function BackstageView() {
           align-items: center;
           gap: 16px;
           padding: 16px 20px;
-          background: rgba(99, 102, 241, 0.1);
+          background: var(--primary-surface);
           border: 1px solid var(--border-active);
           border-radius: var(--radius-lg);
         }
@@ -523,7 +523,7 @@ export default function BackstageView() {
           border-radius: var(--radius-full);
           font-size: 12px;
           font-weight: 600;
-          background: rgba(255, 255, 255, 0.05);
+          background: var(--bg-card);
           border: 1px solid var(--border-subtle);
           color: var(--text-secondary);
           cursor: pointer;
@@ -543,7 +543,7 @@ export default function BackstageView() {
 
         .checklist-card-item {
           padding: 16px;
-          background: rgba(255, 255, 255, 0.03);
+          background: var(--bg-surface);
           border-radius: var(--radius-md);
           border: 1px solid var(--border-subtle);
           transition: all var(--transition-fast);
@@ -608,7 +608,7 @@ export default function BackstageView() {
           align-items: center;
           gap: 10px;
           padding: 8px 10px;
-          background: rgba(0, 0, 0, 0.2);
+          background: var(--bg-inset);
           border-radius: var(--radius-sm);
           border: 1px solid var(--border-subtle);
         }
@@ -622,7 +622,7 @@ export default function BackstageView() {
           width: 22px;
           height: 22px;
           border-radius: 50%;
-          background: rgba(255, 255, 255, 0.1);
+          background: var(--bg-surface);
           display: flex;
           align-items: center;
           justify-content: center;
@@ -666,7 +666,7 @@ export default function BackstageView() {
 
         .act-roster-block {
           padding: 14px;
-          background: rgba(255, 255, 255, 0.03);
+          background: var(--bg-surface);
           border-radius: var(--radius-md);
           border: 1px solid var(--border-subtle);
         }
@@ -701,7 +701,7 @@ export default function BackstageView() {
           align-items: center;
           justify-content: space-between;
           padding: 8px 10px;
-          background: rgba(0, 0, 0, 0.15);
+          background: var(--bg-inset);
           border-radius: var(--radius-sm);
         }
 
@@ -736,7 +736,7 @@ export default function BackstageView() {
         .suggested-candidates-box {
           margin-top: 14px;
           padding: 12px;
-          background: rgba(99, 102, 241, 0.08);
+          background: var(--primary-surface);
           border: 1px solid var(--border-active);
           border-radius: var(--radius-md);
         }
@@ -763,7 +763,7 @@ export default function BackstageView() {
           gap: 6px;
           padding: 6px 12px;
           border-radius: var(--radius-full);
-          background: rgba(255, 255, 255, 0.08);
+          background: var(--bg-surface);
           border: 1px solid var(--border-subtle);
           color: var(--text-primary);
           font-size: 12px;
