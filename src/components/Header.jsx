@@ -92,66 +92,109 @@ export default function Header({ activeTab, setActiveTab }) {
           </div>
         </div>
 
-        {/* Menu de Navegação Principal */}
-        <nav className="main-nav">
+        {/* Menu de Navegação Principal - Botões Separados e Responsivos */}
+        <nav className="main-nav" aria-label="Navegação Principal">
           <button
-            className={`nav-link ${activeTab === 'live' ? 'active' : ''} ${isLive ? 'pulse-live' : ''}`}
+            type="button"
+            className={`nav-btn ${activeTab === 'live' ? 'active' : ''} ${isLive ? 'pulse-live' : ''}`}
             onClick={() => setActiveTab('live')}
+            title="Ao Vivo (Culto em andamento)"
+            data-tooltip="Ao Vivo"
+            aria-label="Ao Vivo"
           >
-            <Radio size={16} />
-            <span>Ao Vivo</span>
+            <div className="nav-btn-icon-wrapper">
+              <Radio size={18} />
+              {isLive && <span className="nav-live-dot" />}
+            </div>
+            <span className="nav-btn-text">Ao Vivo</span>
             {isLive && <span className="nav-badge-live">LIVE</span>}
           </button>
 
           <button
-            className={`nav-link ${activeTab === 'schedule' ? 'active' : ''}`}
+            type="button"
+            className={`nav-btn ${activeTab === 'schedule' ? 'active' : ''}`}
             onClick={() => setActiveTab('schedule')}
+            title="Cronograma Macro"
+            data-tooltip="Cronograma Macro"
+            aria-label="Cronograma Macro"
           >
-            <Calendar size={16} />
-            <span>Cronograma Macro</span>
+            <div className="nav-btn-icon-wrapper">
+              <Calendar size={18} />
+            </div>
+            <span className="nav-btn-text">Cronograma Macro</span>
           </button>
 
           <button
-            className={`nav-link ${activeTab === 'my-schedule' ? 'active' : ''}`}
+            type="button"
+            className={`nav-btn ${activeTab === 'my-schedule' ? 'active' : ''}`}
             onClick={() => setActiveTab('my-schedule')}
+            title="Minha Escala"
+            data-tooltip="Minha Escala"
+            aria-label="Minha Escala"
           >
-            <UserCheck size={16} />
-            <span>Minha Escala</span>
+            <div className="nav-btn-icon-wrapper">
+              <UserCheck size={18} />
+            </div>
+            <span className="nav-btn-text">Minha Escala</span>
           </button>
 
           <button
-            className={`nav-link ${activeTab === 'backstage' ? 'active' : ''}`}
+            type="button"
+            className={`nav-btn ${activeTab === 'backstage' ? 'active' : ''}`}
             onClick={() => setActiveTab('backstage')}
+            title="Bastidores"
+            data-tooltip="Bastidores"
+            aria-label="Bastidores"
           >
-            <ShieldAlert size={16} />
-            <span>Bastidores</span>
+            <div className="nav-btn-icon-wrapper">
+              <ShieldAlert size={18} />
+            </div>
+            <span className="nav-btn-text">Bastidores</span>
           </button>
 
           <button
-            className={`nav-link ${activeTab === 'planning' ? 'active' : ''}`}
+            type="button"
+            className={`nav-btn ${activeTab === 'planning' ? 'active' : ''}`}
             onClick={() => setActiveTab('planning')}
+            title="Planejamento"
+            data-tooltip="Planejamento"
+            aria-label="Planejamento"
           >
-            <Sliders size={16} />
-            <span>Planejamento</span>
+            <div className="nav-btn-icon-wrapper">
+              <Sliders size={18} />
+            </div>
+            <span className="nav-btn-text">Planejamento</span>
           </button>
 
           {isAdmin && (
             <button
-              className={`nav-link ${activeTab === 'admin' ? 'active' : ''}`}
+              type="button"
+              className={`nav-btn ${activeTab === 'admin' ? 'active' : ''}`}
               onClick={() => setActiveTab('admin')}
+              title="Administração"
+              data-tooltip="Administração"
+              aria-label="Administração"
             >
-              <FileText size={16} />
-              <span>Administração</span>
+              <div className="nav-btn-icon-wrapper">
+                <FileText size={18} />
+              </div>
+              <span className="nav-btn-text">Administração</span>
               <span className="admin-chip">Admin</span>
             </button>
           )}
 
           <button
-            className={`nav-link ${activeTab === 'history' ? 'active' : ''}`}
+            type="button"
+            className={`nav-btn ${activeTab === 'history' ? 'active' : ''}`}
             onClick={() => setActiveTab('history')}
+            title="Histórico (1 ano)"
+            data-tooltip="Histórico"
+            aria-label="Histórico"
           >
-            <Clock size={16} />
-            <span>Histórico (1 ano)</span>
+            <div className="nav-btn-icon-wrapper">
+              <Clock size={18} />
+            </div>
+            <span className="nav-btn-text">Histórico</span>
           </button>
         </nav>
 
@@ -341,7 +384,7 @@ export default function Header({ activeTab, setActiveTab }) {
           display: flex;
           align-items: center;
           gap: 12px;
-          min-width: 260px;
+          flex-shrink: 0;
         }
 
         .brand-logo {
@@ -362,6 +405,7 @@ export default function Header({ activeTab, setActiveTab }) {
           align-items: center;
           gap: 8px;
           letter-spacing: -0.02em;
+          white-space: nowrap;
         }
 
         .church-pill {
@@ -371,6 +415,8 @@ export default function Header({ activeTab, setActiveTab }) {
           background: rgba(99, 102, 241, 0.12);
           color: var(--primary-light);
           font-weight: 600;
+          white-space: nowrap;
+          flex-shrink: 0;
         }
 
         .brand-subtitle {
@@ -384,48 +430,104 @@ export default function Header({ activeTab, setActiveTab }) {
           display: flex;
           align-items: center;
           gap: 6px;
+          white-space: nowrap;
         }
 
+        .live-dot {
+          display: inline-block;
+          width: 8px;
+          height: 8px;
+          border-radius: 50%;
+          background: #10b981;
+          box-shadow: 0 0 8px #10b981;
+          animation: pulseLiveDot 2s infinite;
+        }
+
+        /* Barra de Navegação - Botões Separados, Sem Barra de Rolagem */
         .main-nav {
           display: flex;
           align-items: center;
-          gap: 4px;
-          overflow-x: auto;
-          padding: 4px;
-          border-radius: var(--radius-lg);
-          background: rgba(0, 0, 0, 0.2);
+          gap: 6px;
+          padding: 0;
+          background: transparent;
+          flex-shrink: 0;
         }
 
+        .nav-btn,
         .nav-link {
-          display: flex;
+          display: inline-flex;
           align-items: center;
+          justify-content: center;
           gap: 8px;
-          padding: 8px 14px;
+          height: 38px;
+          padding: 0 13px;
           border-radius: var(--radius-md);
           font-size: 13px;
           font-weight: 600;
           color: var(--text-secondary);
-          background: transparent;
-          border: none;
+          background: rgba(255, 255, 255, 0.04);
+          border: 1px solid var(--border-subtle);
           cursor: pointer;
           transition: all var(--transition-fast);
           white-space: nowrap;
+          position: relative;
+          user-select: none;
+          text-decoration: none;
+          box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
         }
 
+        .nav-btn:hover,
         .nav-link:hover {
           color: var(--text-primary);
-          background: rgba(255, 255, 255, 0.05);
+          background: rgba(255, 255, 255, 0.08);
+          border-color: rgba(255, 255, 255, 0.18);
+          transform: translateY(-1px);
+          box-shadow: 0 3px 8px rgba(0, 0, 0, 0.15);
         }
 
+        .nav-btn.active,
         .nav-link.active {
           color: #ffffff;
-          background: var(--primary);
-          box-shadow: 0 2px 10px var(--primary-glow);
+          background: linear-gradient(135deg, var(--primary) 0%, var(--primary-dark) 100%);
+          border-color: var(--primary-light);
+          box-shadow: 0 2px 12px var(--primary-glow);
+        }
+
+        .nav-btn:active,
+        .nav-link:active {
+          transform: scale(0.96);
+        }
+
+        .nav-btn-icon-wrapper {
+          display: inline-flex;
+          align-items: center;
+          justify-content: center;
+          position: relative;
+          flex-shrink: 0;
+        }
+
+        .nav-live-dot {
+          display: none;
+          position: absolute;
+          top: -3px;
+          right: -3px;
+          width: 7px;
+          height: 7px;
+          border-radius: 50%;
+          background: #ef4444;
+          box-shadow: 0 0 6px #ef4444;
+          animation: pulseLiveDot 1.5s infinite;
+        }
+
+        @keyframes pulseLiveDot {
+          0% { transform: scale(0.85); opacity: 0.8; }
+          50% { transform: scale(1.3); opacity: 1; }
+          100% { transform: scale(0.85); opacity: 0.8; }
         }
 
         .nav-badge-live {
           font-size: 9px;
-          padding: 2px 5px;
+          padding: 2px 6px;
           border-radius: var(--radius-full);
           background: #ef4444;
           color: white;
@@ -440,6 +542,27 @@ export default function Header({ activeTab, setActiveTab }) {
           background: rgba(245, 158, 11, 0.2);
           color: #fbbf24;
           font-weight: 700;
+        }
+
+        [data-theme='light'] .nav-btn,
+        [data-theme='light'] .nav-link {
+          background: rgba(0, 0, 0, 0.03);
+          border-color: rgba(0, 0, 0, 0.08);
+          color: var(--text-secondary);
+        }
+
+        [data-theme='light'] .nav-btn:hover,
+        [data-theme='light'] .nav-link:hover {
+          background: rgba(0, 0, 0, 0.06);
+          border-color: rgba(0, 0, 0, 0.15);
+          color: var(--text-primary);
+        }
+
+        [data-theme='light'] .nav-btn.active,
+        [data-theme='light'] .nav-link.active {
+          color: #ffffff;
+          background: linear-gradient(135deg, var(--primary) 0%, var(--primary-dark) 100%);
+          border-color: var(--primary-light);
         }
 
         .header-actions {
@@ -669,9 +792,114 @@ export default function Header({ activeTab, setActiveTab }) {
           font-weight: 700;
         }
 
+        @media (max-width: 1240px) {
+          .nav-btn,
+          .nav-link {
+            width: 40px;
+            height: 38px;
+            padding: 0;
+            gap: 0;
+          }
+
+          .nav-btn-text,
+          .nav-badge-live,
+          .admin-chip {
+            display: none !important;
+          }
+
+          .nav-live-dot {
+            display: block;
+          }
+
+          /* Micro-tooltip no hover quando estiver no modo responsivo de ícones */
+          .nav-btn[data-tooltip]::after,
+          .nav-link[data-tooltip]::after {
+            content: attr(data-tooltip);
+            position: absolute;
+            top: calc(100% + 8px);
+            left: 50%;
+            transform: translateX(-50%) translateY(4px);
+            background: #0f172a;
+            color: #f8fafc;
+            border: 1px solid var(--border-subtle);
+            padding: 5px 9px;
+            border-radius: var(--radius-sm);
+            font-size: 11px;
+            font-weight: 600;
+            white-space: nowrap;
+            opacity: 0;
+            pointer-events: none;
+            transition: opacity 0.15s ease, transform 0.15s ease;
+            box-shadow: 0 4px 14px rgba(0, 0, 0, 0.5);
+            z-index: 1000;
+          }
+
+          [data-theme='light'] .nav-btn[data-tooltip]::after,
+          [data-theme='light'] .nav-link[data-tooltip]::after {
+            background: #ffffff;
+            color: #0f172a;
+            border-color: rgba(0, 0, 0, 0.12);
+            box-shadow: 0 4px 14px rgba(0, 0, 0, 0.12);
+          }
+
+          .nav-btn[data-tooltip]:hover::after,
+          .nav-link[data-tooltip]:hover::after {
+            opacity: 1;
+            transform: translateX(-50%) translateY(0);
+          }
+        }
+
         @media (max-width: 900px) {
           .hide-mobile {
-            display: none;
+            display: none !important;
+          }
+          .church-pill {
+            display: none !important;
+          }
+        }
+
+        @media (max-width: 768px) {
+          .header-inner {
+            flex-wrap: wrap;
+            padding: 10px 16px;
+            gap: 12px;
+          }
+
+          .brand-section {
+            order: 1;
+            flex: 1;
+            min-width: auto;
+          }
+
+          .header-actions {
+            order: 2;
+            gap: 8px;
+          }
+
+          .main-nav {
+            order: 3;
+            width: 100%;
+            justify-content: center;
+            padding-top: 8px;
+            border-top: 1px solid var(--border-subtle);
+            gap: 8px;
+          }
+        }
+
+        @media (max-width: 480px) {
+          .brand-subtitle {
+            display: none !important;
+          }
+          .brand-title {
+            font-size: 14px;
+          }
+          .nav-btn,
+          .nav-link {
+            width: 36px;
+            height: 36px;
+          }
+          .main-nav {
+            gap: 4px;
           }
         }
       `}</style>
