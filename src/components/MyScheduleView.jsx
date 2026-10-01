@@ -95,7 +95,7 @@ export default function MyScheduleView() {
                   </p>
 
                   <div className="service-prep-notice">
-                    <Clock size={16} color="#6366f1" />
+                    <Clock size={16} color="var(--primary)" />
                     <div>
                       <strong>Preparação Técnica:</strong> Estar a postos {assign.prepMinutes} minutos antes do início do culto
                       para checagem de cabos, mesa de som e link de streaming.
@@ -235,7 +235,7 @@ export default function MyScheduleView() {
         }
 
         .church-time-card {
-          background: rgba(255, 255, 255, 0.03);
+          background: var(--bg-surface);
           border: 1px solid var(--border-subtle);
           padding: 16px 20px;
           border-radius: var(--radius-md);
@@ -252,9 +252,9 @@ export default function MyScheduleView() {
 
         .time-notice {
           font-size: 11px;
-          color: var(--primary-light);
+          color: var(--primary);
           margin-top: 8px;
-          font-weight: 600;
+          font-weight: 700;
         }
 
         .assignments-grid {
@@ -281,8 +281,9 @@ export default function MyScheduleView() {
         .role-chip {
           display: inline-block;
           font-size: 13px;
-          color: var(--primary-light);
+          color: var(--primary);
           margin-bottom: 6px;
+          font-weight: 700;
         }
 
         .assignment-role-title {
@@ -300,7 +301,7 @@ export default function MyScheduleView() {
         .assignment-notes-box {
           margin: 16px 0;
           padding: 12px 16px;
-          background: rgba(255, 255, 255, 0.03);
+          background: var(--bg-surface);
           border-radius: var(--radius-md);
           border: 1px solid var(--border-subtle);
           font-size: 13px;
@@ -313,10 +314,11 @@ export default function MyScheduleView() {
           gap: 12px;
           margin-top: 16px;
           padding: 12px 16px;
-          background: rgba(99, 102, 241, 0.1);
-          border: 1px solid var(--border-active);
+          background: var(--primary-surface);
+          border: 1px solid var(--primary-border);
           border-radius: var(--radius-md);
           font-size: 13px;
+          color: var(--text-primary);
         }
 
         .assignment-musics-section {
@@ -343,7 +345,7 @@ export default function MyScheduleView() {
 
         .detailed-music-card {
           padding: 16px;
-          background: rgba(0, 0, 0, 0.2);
+          background: var(--bg-surface);
           border: 1px solid var(--border-subtle);
           border-radius: var(--radius-md);
         }
@@ -363,10 +365,12 @@ export default function MyScheduleView() {
 
         .music-key-pill {
           font-size: 12px;
-          background: rgba(99, 102, 241, 0.2);
-          color: var(--primary-light);
+          background: var(--primary-surface);
+          color: var(--primary);
+          border: 1px solid var(--primary-border);
           padding: 3px 8px;
           border-radius: var(--radius-sm);
+          font-weight: 700;
         }
 
         .music-artist-text {

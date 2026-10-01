@@ -71,7 +71,7 @@ export default function Header({ activeTab, setActiveTab }) {
         {/* Marca & Igreja */}
         <div className="brand-section">
           <div className="brand-logo">
-            <Church size={24} color="#6366f1" />
+            <Church size={24} color="var(--primary)" />
           </div>
           <div>
             <div className="brand-title">
@@ -225,7 +225,7 @@ export default function Header({ activeTab, setActiveTab }) {
                     setNetworkMenuOpen(false);
                   }}
                 >
-                  <Wifi size={15} color="#10b981" />
+                  <Wifi size={15} color="var(--status-live)" />
                   <div>
                     <div className="dropdown-item-title">Conectado (Normal)</div>
                     <div className="dropdown-item-sub">Comunicação e atualizações ativas</div>
@@ -239,7 +239,7 @@ export default function Header({ activeTab, setActiveTab }) {
                     setNetworkMenuOpen(false);
                   }}
                 >
-                  <AlertTriangle size={15} color="#f59e0b" />
+                  <AlertTriangle size={15} color="var(--status-pending)" />
                   <div>
                     <div className="dropdown-item-title">Informação Desatualizada</div>
                     <div className="dropdown-item-sub">Simula perda de sincronia (M17)</div>
@@ -252,7 +252,7 @@ export default function Header({ activeTab, setActiveTab }) {
                     setNetworkMenuOpen(false);
                   }}
                 >
-                  <WifiOff size={15} color="#ef4444" />
+                  <WifiOff size={15} color="var(--status-overrun)" />
                   <div>
                     <div className="dropdown-item-title">Queda de Conexão</div>
                     <div className="dropdown-item-sub">Modo somente leitura (M16)</div>
@@ -348,20 +348,18 @@ export default function Header({ activeTab, setActiveTab }) {
           position: sticky;
           top: 0;
           z-index: 500;
-          backdrop-filter: blur(12px);
-          -webkit-backdrop-filter: blur(12px);
         }
 
         .network-warning-bar {
-          background: #78350f;
-          color: #fef3c7;
+          background: var(--status-pending-bg);
+          color: var(--status-pending-text);
           padding: 8px 24px;
           display: flex;
           align-items: center;
           justify-content: space-between;
           font-size: 13px;
-          font-weight: 500;
-          border-bottom: 1px solid rgba(245, 158, 11, 0.3);
+          font-weight: 600;
+          border-bottom: 1px solid var(--status-pending-border);
         }
 
         .warning-content {
@@ -391,8 +389,8 @@ export default function Header({ activeTab, setActiveTab }) {
           width: 42px;
           height: 42px;
           border-radius: var(--radius-md);
-          background: rgba(99, 102, 241, 0.15);
-          border: 1px solid var(--border-active);
+          background: var(--primary-surface);
+          border: 1px solid var(--primary-border);
           display: flex;
           align-items: center;
           justify-content: center;
@@ -412,9 +410,9 @@ export default function Header({ activeTab, setActiveTab }) {
           font-size: 11px;
           padding: 2px 8px;
           border-radius: var(--radius-full);
-          background: rgba(99, 102, 241, 0.12);
-          color: var(--primary-light);
-          font-weight: 600;
+          background: var(--primary-surface);
+          color: var(--primary);
+          font-weight: 700;
           white-space: nowrap;
           flex-shrink: 0;
         }
@@ -425,7 +423,7 @@ export default function Header({ activeTab, setActiveTab }) {
         }
 
         .live-status {
-          color: #10b981;
+          color: var(--status-live-text);
           font-weight: 600;
           display: flex;
           align-items: center;
@@ -438,9 +436,7 @@ export default function Header({ activeTab, setActiveTab }) {
           width: 8px;
           height: 8px;
           border-radius: 50%;
-          background: #10b981;
-          box-shadow: 0 0 8px #10b981;
-          animation: pulseLiveDot 2s infinite;
+          background: var(--status-live-dot);
         }
 
         /* Barra de Navegação - Botões Separados, Sem Barra de Rolagem */
@@ -465,7 +461,7 @@ export default function Header({ activeTab, setActiveTab }) {
           font-size: 13px;
           font-weight: 600;
           color: var(--text-secondary);
-          background: rgba(255, 255, 255, 0.04);
+          background: var(--bg-surface);
           border: 1px solid var(--border-subtle);
           cursor: pointer;
           transition: all var(--transition-fast);
@@ -473,24 +469,25 @@ export default function Header({ activeTab, setActiveTab }) {
           position: relative;
           user-select: none;
           text-decoration: none;
-          box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+          box-shadow: var(--shadow-sm);
         }
 
         .nav-btn:hover,
         .nav-link:hover {
           color: var(--text-primary);
-          background: rgba(255, 255, 255, 0.08);
-          border-color: rgba(255, 255, 255, 0.18);
+          background: var(--bg-card-hover);
+          border-color: var(--border-active);
           transform: translateY(-1px);
-          box-shadow: 0 3px 8px rgba(0, 0, 0, 0.15);
+          box-shadow: var(--shadow-md);
         }
 
         .nav-btn.active,
         .nav-link.active {
-          color: #ffffff;
-          background: linear-gradient(135deg, var(--primary) 0%, var(--primary-dark) 100%);
-          border-color: var(--primary-light);
-          box-shadow: 0 2px 12px var(--primary-glow);
+          color: var(--primary-contrast);
+          background: var(--primary);
+          border-color: var(--primary);
+          box-shadow: var(--shadow-sm);
+          font-weight: 700;
         }
 
         .nav-btn:active,
@@ -514,22 +511,14 @@ export default function Header({ activeTab, setActiveTab }) {
           width: 7px;
           height: 7px;
           border-radius: 50%;
-          background: #ef4444;
-          box-shadow: 0 0 6px #ef4444;
-          animation: pulseLiveDot 1.5s infinite;
-        }
-
-        @keyframes pulseLiveDot {
-          0% { transform: scale(0.85); opacity: 0.8; }
-          50% { transform: scale(1.3); opacity: 1; }
-          100% { transform: scale(0.85); opacity: 0.8; }
+          background: var(--status-live);
         }
 
         .nav-badge-live {
           font-size: 9px;
           padding: 2px 6px;
           border-radius: var(--radius-full);
-          background: #ef4444;
+          background: var(--status-live);
           color: white;
           font-weight: 800;
           letter-spacing: 0.05em;
@@ -539,30 +528,10 @@ export default function Header({ activeTab, setActiveTab }) {
           font-size: 10px;
           padding: 1px 6px;
           border-radius: var(--radius-full);
-          background: rgba(245, 158, 11, 0.2);
-          color: #fbbf24;
+          background: var(--status-pending-bg);
+          color: var(--status-pending-text);
+          border: 1px solid var(--status-pending-border);
           font-weight: 700;
-        }
-
-        [data-theme='light'] .nav-btn,
-        [data-theme='light'] .nav-link {
-          background: rgba(0, 0, 0, 0.03);
-          border-color: rgba(0, 0, 0, 0.08);
-          color: var(--text-secondary);
-        }
-
-        [data-theme='light'] .nav-btn:hover,
-        [data-theme='light'] .nav-link:hover {
-          background: rgba(0, 0, 0, 0.06);
-          border-color: rgba(0, 0, 0, 0.15);
-          color: var(--text-primary);
-        }
-
-        [data-theme='light'] .nav-btn.active,
-        [data-theme='light'] .nav-link.active {
-          color: #ffffff;
-          background: linear-gradient(135deg, var(--primary) 0%, var(--primary-dark) 100%);
-          border-color: var(--primary-light);
         }
 
         .header-actions {
@@ -590,39 +559,41 @@ export default function Header({ activeTab, setActiveTab }) {
         }
 
         .status-btn.online {
-          color: #34d399;
-          background: rgba(16, 185, 129, 0.1);
-          border-color: rgba(16, 185, 129, 0.25);
+          color: var(--status-live-text);
+          background: var(--status-live-bg);
+          border-color: var(--status-live-border);
         }
 
         .status-btn.stale {
-          color: #fbbf24;
-          background: rgba(245, 158, 11, 0.12);
-          border-color: rgba(245, 158, 11, 0.3);
+          color: var(--status-pending-text);
+          background: var(--status-pending-bg);
+          border-color: var(--status-pending-border);
         }
 
         .status-btn.offline {
-          color: #f87171;
-          background: rgba(239, 68, 68, 0.15);
-          border-color: rgba(239, 68, 68, 0.3);
+          color: var(--status-overrun-text);
+          background: var(--status-overrun-bg);
+          border-color: var(--status-overrun-border);
         }
 
         .theme-toggle-btn {
           width: 36px;
           height: 36px;
           border-radius: var(--radius-md);
-          background: rgba(255, 255, 255, 0.05);
+          background: var(--bg-surface);
           border: 1px solid var(--border-subtle);
           color: var(--text-secondary);
           display: flex;
           align-items: center;
           justify-content: center;
           cursor: pointer;
+          transition: all var(--transition-fast);
         }
 
         .theme-toggle-btn:hover {
           color: var(--text-primary);
-          background: rgba(255, 255, 255, 0.1);
+          background: var(--bg-card-hover);
+          border-color: var(--border-active);
         }
 
         .user-profile-btn {
@@ -631,7 +602,7 @@ export default function Header({ activeTab, setActiveTab }) {
           gap: 10px;
           padding: 4px 10px 4px 4px;
           border-radius: var(--radius-full);
-          background: rgba(255, 255, 255, 0.05);
+          background: var(--bg-surface);
           border: 1px solid var(--border-subtle);
           cursor: pointer;
           color: var(--text-primary);
@@ -639,8 +610,8 @@ export default function Header({ activeTab, setActiveTab }) {
         }
 
         .user-profile-btn:hover {
-          background: rgba(255, 255, 255, 0.1);
-          border-color: rgba(255, 255, 255, 0.15);
+          background: var(--bg-card-hover);
+          border-color: var(--border-active);
         }
 
         .user-avatar {
@@ -677,7 +648,7 @@ export default function Header({ activeTab, setActiveTab }) {
           position: absolute;
           top: calc(100% + 8px);
           right: 0;
-          background: var(--bg-secondary);
+          background: var(--bg-card);
           border: 1px solid var(--border-subtle);
           border-radius: var(--radius-lg);
           box-shadow: var(--shadow-lg);
@@ -722,10 +693,11 @@ export default function Header({ activeTab, setActiveTab }) {
           color: var(--text-primary);
           text-align: left;
           cursor: pointer;
+          transition: background var(--transition-fast);
         }
 
         .dropdown-item:hover {
-          background: rgba(255, 255, 255, 0.06);
+          background: var(--bg-surface);
         }
 
         .dropdown-item-title {
@@ -758,15 +730,16 @@ export default function Header({ activeTab, setActiveTab }) {
           color: var(--text-primary);
           text-align: left;
           cursor: pointer;
+          transition: background var(--transition-fast);
         }
 
         .dropdown-user-item:hover {
-          background: rgba(255, 255, 255, 0.05);
+          background: var(--bg-surface);
         }
 
         .dropdown-user-item.selected {
-          background: rgba(99, 102, 241, 0.12);
-          border-color: rgba(99, 102, 241, 0.3);
+          background: var(--primary-surface);
+          border-color: var(--primary-border);
         }
 
         .user-details {
@@ -788,7 +761,7 @@ export default function Header({ activeTab, setActiveTab }) {
           padding: 2px 6px;
           border-radius: var(--radius-full);
           background: var(--primary);
-          color: white;
+          color: var(--primary-contrast);
           font-weight: 700;
         }
 
@@ -819,8 +792,8 @@ export default function Header({ activeTab, setActiveTab }) {
             top: calc(100% + 8px);
             left: 50%;
             transform: translateX(-50%) translateY(4px);
-            background: #0f172a;
-            color: #f8fafc;
+            background: var(--bg-card);
+            color: var(--text-primary);
             border: 1px solid var(--border-subtle);
             padding: 5px 9px;
             border-radius: var(--radius-sm);
@@ -830,16 +803,8 @@ export default function Header({ activeTab, setActiveTab }) {
             opacity: 0;
             pointer-events: none;
             transition: opacity 0.15s ease, transform 0.15s ease;
-            box-shadow: 0 4px 14px rgba(0, 0, 0, 0.5);
+            box-shadow: var(--shadow-md);
             z-index: 1000;
-          }
-
-          [data-theme='light'] .nav-btn[data-tooltip]::after,
-          [data-theme='light'] .nav-link[data-tooltip]::after {
-            background: #ffffff;
-            color: #0f172a;
-            border-color: rgba(0, 0, 0, 0.12);
-            box-shadow: 0 4px 14px rgba(0, 0, 0, 0.12);
           }
 
           .nav-btn[data-tooltip]:hover::after,

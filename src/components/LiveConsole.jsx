@@ -408,7 +408,7 @@ export default function LiveConsole() {
                   {/* ALERTA DE CHECKLIST PENDENTE (PRD 9.3 & Cenário M29) */}
                   {nextActPendingChecklist.length > 0 && (
                     <div className="pending-prep-alert">
-                      <AlertTriangle size={14} color="#f59e0b" />
+                      <AlertTriangle size={14} color="var(--status-pending-text)" />
                       <span>
                         <strong>Preparação Pendente:</strong> {nextActPendingChecklist.length} item(ns) de checklist não finalizado(s).
                         (Não bloqueia avanço no MVP, PRD 9.3)
@@ -428,7 +428,7 @@ export default function LiveConsole() {
           {/* SERVIÇOS PARALELOS (Acompanham marcos do culto, sem botões individuais) */}
           <div className="card parallel-services-card">
             <div className="card-header-styled">
-              <Radio size={18} color="#6366f1" />
+              <Radio size={18} color="var(--primary)" />
               <h3>Serviços Paralelos (PRD 7.7)</h3>
             </div>
             <p className="parallel-explanation">
@@ -466,7 +466,7 @@ export default function LiveConsole() {
           {/* AVISOS OPERACIONAIS INTERNOS (PRD 10.2) */}
           <div className="card internal-alerts-card">
             <div className="card-header-styled">
-              <AlertTriangle size={18} color="#f59e0b" />
+              <AlertTriangle size={18} color="var(--status-pending-text)" />
               <h3>Avisos Internos do Culto</h3>
             </div>
             <div className="alerts-list">
@@ -602,9 +602,9 @@ export default function LiveConsole() {
           align-items: center;
           gap: 6px;
           padding: 4px 10px;
-          background: rgba(16, 185, 129, 0.15);
-          color: #34d399;
-          border: 1px solid rgba(16, 185, 129, 0.3);
+          background: var(--status-live-bg);
+          color: var(--status-live-text);
+          border: 1px solid var(--status-live-border);
           border-radius: var(--radius-full);
           font-size: 11px;
           font-weight: 800;
@@ -636,7 +636,7 @@ export default function LiveConsole() {
         }
 
         .meta-val.highlight {
-          color: var(--primary-light);
+          color: var(--primary);
         }
 
         .liturgy-officer-col {
@@ -647,7 +647,7 @@ export default function LiveConsole() {
         }
 
         .officer-badge {
-          background: rgba(255, 255, 255, 0.04);
+          background: var(--bg-surface);
           padding: 8px 14px;
           border-radius: var(--radius-md);
           border: 1px solid var(--border-subtle);
@@ -668,7 +668,7 @@ export default function LiveConsole() {
           display: flex;
           align-items: center;
           gap: 6px;
-          color: #f59e0b;
+          color: var(--status-pending-text);
           font-size: 11px;
           margin-top: 4px;
         }
@@ -692,14 +692,15 @@ export default function LiveConsole() {
         }
 
         .break-banner {
-          background: rgba(99, 102, 241, 0.1);
-          border: 1px solid var(--primary);
+          background: var(--primary-surface);
+          border: 1px solid var(--primary-border);
           padding: 16px 20px;
           display: flex;
           align-items: center;
           justify-content: space-between;
           gap: 16px;
           flex-wrap: wrap;
+          border-radius: var(--radius-md);
         }
 
         .break-header {
@@ -709,8 +710,7 @@ export default function LiveConsole() {
         }
 
         .pulse-icon {
-          animation: pulse-dot 1.5s infinite;
-          color: var(--primary-light);
+          color: var(--primary);
         }
 
         .break-title {
@@ -730,8 +730,8 @@ export default function LiveConsole() {
         }
 
         .is-active-border {
-          border-color: rgba(16, 185, 129, 0.4);
-          box-shadow: 0 0 30px rgba(16, 185, 129, 0.15);
+          border-color: var(--status-live-border);
+          box-shadow: var(--shadow-sm);
         }
 
         .act-category-row {
@@ -764,13 +764,19 @@ export default function LiveConsole() {
           margin: 28px 0;
           padding: 24px;
           border-radius: var(--radius-xl);
-          background: rgba(0, 0, 0, 0.25);
+          background: var(--bg-surface);
           display: flex;
           align-items: center;
           justify-content: space-between;
           border: 1px solid var(--border-subtle);
           gap: 20px;
           flex-wrap: wrap;
+          transition: background var(--transition-fast), border-color var(--transition-fast);
+        }
+
+        .timer-wrapper.timer-overrun {
+          background: var(--status-overrun-bg);
+          border-color: var(--status-overrun-border);
         }
 
         .timer-display {
@@ -783,13 +789,12 @@ export default function LiveConsole() {
           font-size: 64px;
           font-weight: 800;
           line-height: 1;
-          color: #ffffff;
+          color: var(--text-primary);
           letter-spacing: -0.04em;
         }
 
         .timer-overrun .timer-numbers {
-          color: #ef4444;
-          animation: pulse-dot 1.2s infinite;
+          color: var(--status-overrun-text);
         }
 
         .timer-caption {
@@ -801,7 +806,7 @@ export default function LiveConsole() {
         }
 
         .overrun-label {
-          color: #f87171;
+          color: var(--status-overrun-text);
           display: flex;
           align-items: center;
           gap: 6px;
@@ -827,7 +832,7 @@ export default function LiveConsole() {
         .quick-music-strip {
           margin-bottom: 24px;
           padding: 16px;
-          background: rgba(255, 255, 255, 0.03);
+          background: var(--bg-surface);
           border-radius: var(--radius-md);
           border: 1px solid var(--border-subtle);
         }
@@ -870,8 +875,9 @@ export default function LiveConsole() {
         .song-key-badge {
           font-size: 11px;
           font-weight: 800;
-          background: rgba(99, 102, 241, 0.2);
-          color: var(--primary-light);
+          background: var(--primary-surface);
+          color: var(--primary);
+          border: 1px solid var(--primary-border);
           padding: 2px 6px;
           border-radius: 4px;
         }
@@ -890,7 +896,7 @@ export default function LiveConsole() {
 
         .youtube-link {
           font-size: 11px;
-          color: #ef4444;
+          color: var(--primary);
           text-decoration: none;
           display: inline-block;
           margin-top: 6px;
@@ -952,11 +958,11 @@ export default function LiveConsole() {
           align-items: center;
           gap: 8px;
           padding: 8px 10px;
-          background: rgba(245, 158, 11, 0.12);
-          border: 1px solid rgba(245, 158, 11, 0.3);
+          background: var(--status-pending-bg);
+          border: 1px solid var(--status-pending-border);
           border-radius: var(--radius-sm);
           font-size: 11px;
-          color: #fbbf24;
+          color: var(--status-pending-text);
         }
 
         .step-empty-text {
@@ -1005,7 +1011,7 @@ export default function LiveConsole() {
           display: flex;
           gap: 12px;
           padding: 12px;
-          background: rgba(255, 255, 255, 0.03);
+          background: var(--bg-surface);
           border-radius: var(--radius-md);
           border: 1px solid var(--border-subtle);
         }
@@ -1014,11 +1020,12 @@ export default function LiveConsole() {
           width: 36px;
           height: 36px;
           border-radius: var(--radius-sm);
-          background: rgba(99, 102, 241, 0.15);
+          background: var(--primary-surface);
+          border: 1px solid var(--primary-border);
           display: flex;
           align-items: center;
           justify-content: center;
-          color: var(--primary-light);
+          color: var(--primary);
         }
 
         .service-item-info {
@@ -1057,13 +1064,13 @@ export default function LiveConsole() {
         .alert-box-item {
           padding: 12px;
           border-radius: var(--radius-md);
-          background: rgba(255, 255, 255, 0.03);
+          background: var(--bg-surface);
           border: 1px solid var(--border-subtle);
         }
 
         .alert-box-item.urgent {
-          border-color: rgba(245, 158, 11, 0.4);
-          background: rgba(245, 158, 11, 0.06);
+          border-color: var(--status-pending-border);
+          background: var(--status-pending-bg);
         }
 
         .alert-item-title {
@@ -1125,10 +1132,10 @@ export default function LiveConsole() {
           align-items: center;
           gap: 8px;
           padding: 10px 14px;
-          background: rgba(239, 68, 68, 0.15);
-          border: 1px solid rgba(239, 68, 68, 0.4);
+          background: var(--status-overrun-bg);
+          border: 1px solid var(--status-overrun-border);
           border-radius: var(--radius-md);
-          color: #fca5a5;
+          color: var(--status-overrun-text);
           font-size: 13px;
           margin-bottom: 16px;
         }

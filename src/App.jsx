@@ -33,7 +33,7 @@ function AppContent() {
       <aside className={`prd-acceptance-guide card ${guideOpen ? 'is-expanded' : ''}`}>
         <div className="guide-header" onClick={() => setGuideOpen(!guideOpen)}>
           <div className="guide-header-title">
-            <Sparkles size={16} color="#818cf8" />
+            <Sparkles size={16} color="var(--primary)" />
             <span>Guia de Validação dos Critérios do PRD (Piloto Ministério Shalom)</span>
           </div>
           <button className="guide-toggle-btn">
@@ -122,11 +122,10 @@ function AppContent() {
           left: 24px;
           max-width: 1400px;
           margin: 0 auto;
-          background: rgba(18, 23, 34, 0.95);
-          backdrop-filter: blur(20px);
-          border: 1px solid var(--border-active);
+          background: var(--bg-card);
+          border: 1px solid var(--border-subtle);
           border-radius: var(--radius-lg);
-          box-shadow: 0 10px 40px rgba(0, 0, 0, 0.6);
+          box-shadow: var(--shadow-lg);
           z-index: 400;
           overflow: hidden;
           transition: all 0.3s cubic-bezier(0.16, 1, 0.3, 1);
@@ -138,7 +137,8 @@ function AppContent() {
           justify-content: space-between;
           padding: 12px 20px;
           cursor: pointer;
-          background: rgba(99, 102, 241, 0.1);
+          background: var(--primary-surface);
+          border-bottom: 1px solid var(--primary-border);
         }
 
         .guide-header-title {
@@ -147,7 +147,7 @@ function AppContent() {
           gap: 10px;
           font-size: 13px;
           font-weight: 700;
-          color: var(--primary-light);
+          color: var(--primary);
         }
 
         .guide-toggle-btn {
@@ -179,7 +179,7 @@ function AppContent() {
           display: flex;
           gap: 10px;
           padding: 10px 12px;
-          background: rgba(255, 255, 255, 0.03);
+          background: var(--bg-surface);
           border: 1px solid var(--border-subtle);
           border-radius: var(--radius-md);
         }
@@ -187,8 +187,9 @@ function AppContent() {
         .scen-badge {
           font-size: 11px;
           font-weight: 800;
-          color: var(--primary-light);
-          background: rgba(99, 102, 241, 0.15);
+          color: var(--primary);
+          background: var(--primary-surface);
+          border: 1px solid var(--primary-border);
           padding: 2px 6px;
           border-radius: var(--radius-sm);
           height: fit-content;

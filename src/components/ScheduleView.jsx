@@ -56,7 +56,7 @@ export default function ScheduleView() {
               <div className="timeline-left-column">
                 <div className="step-circle-badge">
                   {isDone ? (
-                    <CheckCircle2 size={20} color="#10b981" />
+                    <CheckCircle2 size={20} color="var(--status-live)" />
                   ) : isCurrent ? (
                     <span className="live-dot-pulse"></span>
                   ) : (
@@ -175,7 +175,7 @@ export default function ScheduleView() {
         }
 
         .stat-box {
-          background: rgba(255, 255, 255, 0.03);
+          background: var(--bg-surface);
           border: 1px solid var(--border-subtle);
           padding: 12px 18px;
           border-radius: var(--radius-md);
@@ -210,9 +210,9 @@ export default function ScheduleView() {
         }
 
         .timeline-card-current {
-          border-color: rgba(16, 185, 129, 0.4);
-          background: rgba(16, 185, 129, 0.04);
-          box-shadow: 0 0 25px rgba(16, 185, 129, 0.12);
+          border-color: var(--status-live-border);
+          background: var(--status-live-bg);
+          box-shadow: var(--shadow-sm);
         }
 
         .timeline-left-column {
@@ -226,7 +226,7 @@ export default function ScheduleView() {
           width: 36px;
           height: 36px;
           border-radius: 50%;
-          background: rgba(255, 255, 255, 0.05);
+          background: var(--bg-surface);
           border: 1px solid var(--border-subtle);
           display: flex;
           align-items: center;
@@ -237,17 +237,16 @@ export default function ScheduleView() {
         }
 
         .timeline-card-current .step-circle-badge {
-          background: rgba(16, 185, 129, 0.15);
-          border-color: #10b981;
+          background: var(--status-live-bg);
+          border-color: var(--status-live);
         }
 
         .live-dot-pulse {
-          width: 12px;
-          height: 12px;
+          width: 10px;
+          height: 10px;
           border-radius: 50%;
-          background: #10b981;
-          box-shadow: 0 0 10px #10b981;
-          animation: pulse-dot 1.4s infinite;
+          background: var(--status-live-dot);
+          display: inline-block;
         }
 
         .timeline-connector-line {
@@ -305,7 +304,7 @@ export default function ScheduleView() {
         }
 
         .timeline-music-list {
-          background: rgba(0, 0, 0, 0.2);
+          background: var(--bg-surface);
           border-radius: var(--radius-md);
           padding: 10px 14px;
           border: 1px solid var(--border-subtle);
@@ -330,11 +329,11 @@ export default function ScheduleView() {
 
         .song-pill {
           font-size: 12px;
-          background: rgba(99, 102, 241, 0.12);
-          color: var(--primary-light);
+          background: var(--primary-surface);
+          color: var(--primary);
           padding: 3px 10px;
           border-radius: var(--radius-full);
-          border: 1px solid rgba(99, 102, 241, 0.25);
+          border: 1px solid var(--primary-border);
         }
       `}</style>
     </div>
