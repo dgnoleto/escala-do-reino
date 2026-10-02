@@ -6,7 +6,7 @@ Projeto em definição, com piloto previsto no **Ministério Shalom**, focado em
 
 ## Etapa atual
 
-Documentação consolidada em **30/09/2026**. **Não há aplicação implementada, arquitetura definida ou tecnologias escolhidas.**
+Documentação consolidada em **30/09/2026** e atualizada em **02/10/2026**. Há um **protótipo web local em avaliação**, ainda não pronto para produção. A arquitetura, a segurança e a tecnologia do aplicativo Android/iOS permanecem em definição.
 
 - [PRD — escopo do MVP, regras e critérios de aceite](docs/PRD.md).
 - [Evolução futura — decisões preservadas e propostas adiadas](docs/EVOLUCAO-FUTURA.md).
@@ -25,10 +25,12 @@ O líder da liturgia pode cancelar uma atividade iniciada com motivo previamente
 
 Substituições são combinadas fora do aplicativo e registradas sem aceite eletrônico. Antes do início, cada líder pode realocar sua equipe; durante a atividade, a substituição fica com a liturgia. O checklist de preparação informa pendências sem bloquear a programação e pode exigir confirmação de duas lideranças. Líderes de atividade marcam apenas seu próprio âmbito; os detalhes de validação conjunta estão identificados no PRD.
 
-| Canal | Finalidade no MVP |
+| Canal | Finalidade prevista |
 | --- | --- |
-| Web | Cadastros, configurações, modelos, eventos, programação e planejamento das escalas, conforme permissões. |
-| Mobile | Consulta e operação autorizada de eventos existentes, sem cadastros administrativos. |
+| Web | Canal em prototipação agora: cadastros, configurações, modelos, eventos, programação e planejamento das escalas, conforme permissões. |
+| Aplicativo Android/iOS | Etapa posterior: consulta e operação autorizada de eventos existentes, sem cadastros administrativos. Tecnologia e data ainda não escolhidas. |
+
+A web também pode ser aberta no navegador do celular. Nela, o uso básico deve continuar legível e permitir abrir atividades; o acabamento específico para mobile será trabalhado na etapa do aplicativo Android/iOS. O Guia de Validação do PRD é temporário do piloto: seu pequeno acionador sobreposto no celular não bloqueia a evolução do protótipo, mas o guia deve sair da experiência dos membros antes do uso real.
 
 O piloto pressupõe internet. Sem conexão ou atualização, permanece apenas consulta da última informação, com aviso visível. A liturgia pode corrigir horários reais, inclusive após a recuperação, recalculando tempos e preservando o histórico. Horário planejado, horário real e momento do registro são distintos: começar quinze minutos atrasado não consome a duração da primeira atividade. Notificações são somente internas; compartilhamento externo é futuro. O histórico será mantido por um ano.
 
@@ -36,7 +38,7 @@ O piloto pressupõe internet. Sem conexão ou atualização, permanece apenas co
 
 1. Fechar os detalhes remanescentes de acesso, designação da liturgia, checklist e tratamento de cadastros, registrados no PRD.
 2. Definir arquitetura e proteção dos dados.
-3. Desenhar a aplicação.
-4. Implementar em incrementos pequenos e verificáveis com apoio de IA.
+3. Continuar a validar e ajustar o protótipo web em incrementos pequenos.
+4. Desenhar o aplicativo Android/iOS em etapa posterior, com base nas regras e no aprendizado do piloto.
 
-Flutter é apenas candidato sugerido, não uma decisão. As regras de produto estão separadas das propostas e pendências; não há cronograma de lançamento, funcionalidades implantadas ou automação de retomada.
+Flutter é apenas candidato sugerido, não uma decisão. As regras de produto estão separadas das propostas e pendências; não há cronograma de lançamento nem automação de retomada. Telas do protótipo não equivalem a funcionalidades prontas para produção.
