@@ -1,5 +1,5 @@
 -- Escala do Reino: estrutura inicial fechada, sem dados nem API de acesso.
--- Rascunho para validar em PostgreSQL/Supabase antes da aplicação real.
+-- Estrutura ensaiada no Supabase com ROLLBACK; criação permanente usa COMMIT.
 -- Executar uma única vez. Se app_private já existir, parar e revisar.
 -- Não cria contas, igreja, admin, senha, emissão/resgate de convite ou auditoria.
 begin;
