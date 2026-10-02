@@ -12,6 +12,9 @@ import AuditHistoryView from './components/AuditHistoryView';
 import LoginPage from './components/LoginPage';
 import AccessPendingPage from './components/AccessPendingPage';
 import InitializingPage from './components/InitializingPage';
+import CheckingAccessPage from './components/CheckingAccessPage';
+import AccessErrorPage from './components/AccessErrorPage';
+import ChurchHomePage from './components/ChurchHomePage';
 import { Info, Sparkles, CheckCircle2, ChevronDown, ChevronUp } from 'lucide-react';
 
 function AppContent() {
@@ -61,15 +64,15 @@ function AppContent() {
 
             <div className="scenarios-grid">
               <div className="scenario-item">
-                <span className="scen-badge">M07 & M08</span>
+                <span className="scen-badge">M07 &amp; M08</span>
                 <div className="scen-text">
-                  <strong>Cronômetro da Atividade & Tempo Excedido:</strong> Na aba <em>Ao Vivo</em>, inicie uma etapa.
+                  <strong>Cronômetro da Atividade &amp; Tempo Excedido:</strong> Na aba <em>Ao Vivo</em>, inicie uma etapa.
                   O cronômetro regressivo avança e, ao passar de 00:00, conta o excesso em vermelho sem avançar o culto sozinho (PRD 7.2).
                 </div>
               </div>
 
               <div className="scenario-item">
-                <span className="scen-badge">M09 & M10</span>
+                <span className="scen-badge">M09 &amp; M10</span>
                 <div className="scen-text">
                   <strong>Devolver para Pendente:</strong> Pare a atividade atual. Ela retorna ao estado pendente com tentativa
                   preservada e intervalo aberto. Ao reiniciar, começa com a <strong>duração prevista integral</strong> (PRD 7.4).
@@ -77,14 +80,14 @@ function AppContent() {
               </div>
 
               <div className="scenario-item">
-                <span className="scen-badge">M11 & M12</span>
+                <span className="scen-badge">M11 &amp; M12</span>
                 <div className="scen-text">
                   <strong>Cancelar com Motivo Cadastrado:</strong> Cancela a execução exigindo motivo obrigatório pré-cadastrado na Web (PRD 7.3).
                 </div>
               </div>
 
               <div className="scenario-item">
-                <span className="scen-badge">M22 & M24</span>
+                <span className="scen-badge">M22 &amp; M24</span>
                 <div className="scen-text">
                   <strong>Bloqueio de Conflito Litúrgico:</strong> Na aba <em>Planejamento</em>, clique em "Testar Conflito (M22)" para
                   ver o bloqueio automático de alocar Beatriz na Dança e Canto simultâneos no mesmo louvor, com sugestão de aptos (PRD 5.2).
@@ -108,14 +111,14 @@ function AppContent() {
               </div>
 
               <div className="scenario-item">
-                <span className="scen-badge">M42 & M43</span>
+                <span className="scen-badge">M42 &amp; M43</span>
                 <div className="scen-text">
                   <strong>Correção de Horário Real:</strong> No card da atividade, clique em "Corrigir Horário Real". Rejeita término anterior ao início e salva histórico (PRD 7.8).
                 </div>
               </div>
 
               <div className="scenario-item">
-                <span className="scen-badge">M16 & M17</span>
+                <span className="scen-badge">M16 &amp; M17</span>
                 <div className="scen-text">
                   <strong>Simulação Offline / Desatualizado:</strong> No canto superior direito, alterne para "Offline" ou "Desatualizado" para testar o modo somente leitura (PRD 10.3).
                 </div>
@@ -269,29 +272,47 @@ function AppContent() {
 }
 
 /**
- * AuthGate — decide qual tela renderizar com base no estado de autenticação.
+ * AuthGate — roteia para a tela correta com base no authState.
  *
- * 'initializing' → InitializingPage (aguarda verificação de sessão)
- * 'unauthenticated' → LoginPage
- * 'authenticated' → AccessPendingPage
+ * Mapa de estados → telas:
+ *   'initializing'    → InitializingPage   (verificando sessão salva)
+ *   'unauthenticated' → LoginPage          (sem sessão)
+ *   'checking_access' → CheckingAccessPage (consultando vínculo no banco)
+ *   'access_pending'  → AccessPendingPage  (sessão válida, sem vínculo elegível)
+ *   'access_granted'  → ChurchHomePage     (vínculo confirmado — dados reais)
+ *   'access_error'    → AccessErrorPage    (falha de consulta — retry disponível)
  *
- * O protótipo (AppProvider + AppContent) é preservado abaixo para integração
- * futura, mas não é montado neste incremento — não há acesso público ao
- * cronograma, administração, membros ou bastidores.
+ * O protótipo (AppProvider + AppContent) está preservado no código para
+ * integração futura, mas NÃO é montado neste incremento.
+ * AppContent usa dados fictícios do AppContext e não deve ser exibido
+ * como tela de produção.
  */
 function AuthGate() {
   const { authState } = useAuth();
 
-  if (authState === 'initializing') {
-    return <InitializingPage />;
-  }
+  switch (authState) {
+    case 'initializing':
+      return <InitializingPage />;
 
-  if (authState === 'unauthenticated') {
-    return <LoginPage />;
-  }
+    case 'unauthenticated':
+      return <LoginPage />;
 
-  // authState === 'authenticated'
-  return <AccessPendingPage />;
+    case 'checking_access':
+      return <CheckingAccessPage />;
+
+    case 'access_pending':
+      return <AccessPendingPage />;
+
+    case 'access_granted':
+      return <ChurchHomePage />;
+
+    case 'access_error':
+      return <AccessErrorPage />;
+
+    default:
+      // Estado desconhecido — não exibir dados, retornar ao login.
+      return <LoginPage />;
+  }
 }
 
 export default function App() {
