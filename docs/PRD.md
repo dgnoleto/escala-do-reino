@@ -6,7 +6,9 @@
 
 **Consolidação:** 30 de setembro de 2026.
 
-**Situação:** documentação; sem código, arquitetura ou tecnologias escolhidas.
+**Situação:** protótipo web local em avaliação; ainda não é uma aplicação pronta para produção. Arquitetura, segurança e tecnologia do aplicativo Android/iOS não estão fechadas.
+
+**Atualização de canais:** 2 de outubro de 2026.
 
 ## 1. Recorte e precedência
 
@@ -16,7 +18,7 @@ O MVP é a primeira versão utilizável, focada no **culto**. Deve ajudar a resp
 
 Esse recorte substitui o desenho anterior que exigia convites de participação, reservas provisórias, prazos e confirmações pelos membros. Convite de acesso à igreja é outro conceito e está incluído no MVP. Essas regras estão preservadas em [Evolução futura](EVOLUCAO-FUTURA.md), fora dos requisitos ativos desta versão. A possibilidade anteriormente discutida de o membro enviar link ou tom também não vale no MVP: os líderes preenchem, os membros consultam.
 
-Neste documento, **decidido** identifica requisitos confirmados; **proposto** não equivale a aprovado; **pendente** indica detalhamento ainda necessário. Os comportamentos descritos não estão implementados.
+Neste documento, **decidido** identifica requisitos confirmados; **proposto** não equivale a aprovado; **pendente** indica detalhamento ainda necessário. A existência de telas no protótipo não comprova a implementação integral das regras descritas.
 
 ## 2. Problema e resultado esperado
 
@@ -53,6 +55,12 @@ Ser admin não habilita conduzir um evento no qual a pessoa não foi designada l
 
 ## 4. Web e mobile
 
+**Decidido em 02/10/2026:** o protótipo web está sendo avaliado agora. Uma versão própria para Android e iOS virá em etapa posterior; Flutter continua apenas uma possibilidade, sem escolha de tecnologia ou data. A tabela abaixo descreve os limites de cada canal **quando ambos existirem**, não uma obrigação de entregá-los juntos.
+
+Enquanto a web for acessível pelo navegador do celular, ela deve preservar o uso básico: ler o cronograma e abrir os detalhes autorizados das atividades, sem rolagem horizontal ou controle essencial inacessível. O acabamento específico da experiência mobile será desenhado para o aplicativo posterior; não bloquear a evolução do protótipo web por ajustes visuais pequenos que não prejudiquem esse uso básico.
+
+O **Guia de Validação do PRD** é ferramenta temporária do protótipo/piloto, não funcionalidade do produto. Seu acionador compacto ainda pode sobrepor parte de um cartão em tela estreita; registrar como ajuste visual conhecido, sem tratar isso como impeditivo do protótipo enquanto leitura e abertura da atividade funcionarem. Antes de disponibilizar o sistema para uso real pelos membros, retirar o guia da experiência deles. Ele não faz parte do aplicativo Android/iOS.
+
 | Ação | Web | Mobile |
 | --- | --- | --- |
 | Cadastrar, editar, renomear e excluir tipos, modelos, atividades, durações padrão, membros, funções, equipes e motivos de cancelamento | Conforme permissão administrativa | Não, inclusive para administrador |
@@ -62,7 +70,7 @@ Ser admin não habilita conduzir um evento no qual a pessoa não foi designada l
 | Registrar ausência e substituir em escala existente | Conforme responsabilidade e estado da atividade | Conforme responsabilidade e estado da atividade |
 | Iniciar/avançar, devolver para pendente, cancelar atividade em execução, corrigir horários e encerrar culto | Somente líder da liturgia desse evento | Somente líder da liturgia desse evento |
 
-O mobile é uma extensão de consulta e execução, não um painel de administração. Os mesmos dados sustentam os dois canais e as permissões valem para qualquer forma de executar a ação, não apenas para a exibição de botões. A posição exata dos controles e o detalhamento operacional do checklist serão resolvidos no desenho, preservando esses limites.
+O aplicativo Android/iOS será uma extensão de consulta e execução, não um painel de administração. Os mesmos dados deverão sustentar os dois canais e as permissões valerão para qualquer forma de executar a ação, não apenas para a exibição de botões. A posição exata dos controles e o detalhamento operacional do checklist serão resolvidos no desenho, preservando esses limites.
 
 ## 5. Modelo de culto, atividades e escalas
 
@@ -299,7 +307,7 @@ Também não estão incluídos chat geral, incidentes amplos sem relação com e
 
 ## 12. Cenários de aceite do MVP
 
-Critérios para implementação futura, não testes de software já executados. Os identificadores desta consolidação substituem a lista anterior.
+Critérios de comportamento esperado, não testes de software já executados. Os cenários específicos do aplicativo Android/iOS, como M12, M34 e M38, pertencem à etapa posterior e não bloqueiam a validação do protótipo web. Os identificadores desta consolidação substituem a lista anterior.
 
 | ID | Situação | Resultado esperado |
 | --- | --- | --- |
