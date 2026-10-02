@@ -37,16 +37,46 @@ A web também pode ser aberta no navegador do celular. Nela, o uso básico deve 
 
 O piloto pressupõe internet. Sem conexão ou atualização, permanece apenas consulta da última informação, com aviso visível. A liturgia pode corrigir horários reais, inclusive após a recuperação, recalculando tempos e preservando o histórico. Horário planejado, horário real e momento do registro são distintos: começar quinze minutos atrasado não consome a duração da primeira atividade. Notificações são somente internas; compartilhamento externo é futuro. O histórico será mantido por um ano.
 
-## Próximas etapas
+## Configuração local
 
-1. Fechar os detalhes remanescentes de acesso, designação da liturgia, checklist e tratamento de cadastros, registrados no PRD.
-2. Definir arquitetura e proteção dos dados.
-3. Continuar a validar e ajustar o protótipo web em incrementos pequenos.
-4. Desenhar o aplicativo Android/iOS em etapa posterior, com base nas regras e no aprendizado do piloto.
+Clone o repositório e instale as dependências:
 
-Flutter é apenas candidato sugerido, não uma decisão. As regras de produto estão separadas das propostas e pendências; não há cronograma de lançamento nem automação de retomada. Telas do protótipo não equivalem a funcionalidades prontas para produção.
+```bash
+npm install
+```
 
-**Estado do banco em 02/10/2026:** estrutura inicial de igreja, membros, acesso e convites criada no Supabase pelo responsável pelo projeto. Após o segundo incremento, a captura confirma seis tabelas em `app_private`, RLS habilitada e privilégios diretos bloqueados para `anon`, `authenticated` e `service_role`; o índice de um convite aberto por membro está presente. A última coluna de verificação da FK ficou fora da captura e foi confirmada pelo responsável como `true` nas seis linhas. Login integrado, comandos autorizados, concessão do primeiro admin, gravação funcional de auditoria e envio de e-mails para membros ainda estão em construção. Evidências e limites no [schema inicial](docs/SCHEMA-ACESSO.md) e no [segundo incremento](docs/SCHEMA-APROVACAO-AUDITORIA.md).
+Copie o modelo de variáveis de ambiente e preencha com os valores do seu projeto Supabase:
 
-**Regras de acesso confirmadas em 02/10/2026:** convite para o mesmo e-mail confirmado; nome diferente aguarda aprovação do admin antes de liberar acesso, dentro das 72 horas originais; um convite pendente por membro, com cancelamento do anterior na reemissão. Detalhamento e propostas no [fluxo de acesso e auditoria](docs/ACESSO-E-AUDITORIA.md).
+```bash
+cp .env.example .env.local
+```
+
+| Variável | Onde encontrar |
+| --- | --- |
+| `VITE_SUPABASE_URL` | Supabase → Project Settings → API → Project URL |
+| `VITE_SUPABASE_PUBLISHABLE_KEY` | Supabase → Project Settings → API → anon/public key |
+
+> `.env.local` está no `.gitignore` e nunca deve ser versionado. Não use chaves `service_role` ou secretos OAuth no cliente web.
+
+Para iniciar o servidor de desenvolvimento na porta 3000:
+
+```bash
+npm run dev
+```
+
+## Login com Google
+
+O fluxo de autenticação usa o [Supabase Auth com OAuth do Google](https://supabase.com/docs/guides/auth/social-login/auth-google).
+
+**Pré-requisitos no painel do Supabase:**
+- Google configurado em Authentication → Providers.
+- `http://localhost:3000` adicionado em Authentication → URL Configuration → Site URL e Redirect URLs.
+
+**Comportamento atual (incremento de login):**
+- Sem sessão: exibe somente a tela de login.
+- Sessão válida: exibe a tela "Acesso à igreja ainda não liberado", com nome, e-mail e foto da conta Google e botão "Sair".
+- Recarga da página: a sessão é recuperada do `localStorage` sem exibir as telas do protótipo.
+- Falha ou cancelamento: permite nova tentativa.
+
+O protótipo de planejamento e condução do culto está preservado no código para integração futura, mas não é exibido neste incremento.
 

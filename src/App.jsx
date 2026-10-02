@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { AppProvider, useApp } from './context/AppContext';
+import { AuthProvider, useAuth } from './context/AuthContext';
 import Header from './components/Header';
 import LiveConsole from './components/LiveConsole';
 import ScheduleView from './components/ScheduleView';
@@ -8,6 +9,9 @@ import BackstageView from './components/BackstageView';
 import PlanningView from './components/PlanningView';
 import AdminView from './components/AdminView';
 import AuditHistoryView from './components/AuditHistoryView';
+import LoginPage from './components/LoginPage';
+import AccessPendingPage from './components/AccessPendingPage';
+import InitializingPage from './components/InitializingPage';
 import { Info, Sparkles, CheckCircle2, ChevronDown, ChevronUp } from 'lucide-react';
 
 function AppContent() {
@@ -264,10 +268,36 @@ function AppContent() {
   );
 }
 
+/**
+ * AuthGate — decide qual tela renderizar com base no estado de autenticação.
+ *
+ * 'initializing' → InitializingPage (aguarda verificação de sessão)
+ * 'unauthenticated' → LoginPage
+ * 'authenticated' → AccessPendingPage
+ *
+ * O protótipo (AppProvider + AppContent) é preservado abaixo para integração
+ * futura, mas não é montado neste incremento — não há acesso público ao
+ * cronograma, administração, membros ou bastidores.
+ */
+function AuthGate() {
+  const { authState } = useAuth();
+
+  if (authState === 'initializing') {
+    return <InitializingPage />;
+  }
+
+  if (authState === 'unauthenticated') {
+    return <LoginPage />;
+  }
+
+  // authState === 'authenticated'
+  return <AccessPendingPage />;
+}
+
 export default function App() {
   return (
-    <AppProvider>
-      <AppContent />
-    </AppProvider>
+    <AuthProvider>
+      <AuthGate />
+    </AuthProvider>
   );
 }
