@@ -8,7 +8,9 @@
 
 **Situação:** protótipo web local em avaliação; ainda não é uma aplicação pronta para produção. Arquitetura, segurança e tecnologia do aplicativo Android/iOS não estão fechadas.
 
-**Atualização de canais:** 2 de outubro de 2026.
+**Atualização de canais e regras de planejamento:** 2 de outubro de 2026.
+
+O [documento de arquitetura do banco e das permissões](ARQUITETURA-BANCO.md) complementa este PRD, sem substituí-lo. As propostas técnicas e pendências nele identificadas não criam novos requisitos de produto por si só.
 
 ## 1. Recorte e precedência
 
@@ -29,6 +31,8 @@ O piloto deve permitir conduzir o culto, resolver ausências e manter os partici
 ## 3. Acesso, responsabilidades e permissões
 
 Há um cadastro único de cada membro por igreja. Uma pessoa pode integrar várias equipes e ter várias funções habilitadas. A liderança habilita a aptidão; o membro não se habilita.
+
+**Decidido:** ministério e equipe representam o mesmo grupo no piloto, com um único cadastro.
 
 ### 3.1 Entrada na igreja
 
@@ -52,6 +56,10 @@ O líder da liturgia não monta inicialmente as equipes dos outros líderes. Sua
 **Decidido:** somente admin pode designar e trocar lideranças. A permissão admin é independente e pode ser acumulada com liderança de atividade ou liturgia. São válidos os perfis somente admin, somente líder da liturgia, somente líder de atividade e suas combinações autorizadas. Não exigir liderança de liturgia para tornar um líder de atividade admin.
 
 Ser admin não habilita conduzir um evento no qual a pessoa não foi designada líder da liturgia. **Pendente:** procedimento da transferência durante um culto já iniciado, preservando controle inequívoco por evento e evitando ações concorrentes da liderança anterior e da nova.
+
+### 3.3 Localização e fuso da igreja
+
+**Decidido:** cadastrar o fuso horário e o local da igreja pelo Google Maps. Os membros herdam o fuso da igreja consultada, sem preferência individual de alteração no MVP. Uma conta com acesso a igrejas diferentes usa o contexto da igreja consultada. A representação técnica do fuso e da localização está no documento de arquitetura.
 
 ## 4. Web e mobile
 
@@ -102,11 +110,15 @@ A resolução de conflitos já existentes após mudança da programação e a fo
 
 ## 6. Planejamento de duração
 
-O evento tem uma duração prevista. Ao montar a programação, mostrar **tempo ocupado, disponível e excedido**.
+**Decidido:** o evento tem data e hora previstas de início e fim, com fim posterior ao início, inclusive quando atravessa a meia-noite. A duração disponível deriva desses horários. Ao montar a programação, mostrar **tempo ocupado, disponível e excedido**.
 
 Somar a sequência principal, sem contar novamente atividades paralelas ou componentes do mesmo bloco. Se canto, instrumentos e dança ocupam juntos um bloco de louvor de 20 minutos, contam 20, não 60. Transmissão simultânea não acrescenta sua duração à sequência.
 
-**Decidido:** excesso de duração gera apenas alerta que o líder pode ignorar. Não bloqueia salvar ou publicar, não exige aprovação e não exige justificativa. Esse alerta não remove as permissões nem as regras de conflito de pessoas.
+**Decidido em 02/10:** a política de duração é opcionalmente configurável entre **alertar** e **bloquear a publicação**. No modo de alerta, o líder pode ignorar o excesso, salvar e publicar sem aprovação ou justificativa. No modo de bloqueio, pode salvar e reorganizar rascunhos, mas precisa ajustar a sequência principal à janela prevista antes de publicar. Uma revisão com excesso também não pode ser publicada como válida nesse modo. A política não remove permissões nem regras de conflito de pessoas.
+
+A preparação dos serviços de apoio pode começar antes da janela principal: por exemplo, preparar câmeras 30 minutos antes do culto. Esse tempo participa dos conflitos das pessoas, sem aumentar a soma principal. Não exigir que todos os itens de apoio fiquem dentro do início/fim previstos do culto.
+
+O limite atua no planejamento. A execução pode terminar antes ou ultrapassar o previsto por imprevistos, sem bloqueio ou encerramento automático. **Pendentes:** padrão inicial da política, autoridade para alterar a política de um evento existente e apresentação das revisões em rascunho.
 
 Duração de atividade não é prazo de resposta a convite. Prazos de convite pertencem somente ao documento de evolução futura.
 
@@ -299,11 +311,11 @@ Cópias de segurança e restauração são assunto separado, a definir na arquit
 
 ## 11. Escopo e exclusões
 
-**No MVP:** acesso por convite com Google/Apple; modelo de culto simples; cadastros e planejamento web; aptidões/permissões; escala nominal por líderes; conflitos com sugestões de candidatos habilitados; duração prevista e alerta ignorável; cronograma macro, detalhes da própria escala e bastidores; checklist simples; controle manual exclusivo do líder da liturgia por evento; cronômetro regressivo por atividade com excesso; cancelamento por motivo cadastrado; retorno para pendente com reinício integral; registro de intervalos; encerramento manual do culto; ausência/substituição manual; ficha musical simples com observação; avisos internos; histórico de um ano; consulta desatualizada e correção posterior; proteção contra ações duplicadas.
+**No MVP:** acesso por convite com Google/Apple; modelo de culto simples; cadastros e planejamento web; aptidões/permissões; escala nominal por líderes; conflitos com sugestões de candidatos habilitados; início/fim previstos e política de duração com alerta ou bloqueio opcional da publicação, preservando rascunhos; cronograma macro, detalhes da própria escala e bastidores; checklist simples; controle manual exclusivo do líder da liturgia por evento; cronômetro regressivo por atividade com excesso; cancelamento por motivo cadastrado; retorno para pendente com reinício integral; registro de intervalos; encerramento manual do culto; ausência/substituição manual; ficha musical simples com observação; avisos internos; histórico de um ano; consulta desatualizada e correção posterior; proteção contra ações duplicadas.
 
 **Fora do MVP:** participação aberta; disponibilidade autodeclarada; convites de participação, prazos, reservas e confirmação/recusa; pedidos de mudança; chamados automatizados; check-in; compartilhamento externo; dashboards; delegação do andamento aos líderes de atividades; operação completa de retiros/turnos; motor amplo de regras/dependências; edição offline.
 
-Também não estão incluídos chat geral, incidentes amplos sem relação com escala/ausência, gestão financeira, letras/cifras/repertório avançado, upload/player ou geração automática de escala inteira. Dízimos e ofertas são atividades da programação.
+Também não estão incluídos chat geral, incidentes amplos sem relação com escala/ausência, módulos de cursos online, simpósios pagos ou gestão financeira, letras/cifras/repertório avançado, upload/player ou geração automática de escala inteira. A possibilidade de modularização está registrada em evolução futura. Dízimos e ofertas são atividades da programação.
 
 ## 12. Cenários de aceite do MVP
 
@@ -336,7 +348,7 @@ Critérios de comportamento esperado, não testes de software já executados. Os
 | M23 | Mesma pessoa participa em oportunidade posterior sem incompatibilidade. | Alocação permitida; exclusividade do louvor não ocupa automaticamente todo o culto. |
 | M24 | Transmissão/sonoplastia inclui preparação e atravessa etapas. | Intervalo completo participa dos conflitos; avanço/interrupção principal não encerra o serviço. |
 | M25 | Canto, instrumentos e dança compartilham bloco de 20 minutos com transmissão paralela. | Planejamento soma 20 minutos pelo bloco, sem duplicar componentes/apoios. |
-| M26 | Duração planejada ultrapassa a previsão do culto. | Alerta ignorável, sem bloquear salvar/publicar ou exigir justificativa/aprovação. |
+| M26 | Duração planejada ultrapassa a previsão do culto no modo de alerta. | Alerta ignorável, sem bloquear salvar/publicar ou exigir justificativa/aprovação. |
 | M27 | Mudança de horário cria conflito em escala existente. | Sinaliza compromissos/lideranças; não troca pessoas nem resolve sozinho. |
 | M28 | Modelo inclui transmissão por padrão. | Inclui atividade sem escalar pessoas automaticamente; edição pode ser ajustada para culto sem transmissão. |
 | M29 | Atividade tem checklist pendente e torna-se a próxima. | Mantém na programação, destaca preparação pendente para liturgia, sem bloqueio, troca automática ou gatilho de 50%. |
@@ -357,6 +369,10 @@ Critérios de comportamento esperado, não testes de software já executados. Os
 | M44 | Início foi enviado, mas a confirmação se perdeu. | Mostra resultado não confirmado e consulta estado salvo ao recuperar; não cria nova execução por repetição. |
 | M45 | Culto inicia, atravessa intervalos e depois encerra. | Serviços paralelos acompanham início/fim reais do culto, sem botões, horários operacionais ou contadores próprios. |
 | M46 | Item de checklist exige dois líderes e somente um confirmou. | Permanece pendente; não bloqueia a atividade. Membro comum ou líder de outra atividade não marca fora de sua responsabilidade. |
+| M47 | Membro consulta uma igreja autorizada. | Horários usam o fuso da igreja consultada, sem preferência individual de alteração. |
+| M48 | Cadastro de evento informa início e fim previstos. | Calcula duração disponível; aceita cruzar meia-noite com datas completas e rejeita fim anterior ou igual ao início. |
+| M49 | Programação excede a janela do evento no modo de bloqueio. | Permite salvar rascunho, mas rejeita publicar a programação ou revisão até ajustar; não encerra nem bloqueia automaticamente a execução real. |
+| M50 | Equipe prepara câmeras 30 minutos antes do culto. | Permite a preparação anterior e considera seu intervalo nos conflitos, sem incluí-lo na soma dos blocos principais. |
 
 ## 13. Avaliação do piloto
 
@@ -377,6 +393,7 @@ As regras já fechadas não dependem de rediscussão para serem documentadas. Os
 | Checklist | Lideranças operam e cada líder de atividade marca apenas seu âmbito; itens conjuntos exigem duas validações. Detalhar validadores, alcance da liturgia, desmarcação, correções e canal; não reintroduzir bloqueio. |
 | Cadastros vinculados | Confirmar desativação em vez de exclusão para membros/funções/equipes já utilizados, preservando referências. Retirar atividade da programação já tem regra própria. |
 | Mudanças e conflitos | Resolução quando alteração cria conflito já existente, comunicação/negociação entre líderes e cálculo da programação restante após correções de horários. |
+| Política de duração e publicação | Definir padrão inicial, autoridade para alterar política de evento existente e consulta/edição das revisões em rascunho. Alerta ou bloqueio opcional da publicação, rascunhos permitidos e execução sem encerramento automático já estão decididos. |
 | Serviços paralelos | Início/fim acompanham o culto, sem controle individual. Confirmar representação da preparação prévia planejada nos conflitos, sem cronometrá-la ou criar turnos. |
 | Edição em execução | Fluxo de substituição por outra atividade e reordenação por canal, respeitando ausência de cadastros novos no mobile. |
 | Conexão e correções | Detecção de desatualização, primeira carga sem dados e detalhamento da recuperação de resposta perdida. Correção pela liturgia com histórico, recálculo e rejeição de horários impossíveis já está decidida; detalhar casos de sobreposição entre registros corrigidos. |
@@ -392,4 +409,4 @@ O responsável pelo projeto não programa e quer apoio de IA com crítica fundam
 
 Validar regras primeiro, depois arquitetura, depois desenho da aplicação e só então implementação incremental verificável. Resolver pendências antes de implementar as partes dependentes, sem criar aprovações para rotinas desnecessárias.
 
-Esta consolidação encerra a etapa atual de documentação para retomada na próxima sessão. Não define stack, banco, provedor, implantação ou automação de retomada.
+Este PRD preserva os requisitos de produto. O desenho técnico está no [documento de arquitetura do banco e das permissões](ARQUITETURA-BANCO.md), com decisões confirmadas, propostas e pendências identificadas. A existência desses documentos não comprova implementação, implantação ou automação de retomada.

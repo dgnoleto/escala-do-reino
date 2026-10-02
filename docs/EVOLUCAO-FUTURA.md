@@ -126,3 +126,15 @@ Confirmação de organização é diferente de aceite do membro. Motor amplo de 
 Offline é futuro; piloto pressupõe internet. Integrações não especificadas não são compromissos. Chat geral, incidentes amplos, finanças, biblioteca de letras/cifras, player, upload e geração automática de escala inteira não têm entrega aprovada.
 
 A hipótese anterior de membro preencher música/link/tom foi substituída pela decisão de membros apenas consultarem no MVP. Não deve ser tratada como permissão aprovada nem reativada automaticamente numa evolução. Eventual reconsideração exige nova decisão.
+
+## 9. Modularização e novos módulos
+
+**Ideia futura, registrada em 02/10/2026:** avaliar a evolução do produto por módulos, preservando a Escala do Reino como foco da primeira entrega. Possibilidades a considerar posteriormente:
+
+- Cursos online disponibilizados pela igreja.
+- Simpósios pagos.
+- Gestão financeira da igreja.
+
+Em cursos online, poderá fazer sentido permitir ao participante escolher um fuso para visualizar os horários; essa preferência não existe no MVP de escala, em que o membro herda o fuso da igreja.
+
+Não há compromisso de entrega, prioridade ou desenho aprovado desses módulos. Pagamentos, integrações, permissões e estrutura de dados serão definidos quando cada módulo for avaliado, sem antecipar sua implementação no MVP.

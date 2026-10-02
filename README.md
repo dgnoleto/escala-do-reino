@@ -9,6 +9,7 @@ Projeto em definição, com piloto previsto no **Ministério Shalom**, focado em
 Documentação consolidada em **30/09/2026** e atualizada em **02/10/2026**. Há um **protótipo web local em avaliação**, ainda não pronto para produção. A arquitetura, a segurança e a tecnologia do aplicativo Android/iOS permanecem em definição.
 
 - [PRD — escopo do MVP, regras e critérios de aceite](docs/PRD.md).
+- [Arquitetura do banco e das permissões — modelo lógico, segurança e pendências](docs/ARQUITETURA-BANCO.md).
 - [Evolução futura — decisões preservadas e propostas adiadas](docs/EVOLUCAO-FUTURA.md).
 
 O MVP é focado no culto. Convites de participação, reservas, prazos e aceite eletrônico continuam futuros. O convite para **acessar a igreja**, com login Google ou Apple e vínculo a um membro cadastrado, faz parte da primeira versão.
