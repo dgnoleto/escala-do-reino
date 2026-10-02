@@ -10,9 +10,10 @@ Documentação consolidada em **30/09/2026** e atualizada em **02/10/2026**. Há
 
 - [PRD — escopo do MVP, regras e critérios de aceite](docs/PRD.md).
 - [Arquitetura do banco e das permissões — modelo lógico, segurança e pendências](docs/ARQUITETURA-BANCO.md).
+- [Schema inicial — campos e restrições de igreja, membros e acesso](docs/SCHEMA-ACESSO.md).
 - [Evolução futura — decisões preservadas e propostas adiadas](docs/EVOLUCAO-FUTURA.md).
 
-O MVP é focado no culto. Convites de participação, reservas, prazos e aceite eletrônico continuam futuros. O convite para **acessar a igreja**, com login Google ou Apple e vínculo a um membro cadastrado, faz parte da primeira versão.
+O MVP é focado no culto. Convites de participação, reservas, prazos e aceite eletrônico continuam futuros. O convite para **acessar a igreja**, com login Google, Apple ou Microsoft e vínculo a um membro cadastrado, faz parte da primeira versão. O convite vale 72 horas e é de uso único. Não haverá CPF ou senha própria no MVP; a recuperação de credenciais acontece no provedor escolhido.
 
 ## Como funcionará o piloto
 

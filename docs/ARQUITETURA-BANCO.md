@@ -1,6 +1,6 @@
 # Escala do Reino — arquitetura do banco e das permissões
 
-Versão 2 · 2 de outubro de 2026
+Versão 3 · 2 de outubro de 2026
 
 **Situação:** proposta de arquitetura para revisão. Este documento descreve o modelo lógico; não cria tabelas, configurações ou permissões no Supabase. As pendências de produto continuam identificadas antes da implementação dependente.
 
@@ -46,11 +46,13 @@ Textos, arquivos de código, migrações e intercâmbio JSON usam UTF-8. Verific
 
 ## 4. Entidades e relações
 
+O primeiro detalhamento físico está em [Schema inicial de igreja e acesso](SCHEMA-ACESSO.md). Ele especifica campos e restrições desse incremento; não é uma migração executada.
+
 ### 4.1 Igreja, acesso e pessoas
 
 | Entidade | Conteúdo mínimo proposto | Relação e regra |
 | --- | --- | --- |
-| `auth.users` | Conta e identidades autenticadas | Mantida pelo Supabase Auth; a aplicação não armazena senhas Google/Apple. |
+| `auth.users` | Conta e identidades autenticadas | Mantida pelo Supabase Auth; a aplicação não armazena senhas Google/Apple/Microsoft. |
 | `churches` | Nome, `timezone`, endereço, `google_maps_url`, política padrão de duração, situação | Unidade de isolamento dos dados; fuso herdado por seus membros, sem preferência individual. Política padrão copiada para novos eventos. |
 | `members` | Igreja, nome de exibição, situação, contato mínimo quando necessário | Cadastro da pessoa naquela igreja; não exigir login para cadastrar ou escalar. Nome não é identificador único. |
 | `church_access` | Igreja, conta, membro, situação, permissão admin, autoria da concessão/revogação | Um vínculo por conta/igreja e um por membro/igreja. Permissões derivam de registros controlados; o cliente não se concede admin. |
@@ -184,13 +186,17 @@ Os marcos dos serviços paralelos derivam do início/fim reais do culto. A prepa
 
 Conflitos mínimos: exclusividade entre cantar, tocar e dançar no mesmo bloco de louvor; consideração dos intervalos completos dos serviços contínuos e preparação; revalidação após alteração da programação. Não acrescentar um motor genérico de compatibilidade. Compatibilidades entre outras funções precisam ser explicitadas quando necessárias ao piloto.
 
-## 8. Acesso por convite — proposta para revisão
+## 8. Acesso por convite — decisões e detalhamento pendente
 
-O admin escolhe um membro existente e emite um convite com destinatário, validade e token de uso único. A pessoa autentica com Google/Apple e apresenta o convite. O resgate é atômico: confirma validade, destinatário, ausência de vínculo incompatível e vincula a conta ao membro, sem conceder liderança ou admin por padrão.
+Decisões confirmadas: Google, Apple e Microsoft como provedores; sem CPF; sem senha própria; convite de uso único com validade de 72 horas desde a emissão. Admin da igreja não altera credenciais de outra pessoa. A recuperação dos provedores é externa; não haverá reset de senha própria pela aplicação no MVP. Na configuração real, limitar os métodos habilitados aos aprovados também no serviço de autenticação; esconder um formulário não basta.
 
-Não associar pessoas por igualdade de nome. O vínculo entre Google e Apple não deve ser inventado pela aplicação com base em nomes ou e-mails não verificados. Endereços privados de retransmissão da Apple exigem fluxo de identificação definido.
+O admin escolhe um membro existente e emite um convite com destinatário, validade de 72 horas e token de uso único. A pessoa autentica com Google/Apple/Microsoft e apresenta o convite. O resgate é atômico: confirma validade, destinatário, ausência de vínculo incompatível e vincula a conta ao membro, sem conceder liderança ou admin por padrão.
 
-**Pendentes de produto:** validade concreta, comprovação do destinatário quando a conta usa outro endereço, convite enviado à pessoa errada, revogação e associação de provedores à mesma pessoa. Propõe-se acesso negado até resolução segura quando houver dúvida de identidade; o procedimento de resolução será aprovado antes da implementação.
+Não associar pessoas por igualdade de nome. O vínculo entre Google, Apple e Microsoft não deve ser inventado pela aplicação com base em nomes ou e-mails não verificados. Endereços privados de retransmissão da Apple exigem fluxo de identificação definido.
+
+No primeiro acesso autenticado, solicitar confirmação/preenchimento do nome, mantendo o vínculo com o membro previamente cadastrado. A reconciliação de divergências de nome permanece pendente. Não criar um segundo membro por concluir esse formulário. Restrição de unicidade do vínculo por conta/igreja e por membro/igreja impede duplicar o acesso ao mesmo cadastro; não garante que uma pessoa nunca crie outra conta no provedor.
+
+**Pendentes de produto:** comprovação do destinatário quando a conta usa outro endereço, convite enviado à pessoa errada, revogação, reconciliação do nome e associação de provedores à mesma pessoa. Propõe-se acesso negado até resolução segura quando houver dúvida de identidade; o procedimento de resolução será aprovado antes da implementação.
 
 Revogar acesso deve impedir novas consultas e comandos, limpar dados em cache ao detectar revogação e invalidar o recebimento de detalhes privados. Informação já vista não pode ser recuperada do aparelho por garantia técnica; minimizar armazenamento local persistente e retornar somente o necessário. Não usar respostas privadas em cache público compartilhado.
 
@@ -238,7 +244,7 @@ Definir perda máxima de dados e tempo de recuperação aceitáveis; selecionar 
 
 | Tema | Recomendação para avaliação | O que ainda precisa ser decidido |
 | --- | --- | --- |
-| Convite e identidade | Token de uso único, membro prévio e resgate atômico | Validade, destinatário divergente, revogação, Google/Apple e recuperação de vínculo. |
+| Convite e identidade | Token de uso único, membro prévio e resgate atômico | Destinatário divergente, revogação, reconciliação do nome, Google/Apple/Microsoft e recuperação de vínculo; validade de 72 horas já confirmada. |
 | Transferência de liturgia | Troca atômica por admin, com versão e revalidação da liderança em cada comando | Tratamento da ação em curso e comunicação da transferência. |
 | Checklist conjunto | Guardar duas validações separadas; ninguém substituir silenciosamente os dois validadores | Quem valida, alcance da liturgia, troca/desmarcação e correção. |
 | Cadastros utilizados | Desativar e preservar referências | Confirmação da regra e tratamento de alocações futuras afetadas. |
