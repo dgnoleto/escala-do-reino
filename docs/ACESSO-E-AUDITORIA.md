@@ -1,6 +1,6 @@
 # Escala do Reino — fluxo inicial de acesso e auditoria
 
-Versão 1 · 2 de outubro de 2026
+Versão 2 · 2 de outubro de 2026
 
 **Situação:** regras de produto confirmadas e proposta dos próximos contratos. As quatro tabelas iniciais já foram criadas e verificadas no Supabase; este documento não cria tabelas, funções, contas ou permissões adicionais. Complementa o [PRD](PRD.md), a [arquitetura](ARQUITETURA-BANCO.md) e o [schema inicial](SCHEMA-ACESSO.md).
 
@@ -18,7 +18,7 @@ Versão 1 · 2 de outubro de 2026
 
 O servidor valida a conta autenticada com o Supabase e obtém dela o identificador e o e-mail confirmado. Não aceitar `user_id`, igreja, papel, e-mail verificado ou destinatário como declarações livres do navegador. Não usar metadados editáveis pelo usuário para conceder permissão.
 
-Comparação técnica proposta: retirar espaços externos e normalizar caixa do e-mail consistentemente com o Auth. Não remover pontos, sufixos `+` ou transformar endereços diferentes em equivalentes. Senhas, tokens e assinaturas não recebem normalização de texto. Names/textos de cadastro usam NFC e preservam acentos e apóstrofos; nomes iguais não comprovam identidade.
+Comparação técnica proposta: retirar espaços externos e normalizar caixa do e-mail consistentemente com o Auth. Não remover pontos, sufixos `+` ou transformar endereços diferentes em equivalentes. Senhas, tokens e assinaturas não recebem normalização de texto. Nomes/textos de cadastro usam NFC e preservam acentos e apóstrofos; nomes iguais não comprovam identidade.
 
 Uma tentativa com e-mail divergente não consome o convite nem revela dados do membro. Conta sem confirmação de e-mail não conclui entrada. Limitar tentativas e não expor em respostas públicas se um e-mail possui cadastro.
 
@@ -64,9 +64,9 @@ Se vencer, mostrar expiração na consulta da própria solicitação. Expiraçã
 
 As novas entidades ficam fora da Data API, com RLS e acesso direto bloqueado como as tabelas iniciais. As FKs precisam conferir igreja/membro/convite juntos. A solicitação deve referenciar uma apresentação válida pela mesma conta; um `invitation_id` arbitrário não basta. Não criar um segundo cadastro de membro para uma proposta.
 
-Estado proposto da decisão: `pending`, `approved`, `rejected` ou `cancelled`; a situação efetiva também considera o prazo. Um registro pendente vencido é exibido como expirado e não aceita aprovação. Regras para solicitações simultâneas e sua substituição devem acompanhar a migração e os comandos; índice parcial com `now()` não resolve a expiração.
+Estado técnico da decisão: `pending`, `approved`, `rejected`, `cancelled` ou `expired`; a situação efetiva também considera o prazo. O estado persistido `expired` é opcional para finalização e não exige um decisor humano fictício. Um registro pendente vencido é exibido como expirado e não aceita aprovação. Regras para solicitações simultâneas e sua substituição devem acompanhar a migração e os comandos; índice parcial com `now()` não resolve a expiração.
 
-Essas tabelas não foram criadas. O detalhamento físico e o SQL adicional serão feitos sem repetir o script que criou as quatro tabelas existentes.
+Essas tabelas não foram criadas. O [detalhamento físico e os scripts do segundo incremento](SCHEMA-APROVACAO-AUDITORIA.md) estão preparados para ensaio, sem repetir o script que criou as quatro tabelas existentes.
 
 ## 7. Auditoria e autorização
 
@@ -80,16 +80,16 @@ Cada contrato limita entrada, saída e tentativas, verifica o vínculo/admin atu
 
 ## 8. Inicialização do primeiro admin
 
-Proposta operacional, ainda sem execução:
+O responsável pelo projeto confirmou que será o primeiro admin. Nome e e-mail indicados estão guardados somente na preparação local; não há vínculo de admin concedido. Procedimento operacional ainda sem execução:
 
-1. Identificar a igreja real e a pessoa indicada pelo responsável pelo piloto.
+1. Identificar a igreja real e conferir os dados da pessoa já indicada pelo responsável pelo piloto.
 2. Essa pessoa autentica no aplicativo; validar conta e e-mail confirmado pelo Supabase. Entrar no painel administrativo do Supabase não cria uma conta de usuário do aplicativo.
 3. Um procedimento de manutenção restrito cria igreja/membro/vínculo de admin e registra a inicialização atomicamente. Conferir identidades e unicidades antes da concessão.
 4. Testar acesso limitado àquela igreja; emissão passa a acontecer pelos comandos autorizados.
 
 O primeiro usuário a entrar não vira admin automaticamente. Não oferecer bootstrap público, senha escolhida pelo admin ou edição livre de papel pelo cliente. Autoria inicial precisa distinguir o operador de manutenção da conta que recebe a concessão; não falsificar a autoria atribuindo-a ao novo admin.
 
-Faltam os dados reais da igreja, conta da pessoa indicada, fuso/local e política padrão de duração. A escolha `warn`/`block` precisa ser explícita no cadastro, pois o SQL inicial não colocou um padrão silencioso.
+Faltam os dados reais da igreja, a autenticação da pessoa indicada no aplicativo e seu identificador Auth, fuso/local e política padrão de duração. A escolha `warn`/`block` precisa ser explícita no cadastro, pois o SQL inicial não colocou um padrão silencioso.
 
 ## 9. Verificações antes da liberação
 

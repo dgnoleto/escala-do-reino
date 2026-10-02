@@ -1,0 +1,83 @@
+# Escala do Reino — schema de aprovação de nome e auditoria
+
+Versão 1 · 2 de outubro de 2026
+
+**Situação:** segundo incremento preparado, ainda sem execução em PostgreSQL ou aplicação ao Supabase. Complementa o [fluxo de acesso](ACESSO-E-AUDITORIA.md) e o [schema inicial](SCHEMA-ACESSO.md). Não repetir o primeiro script de criação no projeto existente.
+
+## 1. Regras e limites
+
+- Mesmo e-mail confirmado do destinatário; Google ou e-mail/senha.
+- Um convite pendente por membro; emissão de outro cancela o anterior.
+- Nome diferente aguarda aprovação do admin antes de alterar cadastro ou conceder acesso.
+- Proposta e aprovação antes do vencimento original de 72 horas; sem prorrogação.
+- O responsável pelo projeto confirmou ser o primeiro admin. Nome/e-mail indicados foram guardados apenas no arquivo local de preparação; ainda não há autenticação no aplicativo nem concessão registrada.
+
+Este incremento cria somente estrutura fechada, índices e restrições. Não implementa emissão/resgate, aprovação, bootstrap ou endpoints. Alterações de nome, acesso e auditoria só serão liberadas por comandos transacionais autorizados.
+
+## 2. Alterações em `access_invitations`
+
+Índice único `(church_id, member_id)` para linhas com `redeemed_at is null and revoked_at is null`. Não depende do relógio; uma linha vencida ainda ocupa a posição e precisa ser finalizada pela transação de reemissão. O histórico preserva o vencimento original e o motivo da substituição na auditoria.
+
+Unicidade auxiliar em `(church_id, member_id, id, redeemed_by_user_id, expires_at)` permite que a solicitação referencie o convite já consumido pela mesma conta e seu prazo original. Uma FK com `invitation_id` sozinho não comprova igreja/membro/conta. Convite consumido não significa acesso concedido.
+
+Antes de aplicar, conferir duplicidades não finalizadas; se houver, resolver com procedimento de produto antes do índice. O incremento não cancela nem altera convites existentes automaticamente.
+
+## 3. `app_private.access_requests`
+
+| Campo | Tipo | Regra |
+| --- | --- | --- |
+| `id` | `uuid` | Chave primária. |
+| `church_id` | `uuid` | Igreja existente. |
+| `member_id` | `uuid` | FK composta com igreja para membro existente. |
+| `invitation_id` | `uuid` | Único; uma solicitação por convite consumido. |
+| `requester_user_id` | `uuid` | Conta Auth que apresentou o convite; não recebida livremente do cliente. |
+| `original_display_name` | `text` | Nome do cadastro no momento da proposta; 1–120 caracteres sem espaços externos. |
+| `proposed_display_name` | `text` | Nome proposto, diferente do original; 1–120 caracteres. |
+| `submitted_at` | `timestamptz` | Instante da proposta; anterior ao vencimento. |
+| `expires_at` | `timestamptz` | Mesmo vencimento original do convite, conferido pela FK composta. |
+| `status` | `text` | Estado técnico: `pending`, `approved`, `rejected`, `cancelled` ou `expired`. |
+| `decided_by_user_id` | `uuid` | Conta decisora nas decisões humanas; FK para Auth. |
+| `decided_at` | `timestamptz` | Momento da decisão/finalização; não anterior à proposta. |
+| `created_at`, `updated_at` | `timestamptz` | Datas do servidor; gatilho preenche atualização. |
+
+FK composta inclui igreja, membro, convite, conta solicitante e prazo. Confere que a conta corresponde a `redeemed_by_user_id`; o comando ainda deve validar e-mail, instante real do consumo e autorização.
+
+Pendente não tem decisão registrada. Aprovado/rejeitado/cancelado exige decisor e instante. Expirado persistido exige instante no vencimento ou depois, sem atribuir um decisor humano fictício. Enquanto permanece `pending`, o prazo atual ainda determina a expiração efetiva: não depender de uma tarefa para impedir aprovação vencida.
+
+`approved` exige `decided_at < expires_at`. Essa restrição não substitui a validação do horário atual após bloqueios: um comando privilegiado poderia gravar um instante antigo. Autoria/instantes vêm do servidor; não aceitar datas do formulário como prova de aprovação válida.
+
+Rejeição, retirada/cancelamento e efeito de nova emissão sobre solicitações abertas são estados reservados, sem comandos liberados nesta etapa. Não acrescentar uma unicidade de solicitação pendente que impeça nova tentativa após expiração sem definir o procedimento correspondente.
+
+## 4. `app_private.audit_entries`
+
+| Campo | Tipo | Regra |
+| --- | --- | --- |
+| `id` | `uuid` | Chave primária. |
+| `church_id` | `uuid` | Igreja auditada; FK sem cascata. |
+| `action` | `text` | Ação definida pelo comando; 1–80 caracteres. |
+| `actor_user_id` | `uuid` | Conta Auth do ator de aplicação; opcional na manutenção controlada. |
+| `actor_source` | `text` | `application` ou `maintenance`. |
+| `maintenance_operator` | `text` | Identificação do operador de manutenção, obrigatória nessa origem; não é um segredo. |
+| `target_type` | `text` | Tipo lógico do alvo; escolhido pelo comando, não pelo cliente. |
+| `target_id` | `uuid` | Identificador do alvo, validado pelo comando. |
+| `details` | `jsonb` | Objeto limitado a 4096 bytes; campos permitidos por operação. |
+| `occurred_at` | `timestamptz` | Instante do servidor. |
+
+Origem de aplicação exige conta autora. Manutenção exige identificação controlada do operador; permite diferenciar quem inicializou o ambiente de quem recebeu o papel de admin. O alvo polimórfico não é uma FK: cada comando valida existência e igreja.
+
+Não registrar senha, segredo, token completo ou link de recuperação. O limite de tamanho não garante ausência de dados sensíveis; comandos usam lista explícita de campos. O admin não ganha permissão direta para editar/apagar auditoria. Retenção e consulta acompanham o histórico de um ano, com detalhes ainda a implementar.
+
+## 5. Arquivos e validação
+
+1. [Pré-verificação somente leitura](sql/003_preflight_access_requests.sql): todos os campos devem ser `true`.
+2. [Ensaio transacional](sql/003_validate_access_requests_and_audit.sql): executa a estrutura, verifica RLS/privilégios, auditoria com ator e formato válidos e rejeição de aprovação no vencimento/depois; termina em `ROLLBACK`.
+3. [Criação permanente](sql/003_access_requests_and_audit.sql): apenas após validar o ensaio, uma vez; termina em `COMMIT`.
+4. [Verificação posterior somente leitura](sql/004_verify_access_requests_and_audit.sql): seis tabelas, RLS habilitada, privilégios diretos bloqueados e índice/FK presentes.
+
+O ensaio usa apenas dados temporários da aplicação, sem inserir usuários no Auth. Os UUIDs fictícios aparecem em entradas que precisam falhar em CHECKs específicos, antes das FKs. Não testa uma aprovação válida com identidade real, autorização de admin, emissão/resgate concorrentes ou API.
+
+Resultado final esperado do ensaio: `PASS: incremento ensaiado; alterações desfeitas; estrutura inicial preservada`. As duas tabelas novas, o índice e a unicidade auxiliar devem ser desfeitos; as quatro tabelas anteriores continuam presentes. Erro interrompe o ensaio e exige conferir/corrigir antes da criação permanente.
+
+Este incremento ainda não foi executado; não alterar o relato para “aplicado” sem resultado da execução e verificação posterior. `app_private` continua desmarcado na Data API; manter exposição automática de novas tabelas desligada.
+
+Referências técnicas: [restrições e chaves estrangeiras do PostgreSQL](https://www.postgresql.org/docs/current/ddl-constraints.html) e [controle da Data API no Supabase](https://supabase.com/docs/guides/api/securing-your-api).

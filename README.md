@@ -11,6 +11,7 @@ Documentação consolidada em **30/09/2026** e atualizada em **02/10/2026**. Há
 - [PRD — escopo do MVP, regras e critérios de aceite](docs/PRD.md).
 - [Arquitetura do banco e das permissões — modelo lógico, segurança e pendências](docs/ARQUITETURA-BANCO.md).
 - [Schema inicial — campos e restrições de igreja, membros e acesso](docs/SCHEMA-ACESSO.md).
+- [Aprovação de nome e auditoria — segundo incremento de schema, ainda não aplicado](docs/SCHEMA-APROVACAO-AUDITORIA.md).
 - [Evolução futura — decisões preservadas e propostas adiadas](docs/EVOLUCAO-FUTURA.md).
 
 O MVP é focado no culto. Convites de participação, reservas, prazos e aceite eletrônico continuam futuros. O convite para **acessar a igreja**, com login Google ou e-mail/senha e vínculo a um membro cadastrado, faz parte da primeira versão. O convite vale 72 horas e é de uso único. Não haverá CPF. O Supabase Auth gerencia as senhas; a aplicação oferece recuperação por e-mail sem permitir ao admin definir a senha alheia. Apple e Microsoft ficam para evolução posterior.
@@ -48,3 +49,4 @@ Flutter é apenas candidato sugerido, não uma decisão. As regras de produto es
 **Estado do banco em 02/10/2026:** estrutura inicial de igreja, membros, acesso e convites criada no Supabase pelo responsável pelo projeto. Captura da verificação confirma quatro tabelas em `app_private`, RLS habilitada e privilégios diretos bloqueados para `anon`, `authenticated` e `service_role`. Login integrado, comandos autorizados, primeiro admin, auditoria e envio de e-mails para membros ainda estão em construção. Evidências e limites no [schema inicial](docs/SCHEMA-ACESSO.md).
 
 **Regras de acesso confirmadas em 02/10/2026:** convite para o mesmo e-mail confirmado; nome diferente aguarda aprovação do admin antes de liberar acesso, dentro das 72 horas originais; um convite pendente por membro, com cancelamento do anterior na reemissão. Detalhamento e propostas no [fluxo de acesso e auditoria](docs/ACESSO-E-AUDITORIA.md).
+
