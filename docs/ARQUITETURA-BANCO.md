@@ -1,12 +1,12 @@
 # Escala do Reino — arquitetura do banco e das permissões
 
-Versão 3 · 2 de outubro de 2026
+Versão 4 · 2 de outubro de 2026
 
 **Situação:** proposta de arquitetura para revisão. Este documento descreve o modelo lógico; não cria tabelas, configurações ou permissões no Supabase. As pendências de produto continuam identificadas antes da implementação dependente.
 
 **Base de produto:** [PRD do MVP](PRD.md) e [evoluções futuras](EVOLUCAO-FUTURA.md), com as decisões confirmadas na revisão de 2 de outubro. O protótipo examinado corresponde ao commit [`e2bdad3`](https://github.com/dgnoleto/escala-do-reino/tree/e2bdad3107b28ad44355e9c30d9a6cd857f89fcf). A integração GitHub–Supabase foi confirmada pela captura enviada pelo responsável pelo projeto. A configuração atual de aplicação automática e o conteúdo interno do banco não foram inspecionados.
 
-**Atualização desta versão:** consolida nomes técnicos em inglês; fuso da igreja sem preferência individual; localização com endereço/link do Google Maps; início/fim previstos do evento; política opcional de bloqueio na publicação, com rascunhos permitidos; preparação dos apoios fora da janela principal. Este documento complementa o PRD do MVP, sem substituí-lo. A seção 6 e o cenário M26 do PRD acompanham a política opcional, com cenários adicionais M47–M50. A publicação desta documentação não cria migrações nem configura o banco.
+**Atualização desta versão:** adota Google e e-mail/senha, com recuperação via Supabase e SMTP pendente para o piloto; consolida nomes técnicos em inglês; fuso da igreja sem preferência individual; localização com endereço/link do Google Maps; início/fim previstos do evento; política opcional de bloqueio na publicação, com rascunhos permitidos; preparação dos apoios fora da janela principal. Este documento complementa o PRD do MVP, sem substituí-lo. A seção 6 e o cenário M26 do PRD acompanham a política opcional, com cenários adicionais M47–M50. A publicação desta documentação não aplica SQL nem configura o banco. O [SQL inicial](sql/001_initial_access_structure.sql) é um rascunho de estrutura fechada, ainda sem validação em PostgreSQL.
 
 ## 1. Objetivo e limites
 
@@ -52,7 +52,7 @@ O primeiro detalhamento físico está em [Schema inicial de igreja e acesso](SCH
 
 | Entidade | Conteúdo mínimo proposto | Relação e regra |
 | --- | --- | --- |
-| `auth.users` | Conta e identidades autenticadas | Mantida pelo Supabase Auth; a aplicação não armazena senhas Google/Apple/Microsoft. |
+| `auth.users` | Conta e identidades autenticadas | Mantida pelo Supabase Auth; a aplicação não armazena senhas; Google e e-mail/senha são gerenciados pelo Supabase Auth. |
 | `churches` | Nome, `timezone`, endereço, `google_maps_url`, política padrão de duração, situação | Unidade de isolamento dos dados; fuso herdado por seus membros, sem preferência individual. Política padrão copiada para novos eventos. |
 | `members` | Igreja, nome de exibição, situação, contato mínimo quando necessário | Cadastro da pessoa naquela igreja; não exigir login para cadastrar ou escalar. Nome não é identificador único. |
 | `church_access` | Igreja, conta, membro, situação, permissão admin, autoria da concessão/revogação | Um vínculo por conta/igreja e um por membro/igreja. Permissões derivam de registros controlados; o cliente não se concede admin. |
@@ -188,11 +188,15 @@ Conflitos mínimos: exclusividade entre cantar, tocar e dançar no mesmo bloco d
 
 ## 8. Acesso por convite — decisões e detalhamento pendente
 
-Decisões confirmadas: Google, Apple e Microsoft como provedores; sem CPF; sem senha própria; convite de uso único com validade de 72 horas desde a emissão. Admin da igreja não altera credenciais de outra pessoa. A recuperação dos provedores é externa; não haverá reset de senha própria pela aplicação no MVP. Na configuração real, limitar os métodos habilitados aos aprovados também no serviço de autenticação; esconder um formulário não basta.
+Decisões confirmadas: Google e e-mail/senha no MVP; sem CPF; convite de uso único com validade de 72 horas desde a emissão. Apple e Microsoft ficam para evolução posterior. O Supabase Auth gerencia as credenciais; nenhuma tabela da aplicação armazena senha, hash de senha ou token de recuperação. Admin da igreja não define ou altera a senha de outra pessoa; pode solicitar o envio da recuperação sem receber seu link. A pessoa define a nova senha pelo fluxo do Supabase. A recuperação da conta Google continua externa. Habilitar somente Google e Email no serviço de autenticação; esconder formulários não basta.
 
-O admin escolhe um membro existente e emite um convite com destinatário, validade de 72 horas e token de uso único. A pessoa autentica com Google/Apple/Microsoft e apresenta o convite. O resgate é atômico: confirma validade, destinatário, ausência de vínculo incompatível e vincula a conta ao membro, sem conceder liderança ou admin por padrão.
+**Configuração informada pelo responsável pelo projeto em 02/10/2026:** Google salvo; Email habilitado, troca segura de e-mail e senha, exigência de senha atual na troca normal, mínimo de 15 caracteres sem regra adicional de composição, OTP de 8 dígitos e expiração de 3600 segundos. Retorno de desenvolvimento em `http://localhost:3000`, com `http://localhost:3000/**` na lista permitida. Esses relatos não comprovam login integrado ou fluxos testados. Recuperação autenticada de senha não exige a senha esquecida. Não aplicar normalização NFC às senhas.
 
-Não associar pessoas por igualdade de nome. O vínculo entre Google, Apple e Microsoft não deve ser inventado pela aplicação com base em nomes ou e-mails não verificados. Endereços privados de retransmissão da Apple exigem fluxo de identificação definido.
+O SMTP personalizado permanece pendente: não há domínio próprio. Desenvolvimento pode usar o envio padrão restrito à equipe do projeto; antes de liberar e-mail/senha aos membros, configurar e testar confirmação, recuperação, limites e proteção contra abuso com um serviço de envio adequado. Para produção, usar endereços de retorno HTTPS específicos e substituir o Site URL local. O prazo de uma hora dos links/códigos do Auth não muda as 72 horas do convite de acesso da aplicação.
+
+O admin escolhe um membro existente e emite um convite com destinatário, validade de 72 horas e token de uso único. A pessoa autentica com Google ou e-mail e senha e apresenta o convite. O resgate é atômico: confirma validade, destinatário, ausência de vínculo incompatível e vincula a conta ao membro, sem conceder liderança ou admin por padrão.
+
+Não associar pessoas por igualdade de nome. O vínculo entre Google e e-mail/senha não deve ser inventado pela aplicação com base em nomes ou e-mails não verificados. Associação de identidades exige procedimento seguro; recursos automáticos do Auth precisam ser avaliados junto ao vínculo único por igreja/membro.
 
 No primeiro acesso autenticado, solicitar confirmação/preenchimento do nome, mantendo o vínculo com o membro previamente cadastrado. A reconciliação de divergências de nome permanece pendente. Não criar um segundo membro por concluir esse formulário. Restrição de unicidade do vínculo por conta/igreja e por membro/igreja impede duplicar o acesso ao mesmo cadastro; não garante que uma pessoa nunca crie outra conta no provedor.
 
@@ -244,7 +248,7 @@ Definir perda máxima de dados e tempo de recuperação aceitáveis; selecionar 
 
 | Tema | Recomendação para avaliação | O que ainda precisa ser decidido |
 | --- | --- | --- |
-| Convite e identidade | Token de uso único, membro prévio e resgate atômico | Destinatário divergente, revogação, reconciliação do nome, Google/Apple/Microsoft e recuperação de vínculo; validade de 72 horas já confirmada. |
+| Convite e identidade | Token de uso único, membro prévio e resgate atômico | Destinatário divergente, revogação, reconciliação do nome, Google ou e-mail e senha e recuperação de vínculo; validade de 72 horas já confirmada. |
 | Transferência de liturgia | Troca atômica por admin, com versão e revalidação da liderança em cada comando | Tratamento da ação em curso e comunicação da transferência. |
 | Checklist conjunto | Guardar duas validações separadas; ninguém substituir silenciosamente os dois validadores | Quem valida, alcance da liturgia, troca/desmarcação e correção. |
 | Cadastros utilizados | Desativar e preservar referências | Confirmação da regra e tratamento de alocações futuras afetadas. |

@@ -36,13 +36,15 @@ Há um cadastro único de cada membro por igreja. Uma pessoa pode integrar vári
 
 ### 3.1 Entrada na igreja
 
-**Decidido:** login com Google, Apple ou Microsoft, com acesso à igreja por convite associado a um membro previamente cadastrado. Fazer login, por si só, não libera dados da igreja. A pessoa não escolhe livremente igreja, equipe ou privilégios e não pode consultar dados de outra igreja sem autorização.
+**Decidido:** login com Google ou e-mail e senha gerenciada pelo Supabase Auth, com acesso à igreja por convite associado a um membro previamente cadastrado. Fazer login, por si só, não libera dados da igreja. A pessoa não escolhe livremente igreja, equipe ou privilégios e não pode consultar dados de outra igreja sem autorização.
 
 Uma pessoa convidada pode não ter função habilitada e ainda assim consultar o cronograma geral. Convite de acesso não é convite para participar de uma escala. **Somente admin pode enviar convites de acesso.** O convite vale 72 horas a partir da emissão, é de uso único e pode ser cancelado pelo admin; após o vencimento, exige nova emissão. Associação segura e procedimento de revogação ainda precisam de detalhamento.
 
-**Decidido:** não coletar CPF e não oferecer login com senha própria no MVP. No primeiro acesso autenticado, solicitar confirmação/preenchimento do nome, associado ao membro já cadastrado pelo convite; isso não cria outro membro nem autoriza editar cadastros alheios. Dados da igreja permanecem protegidos até concluir o vínculo autorizado. A forma de reconciliar divergências de nome precisa de detalhamento.
+**Decidido:** não coletar CPF. Oferecer Google em destaque e e-mail e senha como alternativa; as credenciais são gerenciadas pelo Supabase Auth, sem armazenar senhas nas tabelas da aplicação. No primeiro acesso autenticado, solicitar confirmação/preenchimento do nome, associado ao membro já cadastrado pelo convite; isso não cria outro membro nem autoriza editar cadastros alheios. Dados da igreja permanecem protegidos até concluir o vínculo autorizado. A forma de reconciliar divergências de nome precisa de detalhamento.
 
-Admin da igreja não pode definir ou alterar credenciais de outro usuário. A recuperação da conta Google, Apple ou Microsoft ocorre no próprio provedor; não haverá formulário de senha ou envio de reset de senha própria pela Escala do Reino nesta versão.
+Admin da igreja não pode definir ou alterar credenciais de outro usuário. Para e-mail e senha, a pessoa pode solicitar recuperação por e-mail; o admin pode solicitar o envio, sem escolher a nova senha ou obter o link de recuperação. A recuperação da conta Google ocorre no próprio provedor. Apple e Microsoft ficam fora do MVP atual, para avaliação posterior.
+
+Antes do piloto com membros, configurar e testar o envio de confirmação e recuperação por um serviço SMTP. Durante o desenvolvimento, o envio padrão do Supabase fica restrito aos endereços da equipe do projeto e aos limites do serviço. Manter confirmação de e-mail habilitada.
 
 ### 3.2 Papéis e limites
 
@@ -315,7 +317,7 @@ Cópias de segurança e restauração são assunto separado, a definir na arquit
 
 ## 11. Escopo e exclusões
 
-**No MVP:** acesso por convite com Google/Apple/Microsoft; modelo de culto simples; cadastros e planejamento web; aptidões/permissões; escala nominal por líderes; conflitos com sugestões de candidatos habilitados; início/fim previstos e política de duração com alerta ou bloqueio opcional da publicação, preservando rascunhos; cronograma macro, detalhes da própria escala e bastidores; checklist simples; controle manual exclusivo do líder da liturgia por evento; cronômetro regressivo por atividade com excesso; cancelamento por motivo cadastrado; retorno para pendente com reinício integral; registro de intervalos; encerramento manual do culto; ausência/substituição manual; ficha musical simples com observação; avisos internos; histórico de um ano; consulta desatualizada e correção posterior; proteção contra ações duplicadas.
+**No MVP:** acesso por convite com Google ou e-mail e senha; modelo de culto simples; cadastros e planejamento web; aptidões/permissões; escala nominal por líderes; conflitos com sugestões de candidatos habilitados; início/fim previstos e política de duração com alerta ou bloqueio opcional da publicação, preservando rascunhos; cronograma macro, detalhes da própria escala e bastidores; checklist simples; controle manual exclusivo do líder da liturgia por evento; cronômetro regressivo por atividade com excesso; cancelamento por motivo cadastrado; retorno para pendente com reinício integral; registro de intervalos; encerramento manual do culto; ausência/substituição manual; ficha musical simples com observação; avisos internos; histórico de um ano; consulta desatualizada e correção posterior; proteção contra ações duplicadas.
 
 **Fora do MVP:** participação aberta; disponibilidade autodeclarada; convites de participação, prazos, reservas e confirmação/recusa; pedidos de mudança; chamados automatizados; check-in; compartilhamento externo; dashboards; delegação do andamento aos líderes de atividades; operação completa de retiros/turnos; motor amplo de regras/dependências; edição offline.
 
@@ -327,7 +329,7 @@ Critérios de comportamento esperado, não testes de software já executados. Os
 
 | ID | Situação | Resultado esperado |
 | --- | --- | --- |
-| M01 | Pessoa faz login Google/Apple/Microsoft sem convite vinculado à igreja. | Login não libera dados da igreja ou escolha autônoma de permissões. |
+| M01 | Pessoa faz login Google ou e-mail e senha sem convite vinculado à igreja. | Login não libera dados da igreja ou escolha autônoma de permissões. |
 | M02 | Pessoa autorizada não tem função cadastrada nem está escalada. | Consulta o cronograma macro, sem bastidores ou detalhes de outras escalas. |
 | M03 | Pessoa escalada consulta sua participação. | Vê função, horário e música/tom/orientações pertinentes, sem poder editar. |
 | M04 | Líder de equipe consulta bastidores. | Vê o âmbito sob sua responsabilidade; a liturgia vê todo o evento, conforme papéis. |
@@ -392,7 +394,7 @@ As regras já fechadas não dependem de rediscussão para serem documentadas. Os
 
 | Tema | O que falta fechar |
 | --- | --- |
-| Convite de acesso | Emissão é exclusiva de admin. Detalhar revogação, associação segura ao membro existente, convite enviado à pessoa errada, e-mails divergentes, reconciliação do nome e provedores Google/Apple/Microsoft da mesma pessoa. Validade de 72 horas, uso único, ausência de CPF e ausência de senha própria já estão decididos. |
+| Convite de acesso | Emissão é exclusiva de admin. Detalhar revogação, associação segura ao membro existente, convite enviado à pessoa errada, e-mails divergentes, reconciliação do nome e métodos Google e e-mail/senha da mesma pessoa. Validade de 72 horas, uso único, ausência de CPF e senha gerenciada pelo Supabase Auth já estão decididos. |
 | Liderança por evento | Designação/troca é exclusiva de admin. Detalhar a transferência durante evento iniciado, sem dois controles concorrentes. |
 | Checklist | Lideranças operam e cada líder de atividade marca apenas seu âmbito; itens conjuntos exigem duas validações. Detalhar validadores, alcance da liturgia, desmarcação, correções e canal; não reintroduzir bloqueio. |
 | Cadastros vinculados | Confirmar desativação em vez de exclusão para membros/funções/equipes já utilizados, preservando referências. Retirar atividade da programação já tem regra própria. |

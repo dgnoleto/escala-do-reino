@@ -1,20 +1,20 @@
 # Escala do Reino — schema inicial de igreja e acesso
 
-Versão 1 · 2 de outubro de 2026
+Versão 2 · 2 de outubro de 2026
 
-**Situação:** especificação física para revisão, sem migração SQL criada ou executada. Complementa o [PRD](PRD.md) e a [arquitetura](ARQUITETURA-BANCO.md). Este primeiro incremento cobre igreja, membro, vínculo e convite; equipes, planejamento e execução serão detalhados nos incrementos seguintes.
+**Situação:** especificação física com [SQL inicial preparado para validação](sql/001_initial_access_structure.sql), ainda não executado em PostgreSQL ou no projeto Supabase. Complementa o [PRD](PRD.md) e a [arquitetura](ARQUITETURA-BANCO.md). Este primeiro incremento cobre igreja, membro, vínculo e convite; equipes, planejamento e execução serão detalhados nos incrementos seguintes.
 
 ## 1. Regras confirmadas e limites
 
-- Login por Google, Apple ou Microsoft. Contas e identidades ficam no Supabase Auth.
-- Sem CPF, senha própria, formulário de recuperação de senha própria ou alteração de credenciais pelo admin da igreja.
+- Login por Google ou e-mail e senha. Contas, senhas e identidades ficam no Supabase Auth. Apple e Microsoft ficam para evolução posterior.
+- Sem CPF e sem credenciais nas tabelas da aplicação. Recuperação de senha por e-mail via Supabase; admin pode solicitar o envio, mas não define a nova senha nem recebe seu link.
 - Convite associado a membro existente, válido por 72 horas desde a emissão, de uso único e cancelável pelo admin.
 - No primeiro acesso autenticado, confirmar/preencher o nome sem criar outro membro. Divergência com o cadastro existente exige procedimento a detalhar.
 - Login não libera dados da igreja. O acesso depende de vínculo autorizado e ativo.
 - Um vínculo por conta/igreja e por membro/igreja. Uma conta pode ter vínculos autorizados com igrejas distintas.
 - Fuso da igreja, sem preferência individual. Nomes técnicos em inglês e texto em UTF-8.
 
-A validade de 72 horas é do convite da aplicação, não um ajuste automático de validade dos tokens OAuth do provedor.
+A validade de 72 horas é do convite da aplicação, não um ajuste automático de validade dos tokens OAuth ou dos códigos/links do Supabase Auth (configurados com uma hora nesta etapa).
 
 ## 2. Esquema e convenções
 
@@ -35,7 +35,7 @@ Campos de autoria e datas de registro são preenchidos pelo servidor. Os valores
 | `timezone` | `text` | Obrigatório; validar identificador reconhecido pela base de fusos do PostgreSQL. Não inferir o fuso do piloto. |
 | `address` | `text` | Localização informada; propor até 500 caracteres. |
 | `google_maps_url` | `text` | Link de localização; validar formato e origem permitida no servidor antes de apresentá-lo. |
-| `default_duration_policy` | `text` | `warn` ou `block`; padrão inicial continua pendente, sem escolher silenciosamente. |
+| `default_duration_policy` | `text` | `warn` ou `block`; obrigatório e sem valor padrão no SQL; escolha explícita ao cadastrar a igreja, pois o padrão de produto continua pendente. |
 | `status` | `text` | `active` ou `inactive`; procedimento de desativação ainda pendente. |
 | `created_at` | `timestamptz` | Obrigatório; momento do registro. |
 | `updated_at` | `timestamptz` | Obrigatório; atualizado pelo servidor. |
@@ -50,7 +50,7 @@ Nome não é identificador único. Alterar o fuso não remarca eventos já grava
 | `church_id` | `uuid` | Obrigatório; referência à igreja, sem exclusão em cascata proposta. |
 | `display_name` | `text` | Obrigatório; propor 1–120 caracteres após retirar espaços nas extremidades. Preservar acentos e apóstrofos. |
 | `status` | `text` | `active` ou `inactive`; tratamento de escalas futuras depende da decisão de desativação. |
-| `created_by_user_id` | `uuid` | Referência à conta autora em `auth.users`; procedimento inicial controlado. |
+| `created_by_user_id` | `uuid` | Obrigatório; referência à conta autora em `auth.users`; procedimento inicial controlado. |
 | `created_at` | `timestamptz` | Obrigatório; momento do registro. |
 | `updated_at` | `timestamptz` | Obrigatório; atualizado pelo servidor. |
 
@@ -67,7 +67,7 @@ Unicidade adicional em `(church_id, id)` suporta referências que conferem a igr
 | `status` | `text` | `active` ou `revoked`. |
 | `is_admin` | `boolean` | Obrigatório; padrão falso. Somente operação autorizada pode conceder. |
 | `onboarding_completed_at` | `timestamptz` | Obrigatório para acesso ativo; registra conclusão da etapa inicial do nome. |
-| `granted_by_user_id` | `uuid` | Conta responsável pela concessão; primeiro admin exige inicialização controlada e auditada. |
+| `granted_by_user_id` | `uuid` | Obrigatório; conta responsável pela concessão; primeiro admin exige inicialização controlada e auditada. |
 | `granted_at` | `timestamptz` | Obrigatório; momento da concessão. |
 | `revoked_by_user_id` | `uuid` | Conta responsável pela revogação, quando ocorrer. |
 | `revoked_at` | `timestamptz` | Momento da revogação; obrigatório no estado revogado. |
@@ -109,19 +109,21 @@ Unicidade do token não garante uso único sozinha. Resgate e criação/reativa�
 
 ## 5. Pontos a fechar antes da migração utilizável
 
-1. Comprovação do destinatário quando o e-mail do provedor difere do convite, inclusive endereço privado Apple.
+1. Comprovação do destinatário quando o e-mail do provedor difere do convite, com Google ou e-mail/senha; tratamento de provedores futuros será reavaliado quando forem incluídos.
 2. Confirmação do nome e tratamento de divergências sem sobrescrever o cadastro silenciosamente.
 3. Associação e recuperação entre provedores; CPF, nome igual ou admin isoladamente não comprovam controle das credenciais.
 4. Revogação, reemissão, reativação e número de convites pendentes por membro.
 5. Desativação de cadastros utilizados, sem tratar a proposta como decisão já confirmada.
 6. Primeiro admin e trilha de auditoria; fuso/local reais do piloto e política padrão de duração.
 
-Essas pendências permitem revisar campos e relações agora, mas não autorizam implementar fluxos ambíguos nem liberar acesso. Na implantação, habilitar/configurar os três provedores e desabilitar métodos de autenticação próprios não aprovados. Isso é configuração do Auth, não uma garantia fornecida por estas tabelas.
+Essas pendências permitem revisar campos e relações agora, mas não autorizam implementar fluxos ambíguos nem liberar acesso. Na implantação, habilitar/configurar Google e Email, mantendo confirmação de e-mail; Apple, Azure/Microsoft e métodos não aprovados ficam desabilitados. SMTP para membros e testes de confirmação/recuperação são pré-requisitos do piloto. Isso é configuração do Auth, não uma garantia fornecida por estas tabelas.
 
 ## 6. Validação prevista
 
 Antes de aplicar ao projeto real, validar em ambiente de teste: UTF-8; relações entre igrejas; unicidades de vínculo; conta sem convite; convite aos 71h59 e no vencimento; resgate/cancelamento concorrentes; nome confirmado; revogação; acesso direto às tabelas; admin sem operação sobre credenciais.
 
-Este arquivo é especificação. Não houve execução de SQL nem teste de integração com o Supabase nesta revisão.
+O [SQL de estrutura](sql/001_initial_access_structure.sql) cria apenas quatro tabelas vazias, índices, restrições e gatilhos internos de fuso e atualização de datas. Executa em transação, exige UTF-8 e para se `app_private` já existir. Revoga acesso direto de `PUBLIC`, `anon`, `authenticated` e `service_role`; mantém RLS sem políticas de liberação. Não altera o Auth nem cria dados, admin, emissão/resgate ou auditoria. Não entra em `supabase/migrations` e não é implantado pela integração GitHub.
+
+Antes de executar a estrutura, conferir o ambiente com a [consulta somente leitura](sql/000_preflight.sql). A revisão de texto/estrutura não substitui execução em PostgreSQL. Como não há PostgreSQL de teste disponível neste ambiente, validação de sintaxe pelo banco, restrições, privilégios efetivos e gatilhos continuam pendentes. Confirmar separadamente que `app_private` não está exposto na Data API. Mesmo após criar tabelas, não usar comandos de produto até implementar e testar a autorização, o resgate transacional e a auditoria.
 
 Referências técnicas: [RLS](https://supabase.com/docs/guides/database/postgres/row-level-security), [dados de usuários](https://supabase.com/docs/guides/auth/managing-user-data), [configuração do Auth](https://supabase.com/docs/guides/auth/general-configuration) e [login social](https://supabase.com/docs/guides/auth/social-login).

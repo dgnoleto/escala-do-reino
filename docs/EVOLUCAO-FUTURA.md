@@ -138,3 +138,7 @@ A hipótese anterior de membro preencher música/link/tom foi substituída pela 
 Em cursos online, poderá fazer sentido permitir ao participante escolher um fuso para visualizar os horários; essa preferência não existe no MVP de escala, em que o membro herda o fuso da igreja.
 
 Não há compromisso de entrega, prioridade ou desenho aprovado desses módulos. Pagamentos, integrações, permissões e estrutura de dados serão definidos quando cada módulo for avaliado, sem antecipar sua implementação no MVP.
+
+## 10. Novos provedores de login
+
+**Evolução posterior, após ajuste do MVP em 02/10/2026:** avaliar Sign in with Apple e Microsoft. O MVP usa Google e e-mail/senha gerenciados pelo Supabase Auth. A inclusão depende de cadastro do aplicativo no provedor, requisitos de conta/custo, manutenção de credenciais e validação da associação segura ao membro existente. Não amplia o escopo do banco agora.
