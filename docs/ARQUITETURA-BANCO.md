@@ -1,10 +1,10 @@
 # Escala do Reino — arquitetura do banco e das permissões
 
-Versão 6 · 2 de outubro de 2026
+Versão 7 · 2 de outubro de 2026
 
 **Situação:** proposta de arquitetura para revisão. Este documento descreve o modelo lógico; não cria tabelas, configurações ou permissões no Supabase. As pendências de produto continuam identificadas antes da implementação dependente.
 
-**Base de produto:** [PRD do MVP](PRD.md) e [evoluções futuras](EVOLUCAO-FUTURA.md), com as decisões confirmadas na revisão de 2 de outubro. O protótipo examinado corresponde ao commit [`e2bdad3`](https://github.com/dgnoleto/escala-do-reino/tree/e2bdad3107b28ad44355e9c30d9a6cd857f89fcf). A integração GitHub–Supabase foi confirmada pela captura enviada pelo responsável pelo projeto. As capturas posteriores de 02/10/2026 confirmam a execução do SQL inicial e a verificação de quatro tabelas internas. A captura da Data API mostra somente `public` e `graphql_public` selecionados, com `app_private` desmarcado. O responsável informou ter desligado `Automatically expose new tables`; essa alteração ainda não foi conferida em uma nova captura. Não inferir configurações atuais de implantação automática desses registros.
+**Base de produto:** [PRD do MVP](PRD.md) e [evoluções futuras](EVOLUCAO-FUTURA.md), com as decisões confirmadas na revisão de 2 de outubro. O protótipo examinado corresponde ao commit [`e2bdad3`](https://github.com/dgnoleto/escala-do-reino/tree/e2bdad3107b28ad44355e9c30d9a6cd857f89fcf). A integração GitHub–Supabase foi confirmada pela captura enviada pelo responsável pelo projeto. As capturas posteriores de 02/10/2026 confirmam a execução do SQL inicial e a verificação de quatro tabelas internas. O segundo incremento de solicitação/auditoria também foi aplicado: captura posterior confirma seis tabelas, RLS e bloqueios de privilégios; o responsável confirmou por texto a última coluna de FK que ficou fora da imagem. Evidências e limites no [schema de aprovação e auditoria](SCHEMA-APROVACAO-AUDITORIA.md). A captura da Data API mostra somente `public` e `graphql_public` selecionados, com `app_private` desmarcado. O responsável informou ter desligado `Automatically expose new tables`; essa alteração ainda não foi conferida em uma nova captura. Não inferir configurações atuais de implantação automática desses registros.
 
 **Atualização desta versão:** adota Google e e-mail/senha, com recuperação via Supabase e SMTP pendente para o piloto; consolida nomes técnicos em inglês; fuso da igreja sem preferência individual; localização com endereço/link do Google Maps; início/fim previstos do evento; política opcional de bloqueio na publicação, com rascunhos permitidos; preparação dos apoios fora da janela principal. Este documento complementa o PRD do MVP, sem substituí-lo. A seção 6 e o cenário M26 do PRD acompanham a política opcional, com cenários adicionais M47–M50. A publicação desta documentação não aplica SQL nem configura o banco. O [SQL inicial](sql/001_initial_access_structure.sql) define a estrutura fechada; o ensaio com `ROLLBACK` foi executado pelo responsável no Supabase, com sucesso informado pela captura de 02/10/2026. A criação permanente foi executada pelo responsável; a consulta posterior mostrou as quatro tabelas com RLS habilitada e sem privilégios diretos para `anon`, `authenticated` e `service_role`.
 
@@ -46,7 +46,7 @@ Textos, arquivos de código, migrações e intercâmbio JSON usam UTF-8. Verific
 
 ## 4. Entidades e relações
 
-O primeiro detalhamento físico está em [Schema inicial de igreja e acesso](SCHEMA-ACESSO.md). Ele especifica campos e restrições desse incremento; não é uma migração executada.
+O primeiro detalhamento físico está em [Schema inicial de igreja e acesso](SCHEMA-ACESSO.md). Ele especifica campos e restrições desse incremento e registra a execução pelo responsável. O [segundo detalhamento](SCHEMA-APROVACAO-AUDITORIA.md) acrescenta solicitação de nome e auditoria; a estrutura já aplicada não comprova os comandos de produto.
 
 ### 4.1 Igreja, acesso e pessoas
 
@@ -257,7 +257,7 @@ Definir perda máxima de dados e tempo de recuperação aceitáveis; selecionar 
 | Mudança gera conflito | Sinalizar sem alterar pessoas automaticamente | Se a mudança fica pendente ou é salva com conflito não resolvido; quais operações posteriores ficam disponíveis. |
 | Correção e projeção | Preservar previsão e recalcular execução/intervalos | Sobreposições, sequência restante e tratamento de registros incompatíveis. |
 | Preparação paralela | Offset planejado independente dos marcos operacionais | Efeito de atrasos/correções nos conflitos de preparação. |
-| Política e publicação | `warn`/`block`, rascunhos permitidos e política registrada no evento | Confirmar padrão inicial `warn`, autoridade para mudar a política de evento existente e consulta/edição de revisões em rascunho. |
+| Política e publicação | `warn`/`block`, rascunhos permitidos e política registrada no evento | Padrão inicial `warn` confirmado em 02/10/2026; autoridade para mudar a política de evento existente e consulta/edição de revisões em rascunho continuam pendentes. |
 | Histórico/admin | Acesso mínimo pertinente | Alcance administrativo, eventos de login e política detalhada de expiração. |
 | Consumo e recuperação | Limitação compartilhada e restauração testada | Camada de entrada, limites, orçamento e objetivos de recuperação. |
 
@@ -277,7 +277,7 @@ Testes adicionais: nomes com acentos, cedilha e apóstrofo preservados após gra
 
 Cenários adicionados nesta revisão: membros consultam o mesmo fuso da igreja sem preferência individual; mudança do fuso da igreja não remarca eventos; fim previsto anterior/igual ao início é rejeitado; preparação de 30 minutos antes do culto é válida e integra conflitos; louvor simultâneo conta uma vez; rascunho acima de 120 minutos é salvo, mas sua publicação é rejeitada em `block`; em `warn`, a mesma publicação é permitida com alerta; edição concorrente não contorna a validação; execução termina antes/depois sem bloqueio. Esses cenários também são um plano de validação, não resultados executados.
 
-Esta lista é um plano de validação, não resultados de testes executados. Os 50 cenários do PRD continuam sendo a referência funcional; cenários próprios do aplicativo serão verificados na etapa Android/iOS.
+Esta lista é um plano de validação, não resultados de testes executados. Os 54 cenários do PRD continuam sendo a referência funcional; cenários próprios do aplicativo serão verificados na etapa Android/iOS.
 
 ## 15. Primeiro conjunto a fechar
 

@@ -124,7 +124,7 @@ Somar a sequência principal, sem contar novamente atividades paralelas ou compo
 
 A preparação dos serviços de apoio pode começar antes da janela principal: por exemplo, preparar câmeras 30 minutos antes do culto. Esse tempo participa dos conflitos das pessoas, sem aumentar a soma principal. Não exigir que todos os itens de apoio fiquem dentro do início/fim previstos do culto.
 
-O limite atua no planejamento. A execução pode terminar antes ou ultrapassar o previsto por imprevistos, sem bloqueio ou encerramento automático. **Pendentes:** padrão inicial da política, autoridade para alterar a política de um evento existente e apresentação das revisões em rascunho.
+O limite atua no planejamento. A execução pode terminar antes ou ultrapassar o previsto por imprevistos, sem bloqueio ou encerramento automático. **Padrão confirmado em 02/10/2026 para a igreja do piloto:** alertar sobre o excesso e permitir publicar (`warn`). A política é registrada em cada evento. **Pendentes:** autoridade para alterar a política de um evento existente e apresentação das revisões em rascunho.
 
 Duração de atividade não é prazo de resposta a convite. Prazos de convite pertencem somente ao documento de evolução futura.
 
@@ -403,7 +403,7 @@ As regras já fechadas não dependem de rediscussão para serem documentadas. Os
 | Checklist | Lideranças operam e cada líder de atividade marca apenas seu âmbito; itens conjuntos exigem duas validações. Detalhar validadores, alcance da liturgia, desmarcação, correções e canal; não reintroduzir bloqueio. |
 | Cadastros vinculados | Confirmar desativação em vez de exclusão para membros/funções/equipes já utilizados, preservando referências. Retirar atividade da programação já tem regra própria. |
 | Mudanças e conflitos | Resolução quando alteração cria conflito já existente, comunicação/negociação entre líderes e cálculo da programação restante após correções de horários. |
-| Política de duração e publicação | Definir padrão inicial, autoridade para alterar política de evento existente e consulta/edição das revisões em rascunho. Alerta ou bloqueio opcional da publicação, rascunhos permitidos e execução sem encerramento automático já estão decididos. |
+| Política de duração e publicação | Padrão inicial confirmado: alertar e permitir publicar (`warn`). Definir autoridade para alterar política de evento existente e consulta/edição das revisões em rascunho. Alerta ou bloqueio opcional da publicação, rascunhos permitidos e execução sem encerramento automático já estão decididos. |
 | Serviços paralelos | Início/fim acompanham o culto, sem controle individual. Confirmar representação da preparação prévia planejada nos conflitos, sem cronometrá-la ou criar turnos. |
 | Edição em execução | Fluxo de substituição por outra atividade e reordenação por canal, respeitando ausência de cadastros novos no mobile. |
 | Conexão e correções | Detecção de desatualização, primeira carga sem dados e detalhamento da recuperação de resposta perdida. Correção pela liturgia com histórico, recálculo e rejeição de horários impossíveis já está decidida; detalhar casos de sobreposição entre registros corrigidos. |

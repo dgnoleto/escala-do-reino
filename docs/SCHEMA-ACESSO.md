@@ -1,6 +1,6 @@
 # Escala do Reino — schema inicial de igreja e acesso
 
-Versão 4 · 2 de outubro de 2026
+Versão 5 · 2 de outubro de 2026
 
 **Situação:** especificação física com [SQL inicial](sql/001_initial_access_structure.sql) ensaiado no projeto Supabase com `ROLLBACK`. A criação permanente e a consulta posterior foram executadas pelo responsável; as capturas de 02/10/2026 confirmam a estrutura e os privilégios verificados. Complementa o [PRD](PRD.md) e a [arquitetura](ARQUITETURA-BANCO.md). Este primeiro incremento cobre igreja, membro, vínculo e convite; equipes, planejamento e execução serão detalhados nos incrementos seguintes.
 
@@ -38,7 +38,7 @@ Campos de autoria e datas de registro são preenchidos pelo servidor. Os valores
 | `timezone` | `text` | Obrigatório; validar identificador reconhecido pela base de fusos do PostgreSQL. Não inferir o fuso do piloto. |
 | `address` | `text` | Localização informada; propor até 500 caracteres. |
 | `google_maps_url` | `text` | Link de localização; validar formato e origem permitida no servidor antes de apresentá-lo. |
-| `default_duration_policy` | `text` | `warn` ou `block`; obrigatório e sem valor padrão no SQL; escolha explícita ao cadastrar a igreja, pois o padrão de produto continua pendente. |
+| `default_duration_policy` | `text` | `warn` ou `block`; obrigatório e sem valor padrão no SQL; escolha explícita ao cadastrar a igreja; o responsável confirmou `warn` para o piloto em 02/10/2026. Não alterar o SQL já aplicado para inserir um padrão silencioso. |
 | `status` | `text` | `active` ou `inactive`; procedimento de desativação ainda pendente. |
 | `created_at` | `timestamptz` | Obrigatório; momento do registro. |
 | `updated_at` | `timestamptz` | Obrigatório; atualizado pelo servidor. |
@@ -100,7 +100,7 @@ Não oferecer cadastro público de admin. Um convite resgatado concede acesso b�
 
 O estado pode ser derivado: resgatado/consumido, cancelado, expirado ou pendente. Na proposta de fluxo com nome diferente, consumir o convite registra a apresentação válida; a solicitação separada ainda precisa de aprovação dentro do vencimento original antes de liberar acesso. Consumo sozinho não equivale a vínculo ativo. Expiração depende do horário atual do servidor e não exige tarefa agendada para atualizar uma coluna. Resgate e cancelamento são terminais e mutuamente exclusivos; autoria e instante de cada operação devem existir juntos. Não aceitar resgate no instante do vencimento ou depois.
 
-Unicidade do token não garante uso único sozinha. Resgate e criação/reativação do vínculo precisam de transação e bloqueio da linha do convite; duas tentativas concorrentes não concedem dois acessos. A quantidade já está decidida: um convite pendente por membro, e nova emissão cancela o anterior. Bloquear o membro durante emissão/resgate evita corrida entre convites distintos. A restrição física adicional, a solicitação de nome pendente e a auditoria serão acrescentadas em incremento próprio; essas mudanças ainda não foram aplicadas às quatro tabelas existentes.
+Unicidade do token não garante uso único sozinha. Resgate e criação/reativação do vínculo precisam de transação e bloqueio da linha do convite; duas tentativas concorrentes não concedem dois acessos. A quantidade já está decidida: um convite pendente por membro, e nova emissão cancela o anterior. Bloquear o membro durante emissão/resgate evita corrida entre convites distintos. O [segundo incremento](SCHEMA-APROVACAO-AUDITORIA.md) já acrescentou o índice de um convite aberto por membro, a solicitação de nome pendente e a estrutura de auditoria. Isso não implementa os comandos transacionais de emissão, resgate ou aprovação.
 
 ## 4. Restrições e índices propostos
 
@@ -108,7 +108,7 @@ Unicidade do token não garante uso único sozinha. Resgate e criação/reativa�
 - Referências a contas e registros operacionais não apagam dados em cascata. Desativação e remoção de conta precisam de procedimento definido.
 - Índices para membros por igreja/situação e convites por igreja/membro, destinatário e vencimento, conforme consultas autorizadas. Não duplicar índices já criados pelas restrições únicas.
 - Eventos, equipes e funções terão suas próprias tabelas depois; não acrescentar cursos, finanças, CPF ou preferências individuais de fuso.
-- Histórico mínimo da emissão, resgate, revogação e inicialização do admin precisa acompanhar os comandos antes de utilizá-los. A estrutura física de `audit_entries` será detalhada com esses contratos; não liberar alterações sem registro.
+- Histórico mínimo da emissão, resgate, revogação e inicialização do admin precisa acompanhar os comandos antes de utilizá-los. A estrutura física de `audit_entries` já foi acrescentada no segundo incremento; sua gravação funcional ainda precisa acompanhar esses contratos. Não liberar alterações sem registro.
 
 ## 5. Pontos a fechar antes da migração utilizável
 
@@ -117,7 +117,7 @@ Unicidade do token não garante uso único sozinha. Resgate e criação/reativa�
 3. Associação e recuperação entre provedores; CPF, nome igual ou admin isoladamente não comprovam controle das credenciais.
 4. Um convite pendente por membro e cancelamento do anterior na reemissão estão confirmados. Fechar efeitos sobre solicitações de nome já abertas, revogação de acesso e reativação.
 5. Desativação de cadastros utilizados, sem tratar a proposta como decisão já confirmada.
-6. Primeiro admin e trilha de auditoria; fuso/local reais do piloto e política padrão de duração.
+6. Inicialização do primeiro admin e gravação funcional de auditoria; conferir fuso/local reais do piloto. Política padrão confirmada: `warn` (avisar e permitir publicar).
 
 Essas pendências permitem revisar campos e relações agora, mas não autorizam implementar fluxos ambíguos nem liberar acesso. Na implantação, habilitar/configurar Google e Email, mantendo confirmação de e-mail; Apple, Azure/Microsoft e métodos não aprovados ficam desabilitados. SMTP para membros e testes de confirmação/recuperação são pré-requisitos do piloto. Isso é configuração do Auth, não uma garantia fornecida por estas tabelas.
 
@@ -137,6 +137,8 @@ Antes de executar a estrutura, conferir o ambiente com a [consulta somente leitu
 
 **Data API conferida em 02/10/2026:** a captura mostra `public` e `graphql_public` selecionados e `app_private` desmarcado. O responsável informou ter desligado `Automatically expose new tables`; a configuração final desse interruptor não foi reinspecionada. Os privilégios das tabelas existentes já haviam sido conferidos por SQL.
 
-**Próximo passo:** detalhar a solicitação de nome pendente e a trilha de auditoria conforme o [fluxo de acesso](ACESSO-E-AUDITORIA.md). Destinatário, nome proposto, reemissão e prazo de aprovação estão confirmados. Aprovação expirada não pode ativar vínculo nem alterar nome. Primeiro admin, autorização de comandos, vínculo/resgate, testes funcionais e integração com a web permanecem pendentes. Nenhuma nova tabela ou função foi aplicada nesta revisão.
+**Segundo incremento em 02/10/2026:** `access_requests` e `audit_entries`, índice de um convite aberto por membro e FK composta acrescentados pelo responsável; evidências e limites no [schema de aprovação e auditoria](SCHEMA-APROVACAO-AUDITORIA.md). Há seis tabelas internas. Não repetir os scripts de criação já aplicados.
+
+**Próximo passo:** preparar os dados reais da igreja e a inicialização controlada, concluir contratos e implementar comandos conforme o [fluxo de acesso](ACESSO-E-AUDITORIA.md). Destinatário, nome proposto, reemissão e prazo de aprovação estão confirmados. Aprovação expirada não pode ativar vínculo nem alterar nome. Concessão do primeiro admin, autorização de comandos, vínculo/resgate, testes funcionais e integração com a web permanecem pendentes.
 
 Referências técnicas: [RLS](https://supabase.com/docs/guides/database/postgres/row-level-security), [dados de usuários](https://supabase.com/docs/guides/auth/managing-user-data), [configuração do Auth](https://supabase.com/docs/guides/auth/general-configuration) e [login social](https://supabase.com/docs/guides/auth/social-login).

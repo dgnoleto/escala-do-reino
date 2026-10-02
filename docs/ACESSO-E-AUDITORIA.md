@@ -1,8 +1,8 @@
 # Escala do Reino — fluxo inicial de acesso e auditoria
 
-Versão 2 · 2 de outubro de 2026
+Versão 3 · 2 de outubro de 2026
 
-**Situação:** regras de produto confirmadas e proposta dos próximos contratos. As quatro tabelas iniciais já foram criadas e verificadas no Supabase; este documento não cria tabelas, funções, contas ou permissões adicionais. Complementa o [PRD](PRD.md), a [arquitetura](ARQUITETURA-BANCO.md) e o [schema inicial](SCHEMA-ACESSO.md).
+**Situação:** regras de produto confirmadas e proposta dos próximos contratos. As quatro tabelas iniciais e o incremento de solicitação/auditoria já foram criados e verificados no Supabase; este documento não cria tabelas, funções, contas ou permissões adicionais. Complementa o [PRD](PRD.md), a [arquitetura](ARQUITETURA-BANCO.md) e o [schema inicial](SCHEMA-ACESSO.md).
 
 ## 1. Decisões confirmadas
 
@@ -28,7 +28,7 @@ Proposta de contrato: admin ativo na igreja escolhe membro ativo já existente e
 
 Emissão serializa pelo membro: bloquear o registro da pessoa antes de conferir/cancelar o convite anterior e criar o novo. Cancelamento anterior, nova emissão e auditoria ficam na mesma transação; uma falha desfaz tudo. Duas emissões concorrentes não deixam dois convites utilizáveis.
 
-Detalhe físico proposto: índice único para um convite não consumido/não cancelado por igreja/membro, combinado com a transação. O índice não pode depender do horário atual para excluir convites expirados; a reemissão precisa tratar também a linha vencida antes de inserir a próxima. Preservar seus instantes originais e registrar a razão de substituição na auditoria. Esse índice ainda não foi aplicado.
+Detalhe físico proposto: índice único para um convite não consumido/não cancelado por igreja/membro, combinado com a transação. O índice não pode depender do horário atual para excluir convites expirados; a reemissão precisa tratar também a linha vencida antes de inserir a próxima. Preservar seus instantes originais e registrar a razão de substituição na auditoria. Esse índice foi aplicado no segundo incremento; a transação de reemissão continua pendente de implementação.
 
 ## 4. Entrada com o nome cadastrado
 
@@ -66,7 +66,7 @@ As novas entidades ficam fora da Data API, com RLS e acesso direto bloqueado com
 
 Estado técnico da decisão: `pending`, `approved`, `rejected`, `cancelled` ou `expired`; a situação efetiva também considera o prazo. O estado persistido `expired` é opcional para finalização e não exige um decisor humano fictício. Um registro pendente vencido é exibido como expirado e não aceita aprovação. Regras para solicitações simultâneas e sua substituição devem acompanhar a migração e os comandos; índice parcial com `now()` não resolve a expiração.
 
-Essas tabelas não foram criadas. O [detalhamento físico e os scripts do segundo incremento](SCHEMA-APROVACAO-AUDITORIA.md) estão preparados para ensaio, sem repetir o script que criou as quatro tabelas existentes.
+Essas duas tabelas e as restrições adicionais foram aplicadas pelo responsável em 02/10/2026. O [detalhamento físico e as evidências do segundo incremento](SCHEMA-APROVACAO-AUDITORIA.md) registram o alcance da verificação; os comandos descritos neste fluxo continuam pendentes. Não repetir os scripts de criação já aplicados.
 
 ## 7. Auditoria e autorização
 
@@ -89,7 +89,7 @@ O responsável pelo projeto confirmou que será o primeiro admin. Nome e e-mail 
 
 O primeiro usuário a entrar não vira admin automaticamente. Não oferecer bootstrap público, senha escolhida pelo admin ou edição livre de papel pelo cliente. Autoria inicial precisa distinguir o operador de manutenção da conta que recebe a concessão; não falsificar a autoria atribuindo-a ao novo admin.
 
-Faltam os dados reais da igreja, a autenticação da pessoa indicada no aplicativo e seu identificador Auth, fuso/local e política padrão de duração. A escolha `warn`/`block` precisa ser explícita no cadastro, pois o SQL inicial não colocou um padrão silencioso.
+A política padrão foi confirmada em 02/10/2026: `warn` (avisar sobre excesso e permitir publicar), com escolha explícita no cadastro, pois o SQL inicial não colocou um padrão silencioso. O responsável enviou a localização no Maps; preparar e conferir os dados reais da igreja antes de inserir. A autenticação no aplicativo, seu identificador Auth e a concessão do primeiro admin continuam pendentes.
 
 ## 9. Verificações antes da liberação
 
@@ -104,6 +104,6 @@ Faltam os dados reais da igreja, a autenticação da pessoa indicada no aplicati
 - Retentativa após resposta incerta consulta o resultado existente antes de reenviar.
 - Conta do painel não recebe papel de aplicativo por associação implícita.
 
-Esses são critérios de aceitação, não testes já executados. O ensaio do incremento anterior valida somente a estrutura inicial e sua cobertura documentada.
+Esses são critérios de aceitação, não testes já executados. Os ensaios da estrutura inicial e do segundo incremento validam somente a cobertura estrutural documentada; não comprovam estes fluxos de ponta a ponta.
 
 Referências técnicas: [validação do usuário pelo Supabase](https://supabase.com/docs/reference/javascript/auth-getuser), [gestão de usuários](https://supabase.com/docs/guides/auth/managing-user-data), [índices parciais](https://www.postgresql.org/docs/current/indexes-partial.html) e [bloqueios de linhas](https://www.postgresql.org/docs/current/explicit-locking.html).

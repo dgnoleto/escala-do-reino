@@ -1,8 +1,8 @@
 # Escala do Reino — schema de aprovação de nome e auditoria
 
-Versão 1 · 2 de outubro de 2026
+Versão 2 · 2 de outubro de 2026
 
-**Situação:** segundo incremento preparado, ainda sem execução em PostgreSQL ou aplicação ao Supabase. Complementa o [fluxo de acesso](ACESSO-E-AUDITORIA.md) e o [schema inicial](SCHEMA-ACESSO.md). Não repetir o primeiro script de criação no projeto existente.
+**Situação:** segundo incremento aplicado pelo responsável no Supabase em 02/10/2026. Pré-verificação confirmada por captura; sucesso do ensaio e da criação permanente informado pelo responsável. A captura posterior confirma seis tabelas, RLS, privilégios bloqueados e índice; a FK da última coluna foi confirmada por texto. Complementa o [fluxo de acesso](ACESSO-E-AUDITORIA.md) e o [schema inicial](SCHEMA-ACESSO.md). Não repetir o primeiro script de criação no projeto existente.
 
 ## 1. Regras e limites
 
@@ -78,6 +78,16 @@ O ensaio usa apenas dados temporários da aplicação, sem inserir usuários no 
 
 Resultado final esperado do ensaio: `PASS: incremento ensaiado; alterações desfeitas; estrutura inicial preservada`. As duas tabelas novas, o índice e a unicidade auxiliar devem ser desfeitos; as quatro tabelas anteriores continuam presentes. Erro interrompe o ensaio e exige conferir/corrigir antes da criação permanente.
 
-Este incremento ainda não foi executado; não alterar o relato para “aplicado” sem resultado da execução e verificação posterior. `app_private` continua desmarcado na Data API; manter exposição automática de novas tabelas desligada.
+## 6. Evidências da execução em 02/10/2026
+
+- Pré-verificação: captura com os seis campos `true`, incluindo UTF-8, presença das quatro tabelas anteriores e ausência de convites abertos duplicados.
+- Ensaio: responsável confirmou `PASS: incremento ensaiado; alterações desfeitas; estrutura inicial preservada`. Não houve execução local pelo agente.
+- Criação permanente: responsável confirmou `Success. No rows returned` ao executar o arquivo 003 com `COMMIT`.
+- Verificação: captura com seis tabelas (`access_invitations`, `access_requests`, `audit_entries`, `church_access`, `churches`, `members`), todas com `rls_enabled = true`; três colunas de privilégios `false`; índice de um convite aberto presente (`true`).
+- A coluna `consumed_invitation_fk_present` ficou fora da captura; o responsável confirmou por texto `true` em todas as seis linhas.
+
+Essas evidências confirmam a estrutura e os privilégios consultados, não a implementação de resgate, aprovação, auditoria funcional, limites de requisição ou autorização da API. Não repetir o script de criação permanente nem o ensaio que exige ausência dessas tabelas neste projeto agora.
+
+A última captura da Data API mantém `app_private` desmarcado; exposição automática desligada foi informada pelo responsável. Essa configuração não foi reinspecionada após o incremento. Continuar fora da Data API e com exposição automática desligada.
 
 Referências técnicas: [restrições e chaves estrangeiras do PostgreSQL](https://www.postgresql.org/docs/current/ddl-constraints.html) e [controle da Data API no Supabase](https://supabase.com/docs/guides/api/securing-your-api).
