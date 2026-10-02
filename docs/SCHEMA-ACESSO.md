@@ -1,8 +1,8 @@
 # Escala do Reino — schema inicial de igreja e acesso
 
-Versão 2 · 2 de outubro de 2026
+Versão 3 · 2 de outubro de 2026
 
-**Situação:** especificação física com [SQL inicial](sql/001_initial_access_structure.sql) ensaiado no projeto Supabase com `ROLLBACK`. A criação permanente ainda não foi executada. Complementa o [PRD](PRD.md) e a [arquitetura](ARQUITETURA-BANCO.md). Este primeiro incremento cobre igreja, membro, vínculo e convite; equipes, planejamento e execução serão detalhados nos incrementos seguintes.
+**Situação:** especificação física com [SQL inicial](sql/001_initial_access_structure.sql) ensaiado no projeto Supabase com `ROLLBACK`. A criação permanente e a consulta posterior foram executadas pelo responsável; as capturas de 02/10/2026 confirmam a estrutura e os privilégios verificados. Complementa o [PRD](PRD.md) e a [arquitetura](ARQUITETURA-BANCO.md). Este primeiro incremento cobre igreja, membro, vínculo e convite; equipes, planejamento e execução serão detalhados nos incrementos seguintes.
 
 ## 1. Regras confirmadas e limites
 
@@ -130,6 +130,8 @@ Antes de executar a estrutura, conferir o ambiente com a [consulta somente leitu
 
 **Ensaio transacional executado pelo responsável em 02/10/2026:** a captura mostra `PASS: ensaio concluído; nenhuma tabela persistida` após executar o [arquivo completo](sql/001_validate_initial_structure.sql). Ele reproduz a estrutura, verifica privilégios efetivos, RLS, funções internas, preservação de acentos/apóstrofos, validação de fuso/nome/política e atualização de datas, e termina com `ROLLBACK`. Não cria usuários nem deixa dados/tabelas persistidos em uma execução bem-sucedida. A mensagem final esperada é `PASS: ensaio concluído; nenhuma tabela persistida`. A captura confirma o resultado final do ensaio; relações, vínculos, convites e comandos precisam de testes funcionais específicos depois. Manter sua cópia de DDL sincronizada com o script de criação definitivo.
 
-**Próximo passo:** executar uma vez o [script de criação permanente](sql/001_initial_access_structure.sql), que encerra com `COMMIT`, e conferir as quatro tabelas pela [consulta de verificação](sql/002_verify_initial_structure.sql). Essa consulta lê o catálogo, sem alterar dados. Esperado: quatro linhas com `rls_enabled = true` e privilégios dos três papéis iguais a `false`. A estrutura começa vazia e fechada; primeiro admin e comandos de produto permanecem pendentes.
+**Criação permanente e verificação confirmadas pelas capturas de 02/10/2026:** o [script de criação](sql/001_initial_access_structure.sql) terminou com `Success. No rows returned`. A [consulta posterior](sql/002_verify_initial_structure.sql) mostrou `access_invitations`, `church_access`, `churches` e `members`, todas com `rls_enabled = true`; `anon_has_privileges`, `authenticated_has_privileges` e `service_role_has_privileges` vieram `false` nas quatro linhas. Isso confirma a existência e os privilégios consultados, não o funcionamento dos fluxos da aplicação. Não repetir o script de criação nesse projeto.
+
+**Próximo passo:** conferir no painel da Data API que `app_private` não está em `Exposed schemas`. Primeiro admin, trilha de auditoria, autorização de comandos, vínculo/resgate, testes funcionais e integração com a web permanecem pendentes. A consulta de verificação não conta registros; ainda não houve cadastro de produto orientado nesta etapa.
 
 Referências técnicas: [RLS](https://supabase.com/docs/guides/database/postgres/row-level-security), [dados de usuários](https://supabase.com/docs/guides/auth/managing-user-data), [configuração do Auth](https://supabase.com/docs/guides/auth/general-configuration) e [login social](https://supabase.com/docs/guides/auth/social-login).
