@@ -38,9 +38,9 @@ Há um cadastro único de cada membro por igreja. Uma pessoa pode integrar vári
 
 **Decidido:** login com Google ou e-mail e senha gerenciada pelo Supabase Auth, com acesso à igreja por convite associado a um membro previamente cadastrado. Fazer login, por si só, não libera dados da igreja. A pessoa não escolhe livremente igreja, equipe ou privilégios e não pode consultar dados de outra igreja sem autorização.
 
-Uma pessoa convidada pode não ter função habilitada e ainda assim consultar o cronograma geral. Convite de acesso não é convite para participar de uma escala. **Somente admin pode enviar convites de acesso.** O convite vale 72 horas a partir da emissão, é de uso único e pode ser cancelado pelo admin; após o vencimento, exige nova emissão. Associação segura e procedimento de revogação ainda precisam de detalhamento.
+Uma pessoa convidada pode não ter função habilitada e ainda assim consultar o cronograma geral. Convite de acesso não é convite para participar de uma escala. **Somente admin pode enviar convites de acesso.** O convite vale 72 horas a partir da emissão, é de uso único e pode ser cancelado pelo admin; após o vencimento, exige nova emissão. Exigir que a conta use o mesmo e-mail confirmado do destinatário. Para usar outro endereço, o admin cancela o convite anterior e emite um novo. Manter um convite pendente por membro: nova emissão cancela o anterior. Associação de identidades e revogação de acesso já concedido ainda precisam de detalhamento.
 
-**Decidido:** não coletar CPF. Oferecer Google em destaque e e-mail e senha como alternativa; as credenciais são gerenciadas pelo Supabase Auth, sem armazenar senhas nas tabelas da aplicação. No primeiro acesso autenticado, solicitar confirmação/preenchimento do nome, associado ao membro já cadastrado pelo convite; isso não cria outro membro nem autoriza editar cadastros alheios. Dados da igreja permanecem protegidos até concluir o vínculo autorizado. A forma de reconciliar divergências de nome precisa de detalhamento.
+**Decidido:** não coletar CPF. Oferecer Google em destaque e e-mail e senha como alternativa; as credenciais são gerenciadas pelo Supabase Auth, sem armazenar senhas nas tabelas da aplicação. No primeiro acesso autenticado, mostrar o nome do membro já cadastrado pelo admin e permitir confirmá-lo ou informar outro nome. Confirmar o nome cadastrado permite concluir o vínculo autorizado; informar outro nome gera uma solicitação sujeita à aprovação de admin antes de liberar acesso à igreja. A proposta não altera o cadastro imediatamente nem cria outro membro. Na aprovação, atualizar o nome do membro existente com registro de quem aprovou; o solicitante não recebe permissão geral de edição. A aprovação também deve ocorrer antes do vencimento original de 72 horas desde a emissão do convite. Enviar a proposta não reinicia nem estende esse prazo. Se vencer sem aprovação, a solicitação expira sem liberar acesso e exige novo convite.
 
 Admin da igreja não pode definir ou alterar credenciais de outro usuário. Para e-mail e senha, a pessoa pode solicitar recuperação por e-mail; o admin pode solicitar o envio, sem escolher a nova senha ou obter o link de recuperação. A recuperação da conta Google ocorre no próprio provedor. Apple e Microsoft ficam fora do MVP atual, para avaliação posterior.
 
@@ -379,6 +379,10 @@ Critérios de comportamento esperado, não testes de software já executados. Os
 | M48 | Cadastro de evento informa início e fim previstos. | Calcula duração disponível; aceita cruzar meia-noite com datas completas e rejeita fim anterior ou igual ao início. |
 | M49 | Programação excede a janela do evento no modo de bloqueio. | Permite salvar rascunho, mas rejeita publicar a programação ou revisão até ajustar; não encerra nem bloqueia automaticamente a execução real. |
 | M50 | Equipe prepara câmeras 30 minutos antes do culto. | Permite a preparação anterior e considera seu intervalo nos conflitos, sem incluí-lo na soma dos blocos principais. |
+| M51 | Conta com e-mail confirmado diferente do destinatário tenta resgatar convite. | Não libera acesso nem consome o convite por essa tentativa; admin precisa cancelar/reemitir para o endereço correto. |
+| M52 | Pessoa informa nome diferente do cadastro existente. | Registra solicitação para análise; não altera o nome nem concede acesso antes da aprovação de admin. |
+| M53 | Admin emite novo convite para membro que já possui convite pendente. | Cancela o convite anterior e mantém somente o novo pendente; o antigo não pode liberar acesso. |
+| M54 | Pessoa envia nome diferente perto do vencimento e admin tenta aprovar no instante do vencimento ou depois. | A solicitação está expirada; não altera o nome nem concede acesso. Nova tentativa exige novo convite, sem renovar o prazo da solicitação anterior. |
 
 ## 13. Avaliação do piloto
 
@@ -394,7 +398,7 @@ As regras já fechadas não dependem de rediscussão para serem documentadas. Os
 
 | Tema | O que falta fechar |
 | --- | --- |
-| Convite de acesso | Emissão é exclusiva de admin. Detalhar revogação, associação segura ao membro existente, convite enviado à pessoa errada, e-mails divergentes, reconciliação do nome e métodos Google e e-mail/senha da mesma pessoa. Validade de 72 horas, uso único, ausência de CPF e senha gerenciada pelo Supabase Auth já estão decididos. |
+| Convite de acesso | Mesmo e-mail confirmado; outro endereço exige cancelar/reemitir; um convite pendente por membro; nome diferente aguarda aprovação do admin sem acesso. Aprovação deve ocorrer dentro das 72 horas originais. Detalhar rejeição/cancelamento de solicitações, revogação de acesso, reativação e associação segura entre Google e e-mail/senha. Validade de 72 horas, uso único, ausência de CPF e senha gerenciada pelo Supabase Auth já estão decididos. |
 | Liderança por evento | Designação/troca é exclusiva de admin. Detalhar a transferência durante evento iniciado, sem dois controles concorrentes. |
 | Checklist | Lideranças operam e cada líder de atividade marca apenas seu âmbito; itens conjuntos exigem duas validações. Detalhar validadores, alcance da liturgia, desmarcação, correções e canal; não reintroduzir bloqueio. |
 | Cadastros vinculados | Confirmar desativação em vez de exclusão para membros/funções/equipes já utilizados, preservando referências. Retirar atividade da programação já tem regra própria. |

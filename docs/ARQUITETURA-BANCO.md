@@ -1,6 +1,6 @@
 # Escala do Reino — arquitetura do banco e das permissões
 
-Versão 5 · 2 de outubro de 2026
+Versão 6 · 2 de outubro de 2026
 
 **Situação:** proposta de arquitetura para revisão. Este documento descreve o modelo lógico; não cria tabelas, configurações ou permissões no Supabase. As pendências de produto continuam identificadas antes da implementação dependente.
 
@@ -194,13 +194,15 @@ Decisões confirmadas: Google e e-mail/senha no MVP; sem CPF; convite de uso ún
 
 O SMTP personalizado permanece pendente: não há domínio próprio. Desenvolvimento pode usar o envio padrão restrito à equipe do projeto; antes de liberar e-mail/senha aos membros, configurar e testar confirmação, recuperação, limites e proteção contra abuso com um serviço de envio adequado. Para produção, usar endereços de retorno HTTPS específicos e substituir o Site URL local. O prazo de uma hora dos links/códigos do Auth não muda as 72 horas do convite de acesso da aplicação.
 
-O admin escolhe um membro existente e emite um convite com destinatário, validade de 72 horas e token de uso único. A pessoa autentica com Google ou e-mail e senha e apresenta o convite. O resgate é atômico: confirma validade, destinatário, ausência de vínculo incompatível e vincula a conta ao membro, sem conceder liderança ou admin por padrão.
+O admin escolhe um membro existente e emite um convite com destinatário, validade de 72 horas e token de uso único. Exigir o mesmo e-mail confirmado da conta autenticada; um endereço diferente exige cancelar/reemitir o convite. Manter um convite pendente por membro; a nova emissão cancela o anterior, com transação e bloqueio do membro para serializar emissões concorrentes. A pessoa autentica com Google ou e-mail e senha e apresenta o convite. A validação de convite, identidade e vínculos é transacional; a conclusão pode conceder acesso básico ou gerar solicitação pendente quando houver outro nome proposto, sem conceder liderança/admin automaticamente.
 
 Não associar pessoas por igualdade de nome. O vínculo entre Google e e-mail/senha não deve ser inventado pela aplicação com base em nomes ou e-mails não verificados. Associação de identidades exige procedimento seguro; recursos automáticos do Auth precisam ser avaliados junto ao vínculo único por igreja/membro.
 
-No primeiro acesso autenticado, solicitar confirmação/preenchimento do nome, mantendo o vínculo com o membro previamente cadastrado. A reconciliação de divergências de nome permanece pendente. Não criar um segundo membro por concluir esse formulário. Restrição de unicidade do vínculo por conta/igreja e por membro/igreja impede duplicar o acesso ao mesmo cadastro; não garante que uma pessoa nunca crie outra conta no provedor.
+No primeiro acesso autenticado, mostrar o nome cadastrado e permitir confirmar ou sugerir outro. Nome diferente permanece separado, aguardando aprovação de admin; não atualizar `members.display_name` nem criar acesso ativo nessa etapa. A aprovação altera o nome do membro existente e concede o vínculo na mesma transação, com auditoria e revalidação de igreja, membro, conta, permissão do admin e unicidades. Não criar um segundo membro por concluir esse formulário. Restrição de unicidade do vínculo por conta/igreja e por membro/igreja impede duplicar o acesso ao mesmo cadastro; não garante que uma pessoa nunca crie outra conta no provedor.
 
-**Pendentes de produto:** comprovação do destinatário quando a conta usa outro endereço, convite enviado à pessoa errada, revogação, reconciliação do nome e associação de provedores à mesma pessoa. Propõe-se acesso negado até resolução segura quando houver dúvida de identidade; o procedimento de resolução será aprovado antes da implementação.
+**Decisão adicional confirmada:** proposta e aprovação precisam ocorrer antes do vencimento original de 72 horas desde a emissão. Registrar a proposta não reinicia o prazo; no instante do vencimento ou depois, nenhuma aprovação altera o nome ou concede acesso. Nova tentativa exige novo convite.
+
+**Pendentes de produto:** rejeição/cancelamento da solicitação; convite enviado à pessoa errada; revogação e reativação de acesso; associação de identidades da mesma pessoa. Mesmo e-mail confirmado, aprovação do nome proposto e um convite pendente por membro já são decisões. O [fluxo de acesso e auditoria](ACESSO-E-AUDITORIA.md) separa essas regras dos detalhes ainda propostos; nenhum método de autenticação concede acesso automaticamente.
 
 Revogar acesso deve impedir novas consultas e comandos, limpar dados em cache ao detectar revogação e invalidar o recebimento de detalhes privados. Informação já vista não pode ser recuperada do aparelho por garantia técnica; minimizar armazenamento local persistente e retornar somente o necessário. Não usar respostas privadas em cache público compartilhado.
 
@@ -248,7 +250,7 @@ Definir perda máxima de dados e tempo de recuperação aceitáveis; selecionar 
 
 | Tema | Recomendação para avaliação | O que ainda precisa ser decidido |
 | --- | --- | --- |
-| Convite e identidade | Token de uso único, membro prévio e resgate atômico | Destinatário divergente, revogação, reconciliação do nome, Google ou e-mail e senha e recuperação de vínculo; validade de 72 horas já confirmada. |
+| Convite e identidade | Mesmo e-mail confirmado; proposta de nome separada; um convite pendente por membro; validações e auditoria transacionais | Rejeição/cancelamento, revogação, reativação e associação de credenciais; mesmo e-mail, aprovação de nome, reemissão e prazo original de aprovação foram confirmados. |
 | Transferência de liturgia | Troca atômica por admin, com versão e revalidação da liderança em cada comando | Tratamento da ação em curso e comunicação da transferência. |
 | Checklist conjunto | Guardar duas validações separadas; ninguém substituir silenciosamente os dois validadores | Quem valida, alcance da liturgia, troca/desmarcação e correção. |
 | Cadastros utilizados | Desativar e preservar referências | Confirmação da regra e tratamento de alocações futuras afetadas. |

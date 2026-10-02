@@ -1,6 +1,6 @@
 # Escala do Reino — schema inicial de igreja e acesso
 
-Versão 3 · 2 de outubro de 2026
+Versão 4 · 2 de outubro de 2026
 
 **Situação:** especificação física com [SQL inicial](sql/001_initial_access_structure.sql) ensaiado no projeto Supabase com `ROLLBACK`. A criação permanente e a consulta posterior foram executadas pelo responsável; as capturas de 02/10/2026 confirmam a estrutura e os privilégios verificados. Complementa o [PRD](PRD.md) e a [arquitetura](ARQUITETURA-BANCO.md). Este primeiro incremento cobre igreja, membro, vínculo e convite; equipes, planejamento e execução serão detalhados nos incrementos seguintes.
 
@@ -9,7 +9,10 @@ Versão 3 · 2 de outubro de 2026
 - Login por Google ou e-mail e senha. Contas, senhas e identidades ficam no Supabase Auth. Apple e Microsoft ficam para evolução posterior.
 - Sem CPF e sem credenciais nas tabelas da aplicação. Recuperação de senha por e-mail via Supabase; admin pode solicitar o envio, mas não define a nova senha nem recebe seu link.
 - Convite associado a membro existente, válido por 72 horas desde a emissão, de uso único e cancelável pelo admin.
-- No primeiro acesso autenticado, confirmar/preencher o nome sem criar outro membro. Divergência com o cadastro existente exige procedimento a detalhar.
+- Exigir o mesmo e-mail confirmado do destinatário do convite; outro endereço exige cancelamento e nova emissão pelo admin.
+- No primeiro acesso autenticado, confirmar o nome cadastrado ou propor outro. Nome diferente aguarda aprovação de admin antes de atualizar o membro existente e liberar acesso; não cria outro membro.
+- Manter um convite pendente por membro; nova emissão cancela o anterior.
+- Nome proposto e aprovação do admin precisam ocorrer antes do vencimento original de 72 horas. Sem aprovação a tempo, a solicitação expira sem acesso; precisa de novo convite.
 - Login não libera dados da igreja. O acesso depende de vínculo autorizado e ativo.
 - Um vínculo por conta/igreja e por membro/igreja. Uma conta pode ter vínculos autorizados com igrejas distintas.
 - Fuso da igreja, sem preferência individual. Nomes técnicos em inglês e texto em UTF-8.
@@ -95,9 +98,9 @@ Não oferecer cadastro público de admin. Um convite resgatado concede acesso b�
 | `revoked_by_user_id` | `uuid` | Conta que cancelou o convite, quando ocorrer. |
 | `revoked_at` | `timestamptz` | Momento do cancelamento. |
 
-O estado pode ser derivado: resgatado, cancelado, expirado ou pendente. Expiração depende do horário atual do servidor e não exige tarefa agendada para atualizar uma coluna. Resgate e cancelamento são terminais e mutuamente exclusivos; autoria e instante de cada operação devem existir juntos. Não aceitar resgate no instante do vencimento ou depois.
+O estado pode ser derivado: resgatado/consumido, cancelado, expirado ou pendente. Na proposta de fluxo com nome diferente, consumir o convite registra a apresentação válida; a solicitação separada ainda precisa de aprovação dentro do vencimento original antes de liberar acesso. Consumo sozinho não equivale a vínculo ativo. Expiração depende do horário atual do servidor e não exige tarefa agendada para atualizar uma coluna. Resgate e cancelamento são terminais e mutuamente exclusivos; autoria e instante de cada operação devem existir juntos. Não aceitar resgate no instante do vencimento ou depois.
 
-Unicidade do token não garante uso único sozinha. Resgate e criação/reativação do vínculo precisam de transação e bloqueio da linha do convite; duas tentativas concorrentes não concedem dois acessos. Quantidade de convites simultâneos e tratamento de reemissão devem ser fechados antes de implementar a emissão.
+Unicidade do token não garante uso único sozinha. Resgate e criação/reativação do vínculo precisam de transação e bloqueio da linha do convite; duas tentativas concorrentes não concedem dois acessos. A quantidade já está decidida: um convite pendente por membro, e nova emissão cancela o anterior. Bloquear o membro durante emissão/resgate evita corrida entre convites distintos. A restrição física adicional, a solicitação de nome pendente e a auditoria serão acrescentadas em incremento próprio; essas mudanças ainda não foram aplicadas às quatro tabelas existentes.
 
 ## 4. Restrições e índices propostos
 
@@ -109,10 +112,10 @@ Unicidade do token não garante uso único sozinha. Resgate e criação/reativa�
 
 ## 5. Pontos a fechar antes da migração utilizável
 
-1. Comprovação do destinatário quando o e-mail do provedor difere do convite, com Google ou e-mail/senha; tratamento de provedores futuros será reavaliado quando forem incluídos.
-2. Confirmação do nome e tratamento de divergências sem sobrescrever o cadastro silenciosamente.
+1. Validar no servidor o mesmo e-mail confirmado do destinatário; e-mail divergente exige cancelamento/reemissão. Associação Google/e-mail-senha da mesma pessoa e provedores futuros ainda exigem desenho seguro.
+2. Nome diferente exige proposta separada e aprovação de admin antes de liberar acesso. O prazo de análise já está decidido: respeitar as 72 horas originais, sem prorrogação. Fechar rejeição/cancelamento e comportamento quando o cadastro muda enquanto a solicitação está pendente.
 3. Associação e recuperação entre provedores; CPF, nome igual ou admin isoladamente não comprovam controle das credenciais.
-4. Revogação, reemissão, reativação e número de convites pendentes por membro.
+4. Um convite pendente por membro e cancelamento do anterior na reemissão estão confirmados. Fechar efeitos sobre solicitações de nome já abertas, revogação de acesso e reativação.
 5. Desativação de cadastros utilizados, sem tratar a proposta como decisão já confirmada.
 6. Primeiro admin e trilha de auditoria; fuso/local reais do piloto e política padrão de duração.
 
@@ -134,6 +137,6 @@ Antes de executar a estrutura, conferir o ambiente com a [consulta somente leitu
 
 **Data API conferida em 02/10/2026:** a captura mostra `public` e `graphql_public` selecionados e `app_private` desmarcado. O responsável informou ter desligado `Automatically expose new tables`; a configuração final desse interruptor não foi reinspecionada. Os privilégios das tabelas existentes já haviam sido conferidos por SQL.
 
-**Próximo passo:** fechar as regras do destinatário do convite, confirmação do nome e reemissão. As três alternativas apresentadas nesta etapa são propostas, ainda sem resposta; não implementá-las como decisões. Primeiro admin, trilha de auditoria, autorização de comandos, vínculo/resgate, testes funcionais e integração com a web permanecem pendentes. A consulta de verificação não conta registros; ainda não houve cadastro de produto orientado nesta etapa.
+**Próximo passo:** detalhar a solicitação de nome pendente e a trilha de auditoria conforme o [fluxo de acesso](ACESSO-E-AUDITORIA.md). Destinatário, nome proposto, reemissão e prazo de aprovação estão confirmados. Aprovação expirada não pode ativar vínculo nem alterar nome. Primeiro admin, autorização de comandos, vínculo/resgate, testes funcionais e integração com a web permanecem pendentes. Nenhuma nova tabela ou função foi aplicada nesta revisão.
 
 Referências técnicas: [RLS](https://supabase.com/docs/guides/database/postgres/row-level-security), [dados de usuários](https://supabase.com/docs/guides/auth/managing-user-data), [configuração do Auth](https://supabase.com/docs/guides/auth/general-configuration) e [login social](https://supabase.com/docs/guides/auth/social-login).

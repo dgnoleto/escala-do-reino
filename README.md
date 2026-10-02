@@ -46,3 +46,5 @@ O piloto pressupõe internet. Sem conexão ou atualização, permanece apenas co
 Flutter é apenas candidato sugerido, não uma decisão. As regras de produto estão separadas das propostas e pendências; não há cronograma de lançamento nem automação de retomada. Telas do protótipo não equivalem a funcionalidades prontas para produção.
 
 **Estado do banco em 02/10/2026:** estrutura inicial de igreja, membros, acesso e convites criada no Supabase pelo responsável pelo projeto. Captura da verificação confirma quatro tabelas em `app_private`, RLS habilitada e privilégios diretos bloqueados para `anon`, `authenticated` e `service_role`. Login integrado, comandos autorizados, primeiro admin, auditoria e envio de e-mails para membros ainda estão em construção. Evidências e limites no [schema inicial](docs/SCHEMA-ACESSO.md).
+
+**Regras de acesso confirmadas em 02/10/2026:** convite para o mesmo e-mail confirmado; nome diferente aguarda aprovação do admin antes de liberar acesso, dentro das 72 horas originais; um convite pendente por membro, com cancelamento do anterior na reemissão. Detalhamento e propostas no [fluxo de acesso e auditoria](docs/ACESSO-E-AUDITORIA.md).
