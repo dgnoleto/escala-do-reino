@@ -1,12 +1,12 @@
 # Escala do Reino — arquitetura do banco e das permissões
 
-Versão 4 · 2 de outubro de 2026
+Versão 7 · 2 de outubro de 2026
 
 **Situação:** proposta de arquitetura para revisão. Este documento descreve o modelo lógico; não cria tabelas, configurações ou permissões no Supabase. As pendências de produto continuam identificadas antes da implementação dependente.
 
-**Base de produto:** [PRD do MVP](PRD.md) e [evoluções futuras](EVOLUCAO-FUTURA.md), com as decisões confirmadas na revisão de 2 de outubro. O protótipo examinado corresponde ao commit [`e2bdad3`](https://github.com/dgnoleto/escala-do-reino/tree/e2bdad3107b28ad44355e9c30d9a6cd857f89fcf). A integração GitHub–Supabase foi confirmada pela captura enviada pelo responsável pelo projeto. A configuração atual de aplicação automática e o conteúdo interno do banco não foram inspecionados.
+**Base de produto:** [PRD do MVP](PRD.md) e [evoluções futuras](EVOLUCAO-FUTURA.md), com as decisões confirmadas na revisão de 2 de outubro. O protótipo examinado corresponde ao commit [`e2bdad3`](https://github.com/dgnoleto/escala-do-reino/tree/e2bdad3107b28ad44355e9c30d9a6cd857f89fcf). A integração GitHub–Supabase foi confirmada pela captura enviada pelo responsável pelo projeto. As capturas posteriores de 02/10/2026 confirmam a execução do SQL inicial e a verificação de quatro tabelas internas. O segundo incremento de solicitação/auditoria também foi aplicado: captura posterior confirma seis tabelas, RLS e bloqueios de privilégios; o responsável confirmou por texto a última coluna de FK que ficou fora da imagem. Evidências e limites no [schema de aprovação e auditoria](SCHEMA-APROVACAO-AUDITORIA.md). A captura da Data API mostra somente `public` e `graphql_public` selecionados, com `app_private` desmarcado. O responsável informou ter desligado `Automatically expose new tables`; essa alteração ainda não foi conferida em uma nova captura. Não inferir configurações atuais de implantação automática desses registros.
 
-**Atualização desta versão:** adota Google e e-mail/senha, com recuperação via Supabase e SMTP pendente para o piloto; consolida nomes técnicos em inglês; fuso da igreja sem preferência individual; localização com endereço/link do Google Maps; início/fim previstos do evento; política opcional de bloqueio na publicação, com rascunhos permitidos; preparação dos apoios fora da janela principal. Este documento complementa o PRD do MVP, sem substituí-lo. A seção 6 e o cenário M26 do PRD acompanham a política opcional, com cenários adicionais M47–M50. A publicação desta documentação não aplica SQL nem configura o banco. O [SQL inicial](sql/001_initial_access_structure.sql) define a estrutura fechada; o ensaio com `ROLLBACK` foi executado pelo responsável no Supabase, com sucesso informado pela captura de 02/10/2026. A criação permanente ainda está pendente.
+**Atualização desta versão:** adota Google e e-mail/senha, com recuperação via Supabase e SMTP pendente para o piloto; consolida nomes técnicos em inglês; fuso da igreja sem preferência individual; localização com endereço/link do Google Maps; início/fim previstos do evento; política opcional de bloqueio na publicação, com rascunhos permitidos; preparação dos apoios fora da janela principal. Este documento complementa o PRD do MVP, sem substituí-lo. A seção 6 e o cenário M26 do PRD acompanham a política opcional, com cenários adicionais M47–M50. A publicação desta documentação não aplica SQL nem configura o banco. O [SQL inicial](sql/001_initial_access_structure.sql) define a estrutura fechada; o ensaio com `ROLLBACK` foi executado pelo responsável no Supabase, com sucesso informado pela captura de 02/10/2026. A criação permanente foi executada pelo responsável; a consulta posterior mostrou as quatro tabelas com RLS habilitada e sem privilégios diretos para `anon`, `authenticated` e `service_role`.
 
 ## 1. Objetivo e limites
 
@@ -46,7 +46,7 @@ Textos, arquivos de código, migrações e intercâmbio JSON usam UTF-8. Verific
 
 ## 4. Entidades e relações
 
-O primeiro detalhamento físico está em [Schema inicial de igreja e acesso](SCHEMA-ACESSO.md). Ele especifica campos e restrições desse incremento; não é uma migração executada.
+O primeiro detalhamento físico está em [Schema inicial de igreja e acesso](SCHEMA-ACESSO.md). Ele especifica campos e restrições desse incremento e registra a execução pelo responsável. O [segundo detalhamento](SCHEMA-APROVACAO-AUDITORIA.md) acrescenta solicitação de nome e auditoria; a estrutura já aplicada não comprova os comandos de produto.
 
 ### 4.1 Igreja, acesso e pessoas
 
@@ -194,13 +194,15 @@ Decisões confirmadas: Google e e-mail/senha no MVP; sem CPF; convite de uso ún
 
 O SMTP personalizado permanece pendente: não há domínio próprio. Desenvolvimento pode usar o envio padrão restrito à equipe do projeto; antes de liberar e-mail/senha aos membros, configurar e testar confirmação, recuperação, limites e proteção contra abuso com um serviço de envio adequado. Para produção, usar endereços de retorno HTTPS específicos e substituir o Site URL local. O prazo de uma hora dos links/códigos do Auth não muda as 72 horas do convite de acesso da aplicação.
 
-O admin escolhe um membro existente e emite um convite com destinatário, validade de 72 horas e token de uso único. A pessoa autentica com Google ou e-mail e senha e apresenta o convite. O resgate é atômico: confirma validade, destinatário, ausência de vínculo incompatível e vincula a conta ao membro, sem conceder liderança ou admin por padrão.
+O admin escolhe um membro existente e emite um convite com destinatário, validade de 72 horas e token de uso único. Exigir o mesmo e-mail confirmado da conta autenticada; um endereço diferente exige cancelar/reemitir o convite. Manter um convite pendente por membro; a nova emissão cancela o anterior, com transação e bloqueio do membro para serializar emissões concorrentes. A pessoa autentica com Google ou e-mail e senha e apresenta o convite. A validação de convite, identidade e vínculos é transacional; a conclusão pode conceder acesso básico ou gerar solicitação pendente quando houver outro nome proposto, sem conceder liderança/admin automaticamente.
 
 Não associar pessoas por igualdade de nome. O vínculo entre Google e e-mail/senha não deve ser inventado pela aplicação com base em nomes ou e-mails não verificados. Associação de identidades exige procedimento seguro; recursos automáticos do Auth precisam ser avaliados junto ao vínculo único por igreja/membro.
 
-No primeiro acesso autenticado, solicitar confirmação/preenchimento do nome, mantendo o vínculo com o membro previamente cadastrado. A reconciliação de divergências de nome permanece pendente. Não criar um segundo membro por concluir esse formulário. Restrição de unicidade do vínculo por conta/igreja e por membro/igreja impede duplicar o acesso ao mesmo cadastro; não garante que uma pessoa nunca crie outra conta no provedor.
+No primeiro acesso autenticado, mostrar o nome cadastrado e permitir confirmar ou sugerir outro. Nome diferente permanece separado, aguardando aprovação de admin; não atualizar `members.display_name` nem criar acesso ativo nessa etapa. A aprovação altera o nome do membro existente e concede o vínculo na mesma transação, com auditoria e revalidação de igreja, membro, conta, permissão do admin e unicidades. Não criar um segundo membro por concluir esse formulário. Restrição de unicidade do vínculo por conta/igreja e por membro/igreja impede duplicar o acesso ao mesmo cadastro; não garante que uma pessoa nunca crie outra conta no provedor.
 
-**Pendentes de produto:** comprovação do destinatário quando a conta usa outro endereço, convite enviado à pessoa errada, revogação, reconciliação do nome e associação de provedores à mesma pessoa. Propõe-se acesso negado até resolução segura quando houver dúvida de identidade; o procedimento de resolução será aprovado antes da implementação.
+**Decisão adicional confirmada:** proposta e aprovação precisam ocorrer antes do vencimento original de 72 horas desde a emissão. Registrar a proposta não reinicia o prazo; no instante do vencimento ou depois, nenhuma aprovação altera o nome ou concede acesso. Nova tentativa exige novo convite.
+
+**Pendentes de produto:** rejeição/cancelamento da solicitação; convite enviado à pessoa errada; revogação e reativação de acesso; associação de identidades da mesma pessoa. Mesmo e-mail confirmado, aprovação do nome proposto e um convite pendente por membro já são decisões. O [fluxo de acesso e auditoria](ACESSO-E-AUDITORIA.md) separa essas regras dos detalhes ainda propostos; nenhum método de autenticação concede acesso automaticamente.
 
 Revogar acesso deve impedir novas consultas e comandos, limpar dados em cache ao detectar revogação e invalidar o recebimento de detalhes privados. Informação já vista não pode ser recuperada do aparelho por garantia técnica; minimizar armazenamento local persistente e retornar somente o necessário. Não usar respostas privadas em cache público compartilhado.
 
@@ -248,14 +250,14 @@ Definir perda máxima de dados e tempo de recuperação aceitáveis; selecionar 
 
 | Tema | Recomendação para avaliação | O que ainda precisa ser decidido |
 | --- | --- | --- |
-| Convite e identidade | Token de uso único, membro prévio e resgate atômico | Destinatário divergente, revogação, reconciliação do nome, Google ou e-mail e senha e recuperação de vínculo; validade de 72 horas já confirmada. |
+| Convite e identidade | Mesmo e-mail confirmado; proposta de nome separada; um convite pendente por membro; validações e auditoria transacionais | Rejeição/cancelamento, revogação, reativação e associação de credenciais; mesmo e-mail, aprovação de nome, reemissão e prazo original de aprovação foram confirmados. |
 | Transferência de liturgia | Troca atômica por admin, com versão e revalidação da liderança em cada comando | Tratamento da ação em curso e comunicação da transferência. |
 | Checklist conjunto | Guardar duas validações separadas; ninguém substituir silenciosamente os dois validadores | Quem valida, alcance da liturgia, troca/desmarcação e correção. |
 | Cadastros utilizados | Desativar e preservar referências | Confirmação da regra e tratamento de alocações futuras afetadas. |
 | Mudança gera conflito | Sinalizar sem alterar pessoas automaticamente | Se a mudança fica pendente ou é salva com conflito não resolvido; quais operações posteriores ficam disponíveis. |
 | Correção e projeção | Preservar previsão e recalcular execução/intervalos | Sobreposições, sequência restante e tratamento de registros incompatíveis. |
 | Preparação paralela | Offset planejado independente dos marcos operacionais | Efeito de atrasos/correções nos conflitos de preparação. |
-| Política e publicação | `warn`/`block`, rascunhos permitidos e política registrada no evento | Confirmar padrão inicial `warn`, autoridade para mudar a política de evento existente e consulta/edição de revisões em rascunho. |
+| Política e publicação | `warn`/`block`, rascunhos permitidos e política registrada no evento | Padrão inicial `warn` confirmado em 02/10/2026; autoridade para mudar a política de evento existente e consulta/edição de revisões em rascunho continuam pendentes. |
 | Histórico/admin | Acesso mínimo pertinente | Alcance administrativo, eventos de login e política detalhada de expiração. |
 | Consumo e recuperação | Limitação compartilhada e restauração testada | Camada de entrada, limites, orçamento e objetivos de recuperação. |
 
@@ -275,7 +277,7 @@ Testes adicionais: nomes com acentos, cedilha e apóstrofo preservados após gra
 
 Cenários adicionados nesta revisão: membros consultam o mesmo fuso da igreja sem preferência individual; mudança do fuso da igreja não remarca eventos; fim previsto anterior/igual ao início é rejeitado; preparação de 30 minutos antes do culto é válida e integra conflitos; louvor simultâneo conta uma vez; rascunho acima de 120 minutos é salvo, mas sua publicação é rejeitada em `block`; em `warn`, a mesma publicação é permitida com alerta; edição concorrente não contorna a validação; execução termina antes/depois sem bloqueio. Esses cenários também são um plano de validação, não resultados executados.
 
-Esta lista é um plano de validação, não resultados de testes executados. Os 50 cenários do PRD continuam sendo a referência funcional; cenários próprios do aplicativo serão verificados na etapa Android/iOS.
+Esta lista é um plano de validação, não resultados de testes executados. Os 54 cenários do PRD continuam sendo a referência funcional; cenários próprios do aplicativo serão verificados na etapa Android/iOS.
 
 ## 15. Primeiro conjunto a fechar
 
