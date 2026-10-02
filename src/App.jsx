@@ -30,14 +30,21 @@ function AppContent() {
       </main>
 
       {/* Guia Rápido de Verificação de Critérios de Aceite do PRD (Piloto Shalom) */}
-      <aside className={`prd-acceptance-guide card ${guideOpen ? 'is-expanded' : ''}`}>
-        <div className="guide-header" onClick={() => setGuideOpen(!guideOpen)}>
+      <aside className={`prd-acceptance-guide card ${guideOpen ? 'is-expanded' : ''}`} aria-label="Guia de Validação do PRD">
+        <div
+          className="guide-header"
+          onClick={() => setGuideOpen(!guideOpen)}
+          role="button"
+          tabIndex={0}
+          onKeyDown={(e) => (e.key === 'Enter' || e.key === ' ') && setGuideOpen(!guideOpen)}
+          aria-expanded={guideOpen}
+        >
           <div className="guide-header-title">
-            <Sparkles size={16} color="var(--primary)" />
-            <span>Guia de Validação dos Critérios do PRD (Piloto Ministério Shalom)</span>
+            <Sparkles size={15} color="var(--primary)" />
+            <span>Guia de Validação — Piloto Ministério Shalom</span>
           </div>
-          <button className="guide-toggle-btn">
-            {guideOpen ? <ChevronDown size={16} /> : <ChevronUp size={16} />}
+          <button className="guide-toggle-btn" aria-label={guideOpen ? 'Recolher' : 'Expandir'} tabIndex={-1}>
+            {guideOpen ? <ChevronDown size={15} /> : <ChevronUp size={15} />}
           </button>
         </div>
 
@@ -115,13 +122,13 @@ function AppContent() {
       </aside>
 
       <style>{`
+        /* ── Guia de Validação do PRD ─────────────────────────────────── */
+
+        /* Mobile: recolhido → botão compacto no canto inferior direito */
         .prd-acceptance-guide {
           position: fixed;
-          bottom: 16px;
-          right: 24px;
-          left: 24px;
-          max-width: 1400px;
-          margin: 0 auto;
+          bottom: 12px;
+          right: 16px;
           background: var(--bg-card);
           border: 1px solid var(--border-subtle);
           border-radius: var(--radius-lg);
@@ -129,25 +136,72 @@ function AppContent() {
           z-index: 400;
           overflow: hidden;
           transition: all 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+          /* Recolhido: largura mínima, apenas o header */
+          width: auto;
+          max-width: calc(100vw - 32px);
+        }
+
+        /* Mobile expandido: ocupa quase toda a largura */
+        .prd-acceptance-guide.is-expanded {
+          left: 16px;
+          right: 16px;
+          width: auto;
+          max-width: none;
+        }
+
+        /* Desktop ≥ 700px: ancora no canto direito, largura fixa */
+        @media (min-width: 700px) {
+          .prd-acceptance-guide {
+            left: auto;
+            right: 20px;
+            bottom: 16px;
+            width: 480px;
+            max-width: 480px;
+          }
+          .prd-acceptance-guide.is-expanded {
+            left: auto;
+            width: 480px;
+            max-width: 480px;
+          }
         }
 
         .guide-header {
           display: flex;
           align-items: center;
           justify-content: space-between;
-          padding: 12px 20px;
+          padding: 10px 14px;
           cursor: pointer;
           background: var(--primary-surface);
+          border-bottom: none;
+          user-select: none;
+          white-space: nowrap;
+          gap: 10px;
+        }
+
+        /* Borda inferior só aparece quando o conteúdo está exposto */
+        .prd-acceptance-guide.is-expanded .guide-header {
           border-bottom: 1px solid var(--primary-border);
+        }
+
+        .guide-header:focus-visible {
+          outline: 2px solid var(--primary);
+          outline-offset: -2px;
         }
 
         .guide-header-title {
           display: flex;
           align-items: center;
-          gap: 10px;
-          font-size: 13px;
+          gap: 8px;
+          font-size: 12px;
           font-weight: 700;
           color: var(--primary);
+        }
+
+        /* Ocultar texto no mobile recolhido para manter acionador mínimo */
+        @media (max-width: 699px) {
+          .prd-acceptance-guide:not(.is-expanded) .guide-header-title span {
+            display: none;
+          }
         }
 
         .guide-toggle-btn {
@@ -155,37 +209,41 @@ function AppContent() {
           border: none;
           color: var(--text-muted);
           cursor: pointer;
+          flex-shrink: 0;
+          display: flex;
+          align-items: center;
         }
 
         .guide-content {
-          padding: 18px 20px;
+          padding: 14px 16px;
           max-height: 50vh;
           overflow-y: auto;
         }
 
         .guide-intro {
-          font-size: 13px;
+          font-size: 12px;
           color: var(--text-secondary);
-          margin-bottom: 16px;
+          margin-bottom: 12px;
+          line-height: 1.5;
         }
 
         .scenarios-grid {
           display: grid;
-          grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
-          gap: 12px;
+          grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+          gap: 8px;
         }
 
         .scenario-item {
           display: flex;
-          gap: 10px;
-          padding: 10px 12px;
+          gap: 8px;
+          padding: 8px 10px;
           background: var(--bg-surface);
           border: 1px solid var(--border-subtle);
           border-radius: var(--radius-md);
         }
 
         .scen-badge {
-          font-size: 11px;
+          font-size: 10px;
           font-weight: 800;
           color: var(--primary);
           background: var(--primary-surface);
@@ -193,10 +251,11 @@ function AppContent() {
           padding: 2px 6px;
           border-radius: var(--radius-sm);
           height: fit-content;
+          white-space: nowrap;
         }
 
         .scen-text {
-          font-size: 12px;
+          font-size: 11px;
           color: var(--text-secondary);
           line-height: 1.4;
         }

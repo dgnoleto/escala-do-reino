@@ -152,12 +152,12 @@ export const INITIAL_ACCESS_INVITES = [
 ];
 
 export const INITIAL_EVENT = {
-  id: "culto-dom-20261005",
+  id: "culto-dom-20261004",
   title: "Culto de Celebração de Domingo",
   type: "Celebração Geral",
-  date: "2026-10-05",
+  date: "2026-10-04",
   scheduledStartTime: "19:00",
-  plannedDurationMinutes: 100, // Duração planejada global
+  plannedDurationMinutes: 105, // Soma das 7 atividades: 5+25+7+8+45+10+5 = 105 min
   liturgyLeaderId: "carlos", // Designado por evento pelo admin (PRD 3.2)
   status: "pronto", // "pronto", "em_andamento", "encerrado"
   realStartTime: null,
@@ -344,7 +344,7 @@ export const INITIAL_EVENT = {
       assignedLeaderId: "lucas",
       completed: true,
       confirmedBy: "lucas",
-      confirmedAt: "2026-10-05 18:35"
+      confirmedAt: "2026-10-04 18:35"
     },
     {
       id: "chk-2",
@@ -356,7 +356,7 @@ export const INITIAL_EVENT = {
       secondLeaderId: "mariana", // Validador 2: Louvor
       validation1: true,
       validation1By: "mariana",
-      validation1At: "2026-10-05 18:40",
+      validation1At: "2026-10-04 18:40",
       validation2: false, // Ainda pendente pelo Lucas!
       validation2By: null,
       validation2At: null,
@@ -371,7 +371,7 @@ export const INITIAL_EVENT = {
       assignedLeaderId: "lucas",
       completed: true,
       confirmedBy: "fernanda",
-      confirmedAt: "2026-10-05 18:45"
+      confirmedAt: "2026-10-04 18:45"
     },
     {
       id: "chk-4",
@@ -394,7 +394,7 @@ export const INITIAL_EVENT = {
       targetTeamId: "som",
       title: "Aviso Operacional: Oportunidade com Playback",
       message: "A atividade 'Oportunidade Especial de Louvor' requer playback de apoio no tom de Ré (D). Conferir pendrive/arquivo com a Camila antes do início.",
-      timestamp: "2026-10-05 17:30",
+      timestamp: "2026-10-04 17:30",
       urgent: true
     },
     {
@@ -402,7 +402,7 @@ export const INITIAL_EVENT = {
       recipientType: "all",
       title: "Alinhamento das Escalas",
       message: "Todas as equipes escaladas para o culto de Domingo: favor estar presentes para oração coletiva às 18h30.",
-      timestamp: "2026-10-05 16:00",
+      timestamp: "2026-10-04 16:00",
       urgent: false
     }
   ]
@@ -416,7 +416,7 @@ export const INITIAL_AUDIT_LOGS = [
     authorName: "Pastor Marcos Ribeiro",
     authorRole: "Administrador",
     action: "Designação de Liderança da Liturgia",
-    details: "Designou Carlos Oliveira como Líder da Liturgia para o Culto de Domingo Noite (05/10/2026)."
+    details: "Designou Carlos Oliveira como Líder da Liturgia para o Culto de Domingo Noite (04/10/2026)."
   },
   {
     id: "log-2",

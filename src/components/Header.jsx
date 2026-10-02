@@ -372,10 +372,10 @@ export default function Header({ activeTab, setActiveTab }) {
           display: flex;
           align-items: center;
           justify-content: space-between;
-          padding: 12px 24px;
+          padding: 10px 20px;
           max-width: 1440px;
           margin: 0 auto;
-          gap: 16px;
+          gap: 12px;
         }
 
         .brand-section {
@@ -443,7 +443,7 @@ export default function Header({ activeTab, setActiveTab }) {
         .main-nav {
           display: flex;
           align-items: center;
-          gap: 6px;
+          gap: 4px;
           padding: 0;
           background: transparent;
           flex-shrink: 0;
@@ -454,11 +454,11 @@ export default function Header({ activeTab, setActiveTab }) {
           display: inline-flex;
           align-items: center;
           justify-content: center;
-          gap: 8px;
-          height: 38px;
-          padding: 0 13px;
+          gap: 6px;
+          height: 36px;
+          padding: 0 10px;
           border-radius: var(--radius-md);
-          font-size: 13px;
+          font-size: 12px;
           font-weight: 600;
           color: var(--text-secondary);
           background: var(--bg-surface);
@@ -765,11 +765,11 @@ export default function Header({ activeTab, setActiveTab }) {
           font-weight: 700;
         }
 
-        @media (max-width: 1240px) {
+        @media (max-width: 1360px) {
           .nav-btn,
           .nav-link {
-            width: 40px;
-            height: 38px;
+            width: 38px;
+            height: 36px;
             padding: 0;
             gap: 0;
           }
