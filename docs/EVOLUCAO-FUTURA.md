@@ -139,6 +139,13 @@ Em cursos online, poderá fazer sentido permitir ao participante escolher um fus
 
 Não há compromisso de entrega, prioridade ou desenho aprovado desses módulos. Pagamentos, integrações, permissões e estrutura de dados serão definidos quando cada módulo for avaliado, sem antecipar sua implementação no MVP.
 
-## 10. Novos provedores de login
+## 10. Provedores de login (descarte de Apple e Microsoft)
 
-**Evolução posterior, após ajuste do MVP em 02/10/2026:** avaliar Sign in with Apple e Microsoft. O MVP usa Google e e-mail/senha gerenciados pelo Supabase Auth. A inclusão depende de cadastro do aplicativo no provedor, requisitos de conta/custo, manutenção de credenciais e validação da associação segura ao membro existente. Não amplia o escopo do banco agora.
+**Decisão do responsável em 03/10/2026:** Apple e Microsoft foram descartados nesta etapa do projeto e **não** constituem entrega futura comprometida. O MVP mantém previstos Google e e-mail/senha gerenciados pelo Supabase Auth (estando apenas Google ativo na interface neste momento).
+
+## 11. Exclusão lógica e recuperação de cadastros
+
+**Decisão do responsável em 03/10/2026:**
+- **Decidido:** Exclusões de cadastros da aplicação devem ser lógicas e recuperáveis, preservando identificadores, referências e integridade histórica. O fluxo de produto não deve apagar fisicamente registros para removê-los da operação. Membro, conta Auth e vínculo de acesso são entidades distintas; exclusões lógicas de membros não excluem contas Auth nem implicam restauração automática de acesso. Esta decisão não substitui a política separada de retenção de histórico e registros técnicos.
+- **Pendente para o próximo incremento:** Definição da representação física no banco de dados, autorização operacional, efeitos da exclusão em vínculos, convites e escalas, adaptação de consultas e especificação do procedimento de recuperação. Deve-se avaliar no próximo incremento a relação direta com a coluna de status `active`/`inactive` já existente na tabela `app_private.members`, evitando criar dois mecanismos concorrentes ou redundantes (como `deleted_at` ou status adicionais, que não foram introduzidos neste incremento).
+

@@ -27,6 +27,7 @@ Continuam fora do MVP: participação aberta, disponibilidade autodeclarada, ace
 5. **Cada tentativa de execução é um registro.** Devolver para pendente encerra uma tentativa; reiniciar cria outra com a duração prevista inteira.
 6. **Horários reais e de registro são distintos.** Dados completos de data/hora permitem correções e eventos que atravessam meia-noite.
 7. **Dados privados permanecem privados também no transporte.** Cada consulta retorna os campos autorizados; a interface não recebe uma cópia integral para escondê-la por perfil.
+8. **Exclusões na aplicação são lógicas e recuperáveis.** O fluxo de produto não deve apagar fisicamente membros da base para retirá-los da operação; identificadores, integridade referencial e histórico de auditoria são preservados. A representação física (e a avaliação de sua relação com o status `active`/`inactive` já existente), autorização, efeitos sobre vínculos e fluxo de recuperação serão resolvidos no próximo incremento.
 
 **Decisão confirmada nesta etapa:** ministério e equipe representam o mesmo grupo no piloto. Haverá um único cadastro `teams`, com o rótulo de produto a definir no desenho da interface; nenhuma hierarquia adicional de ministério/equipe será criada nesta versão.
 
@@ -188,7 +189,7 @@ Conflitos mínimos: exclusividade entre cantar, tocar e dançar no mesmo bloco d
 
 ## 8. Acesso por convite — decisões e detalhamento pendente
 
-Decisões confirmadas: Google e e-mail/senha no MVP; sem CPF; convite de uso único com validade de 72 horas desde a emissão. Apple e Microsoft ficam para evolução posterior. O Supabase Auth gerencia as credenciais; nenhuma tabela da aplicação armazena senha, hash de senha ou token de recuperação. Admin da igreja não define ou altera a senha de outra pessoa; pode solicitar o envio da recuperação sem receber seu link. A pessoa define a nova senha pelo fluxo do Supabase. A recuperação da conta Google continua externa. Habilitar somente Google e Email no serviço de autenticação; esconder formulários não basta.
+Decisões confirmadas: Google e e-mail/senha no MVP; sem CPF; convite de uso único com validade de 72 horas desde a emissão. Apple e Microsoft foram descartados pelo responsável nesta etapa em razão dos custos de configuração avaliados, sem compromisso de implementação futura. O Supabase Auth gerencia as credenciais; nenhuma tabela da aplicação armazena senha, hash de senha ou token de recuperação. Admin da igreja não define ou altera a senha de outra pessoa; pode solicitar o envio da recuperação sem receber seu link. A pessoa define a nova senha pelo fluxo do Supabase. A recuperação da conta Google continua externa. Habilitar somente Google e Email no serviço de autenticação; esconder formulários não basta.
 
 **Configuração informada pelo responsável pelo projeto em 02/10/2026:** Google salvo; Email habilitado, troca segura de e-mail e senha, exigência de senha atual na troca normal, mínimo de 15 caracteres sem regra adicional de composição, OTP de 8 dígitos e expiração de 3600 segundos. Retorno de desenvolvimento em `http://localhost:3000`, com `http://localhost:3000/**` na lista permitida. Esses relatos não comprovam login integrado ou fluxos testados. Recuperação autenticada de senha não exige a senha esquecida. Não aplicar normalização NFC às senhas.
 
@@ -238,7 +239,7 @@ Sem dados na primeira carga e sem conexão: informar indisponibilidade, sem fabr
 
 ## 12. Histórico, exclusão e recuperação
 
-Proposta: desativar cadastros já utilizados, impedir exclusão em cascata de registros operacionais e preservar referências. É decisão pendente do PRD, não regra automaticamente aprovada por este documento. Desativação, revogação de acesso e remoção de atividade futura são operações diferentes.
+Decisão confirmada nesta etapa: exclusões de cadastros da aplicação devem ser lógicas e recuperáveis, preservando identificadores, histórico e referências operacionais. O fluxo de produto não deve apagar fisicamente membros da base. Pendente para o próximo incremento: representação física definitiva (avaliando a relação com o status `active`/`inactive` já existente na tabela `members`, evitando criar mecanismos redundantes como `deleted_at`), autorização, efeitos sobre vínculos e escalas futuras, e procedimento administrativo de recuperação. Membro, conta Auth e vínculo de acesso são entidades distintas: a exclusão lógica de um membro não apaga contas do Auth nem restaura acessos revogados automaticamente.
 
 O histórico funcional é próprio da aplicação, com retenção de um ano. Definir expiração por data do registro, campos mínimos e acesso antes da implantação. A expiração do histórico não deve apagar cadastro ou evento por inferência; o ciclo de vida dos registros de execução e sua relação com análises futuras precisa ser detalhado. Recibos de comando devem ter prazo e estratégia de repetição definidos sem permitir reexecução indevida após expiração.
 
@@ -253,7 +254,7 @@ Definir perda máxima de dados e tempo de recuperação aceitáveis; selecionar 
 | Convite e identidade | Mesmo e-mail confirmado; proposta de nome separada; um convite pendente por membro; validações e auditoria transacionais | Rejeição/cancelamento, revogação, reativação e associação de credenciais; mesmo e-mail, aprovação de nome, reemissão e prazo original de aprovação foram confirmados. |
 | Transferência de liturgia | Troca atômica por admin, com versão e revalidação da liderança em cada comando | Tratamento da ação em curso e comunicação da transferência. |
 | Checklist conjunto | Guardar duas validações separadas; ninguém substituir silenciosamente os dois validadores | Quem valida, alcance da liturgia, troca/desmarcação e correção. |
-| Cadastros utilizados | Desativar e preservar referências | Confirmação da regra e tratamento de alocações futuras afetadas. |
+| Cadastros utilizados e exclusão lógica | Exclusão lógica com preservação de identificadores, histórico e referências | Decidido que exclusão é lógica e recuperável; pendente representação física (relação active/inactive vs deleted_at), autorização e recuperação. |
 | Mudança gera conflito | Sinalizar sem alterar pessoas automaticamente | Se a mudança fica pendente ou é salva com conflito não resolvido; quais operações posteriores ficam disponíveis. |
 | Correção e projeção | Preservar previsão e recalcular execução/intervalos | Sobreposições, sequência restante e tratamento de registros incompatíveis. |
 | Preparação paralela | Offset planejado independente dos marcos operacionais | Efeito de atrasos/correções nos conflitos de preparação. |

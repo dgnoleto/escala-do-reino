@@ -1,5 +1,6 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { useAuth } from '../context/AuthContext';
+import MembersPage from './MembersPage';
 
 /**
  * ChurchHomePage — tela inicial para contas com vínculo confirmado.
@@ -9,21 +10,29 @@ import { useAuth } from '../context/AuthContext';
  *   - Nome da igreja (church_name)
  *   - Perfil: Administrador ou Membro (is_admin)
  *
+ * Se for Administrador:
+ *   - Oferece acesso à tela de Gestão de Membros (cadastro e listagem paginada).
+ *
  * Não exibe UUIDs, tokens, e-mails ou qualquer identificador técnico.
  * Não monta AppProvider nem acessa dados fictícios do protótipo.
- * Não implementa cadastros, convites, planejamento ou execução.
  *
  * Acessibilidade: foco inicial no título, regiões semânticas, rótulos descritivos.
  */
 export default function ChurchHomePage() {
   const { churchAccess, signOut } = useAuth();
+  const [currentView, setCurrentView] = useState('home');
 
   // Campos provêm exclusivamente do retorno da função RPC autenticada.
-  const displayName           = churchAccess?.display_name ?? '';
-  const churchName            = churchAccess?.church_name  ?? '';
-  const isAdmin               = churchAccess?.is_admin     ?? false;
+  const displayName = churchAccess?.display_name ?? '';
+  const churchName  = churchAccess?.church_name  ?? '';
+  const isAdmin     = churchAccess?.is_admin     ?? false;
 
   const profileLabel = isAdmin ? 'Administrador' : 'Membro';
+
+  // Navegação para a tela de membros do administrador
+  if (currentView === 'members' && isAdmin) {
+    return <MembersPage onBack={() => setCurrentView('home')} />;
+  }
 
   return (
     <div className="church-home-page" role="main">
@@ -75,6 +84,38 @@ export default function ChurchHomePage() {
           <span>{profileLabel}</span>
         </div>
 
+        {/* Bloco de Gestão de Membros exclusivo para Administrador */}
+        {isAdmin && (
+          <div className="church-home-admin-section">
+            <div className="church-home-admin-box">
+              <div className="church-home-admin-icon" aria-hidden="true">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                     strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2" />
+                  <circle cx="9" cy="7" r="4" />
+                  <path d="M23 21v-2a4 4 0 00-3-3.87" />
+                  <path d="M16 3.13a4 4 0 010 7.75" />
+                </svg>
+              </div>
+              <div className="church-home-admin-info">
+                <span className="church-home-admin-title">Gestão de Membros</span>
+                <span className="church-home-admin-desc">
+                  Cadastre novos membros e consulte a listagem da igreja.
+                </span>
+              </div>
+            </div>
+            <button
+              id="btn-goto-members"
+              className="btn btn-primary church-home-admin-btn"
+              onClick={() => setCurrentView('members')}
+              type="button"
+              aria-label="Acessar Gestão de Membros"
+            >
+              Acessar Membros
+            </button>
+          </div>
+        )}
+
         {/* Aviso de estado — funcionalidades futuras */}
         <div className="church-home-notice" role="note">
           <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor"
@@ -84,8 +125,9 @@ export default function ChurchHomePage() {
             <line x1="12" y1="16" x2="12.01" y2="16" />
           </svg>
           <span>
-            Seu acesso foi confirmado. O planejamento e a condução dos cultos
-            estarão disponíveis em breve.
+            {isAdmin
+              ? 'O planejamento e a condução dos cultos estarão disponíveis nos próximos incrementos.'
+              : 'Seu acesso foi confirmado. O cronograma e as escalas estarão disponíveis em breve.'}
           </span>
         </div>
 
@@ -129,7 +171,7 @@ export default function ChurchHomePage() {
           box-shadow: var(--shadow-lg);
           padding: 40px 36px;
           width: 100%;
-          max-width: 420px;
+          max-width: 440px;
           display: flex;
           flex-direction: column;
           align-items: center;
@@ -149,7 +191,7 @@ export default function ChurchHomePage() {
           align-items: center;
           gap: 14px;
           width: 100%;
-          margin-bottom: 28px;
+          margin-bottom: 24px;
           padding-bottom: 20px;
           border-bottom: 1px solid var(--border-subtle);
         }
@@ -200,7 +242,7 @@ export default function ChurchHomePage() {
         .church-home-welcome {
           width: 100%;
           text-align: center;
-          margin-bottom: 16px;
+          margin-bottom: 14px;
         }
 
         .church-home-greeting-label {
@@ -211,7 +253,7 @@ export default function ChurchHomePage() {
         }
 
         .church-home-member-name {
-          font-size: 26px;
+          font-size: 24px;
           font-weight: 800;
           color: var(--text-primary);
           margin: 0;
@@ -230,8 +272,7 @@ export default function ChurchHomePage() {
           font-size: 12px;
           font-weight: 700;
           letter-spacing: 0.3px;
-          margin-bottom: 28px;
-          /* Padrão: Membro */
+          margin-bottom: 24px;
           background: var(--bg-surface);
           border: 1px solid var(--border-subtle);
           color: var(--text-secondary);
@@ -241,6 +282,62 @@ export default function ChurchHomePage() {
           background: var(--primary-surface);
           border-color: var(--primary-border);
           color: var(--primary);
+        }
+
+        /* Bloco de administração de membros */
+        .church-home-admin-section {
+          width: 100%;
+          background: var(--bg-surface);
+          border: 1px solid var(--border-subtle);
+          border-radius: var(--radius-lg);
+          padding: 16px;
+          margin-bottom: 20px;
+          display: flex;
+          flex-direction: column;
+          gap: 12px;
+        }
+
+        .church-home-admin-box {
+          display: flex;
+          align-items: flex-start;
+          gap: 12px;
+        }
+
+        .church-home-admin-icon {
+          width: 36px;
+          height: 36px;
+          border-radius: var(--radius-md);
+          background: var(--primary-surface);
+          border: 1px solid var(--primary-border);
+          color: var(--primary);
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          flex-shrink: 0;
+        }
+
+        .church-home-admin-info {
+          display: flex;
+          flex-direction: column;
+          gap: 2px;
+        }
+
+        .church-home-admin-title {
+          font-size: 14px;
+          font-weight: 700;
+          color: var(--text-primary);
+        }
+
+        .church-home-admin-desc {
+          font-size: 12px;
+          color: var(--text-secondary);
+          line-height: 1.4;
+        }
+
+        .church-home-admin-btn {
+          width: 100%;
+          justify-content: center;
+          font-weight: 700;
         }
 
         /* Aviso de estado */
@@ -253,7 +350,7 @@ export default function ChurchHomePage() {
           border: 1px solid var(--border-subtle);
           border-radius: var(--radius-md);
           width: 100%;
-          margin-bottom: 24px;
+          margin-bottom: 20px;
           font-size: 13px;
           color: var(--text-secondary);
           line-height: 1.5;
