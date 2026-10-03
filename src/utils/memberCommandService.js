@@ -618,22 +618,26 @@ export function getMemberListViewState(state) {
  * Garante que uma resposta de requisição antiga não sobrescreva uma mais recente (Requisito 5).
  */
 export function createListRequestCoordinator() {
-  let latestRequestId = 0;
+  let monotonicCounter = 0;
+  let activeRequestId = 0;
 
   return {
     getNextRequestId() {
-      latestRequestId += 1;
-      return latestRequestId;
+      monotonicCounter += 1;
+      activeRequestId = monotonicCounter;
+      return activeRequestId;
     },
     getCurrentRequestId() {
-      return latestRequestId;
+      return activeRequestId;
     },
     isCurrent(requestId) {
-      return requestId === latestRequestId;
+      if (!requestId || !activeRequestId) return false;
+      return requestId === activeRequestId;
     },
     reset() {
-      latestRequestId = 0;
+      activeRequestId = 0;
     },
   };
 }
+
 

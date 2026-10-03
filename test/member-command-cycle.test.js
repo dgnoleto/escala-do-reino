@@ -918,5 +918,66 @@ describe('6. Coordenação de Estados da Listagem de Membros e Proteção contra
       'Igreja inativa para consulta.'
     );
   });
+
+  it('8. Invalidação por reset: resposta iniciada antes de reset nunca volta a ser atual mesmo após novas consultas', () => {
+    const coordinator = createListRequestCoordinator();
+
+    // 1. Inicia uma consulta antes de qualquer reset
+    const reqBeforeReset = coordinator.getNextRequestId();
+    assert.equal(reqBeforeReset, 1);
+    assert.equal(coordinator.isCurrent(reqBeforeReset), true);
+    assert.equal(coordinator.getCurrentRequestId(), 1);
+
+    // 2. Ocorre um reset (ex: troca de conta, logout ou perda de autorização)
+    coordinator.reset();
+
+    // Imediatamente após o reset, a consulta antiga foi invalidada e nenhum id está ativo
+    assert.equal(coordinator.isCurrent(reqBeforeReset), false);
+    assert.equal(coordinator.getCurrentRequestId(), 0);
+
+    // 3. Novas consultas são disparadas após o reset
+    const reqAfterReset1 = coordinator.getNextRequestId();
+    // Comprova que NÃO reutilizou o id 1: o identificador é estritamente novo
+    assert.equal(reqAfterReset1, 2);
+    assert.notEqual(reqAfterReset1, reqBeforeReset);
+    assert.equal(coordinator.isCurrent(reqAfterReset1), true);
+
+    // Comprova que a resposta antiga de antes do reset NÃO voltou a ser atual
+    assert.equal(coordinator.isCurrent(reqBeforeReset), false);
+
+    // 4. Múltiplas consultas subsequentes continuam a sequência sem colisão
+    const reqAfterReset2 = coordinator.getNextRequestId();
+    assert.equal(reqAfterReset2, 3);
+    assert.equal(coordinator.isCurrent(reqAfterReset2), true);
+    assert.equal(coordinator.isCurrent(reqAfterReset1), false);
+    assert.equal(coordinator.isCurrent(reqBeforeReset), false);
+
+    // 5. Novo ciclo com outro reset
+    coordinator.reset();
+    assert.equal(coordinator.isCurrent(reqAfterReset2), false);
+    assert.equal(coordinator.isCurrent(reqBeforeReset), false);
+
+    const reqAfterReset3 = coordinator.getNextRequestId();
+    assert.equal(reqAfterReset3, 4);
+    assert.equal(coordinator.isCurrent(reqAfterReset3), true);
+    assert.equal(coordinator.isCurrent(reqBeforeReset), false);
+
+    // 6. Simulação de resposta assíncrona atrasada da primeira consulta chegando agora:
+    // Deve ser terminantemente descartada pela tela de produção
+    let state = applyMemberListTransition(createInitialMemberListState(), {
+      type: 'FETCH_SUCCESS',
+      data: [{ member_id: 'm-atual', display_name: 'Membro Atual', total_count: 1 }],
+    });
+
+    if (coordinator.isCurrent(reqBeforeReset)) {
+      state = applyMemberListTransition(state, {
+        type: 'FETCH_SUCCESS',
+        data: [{ member_id: 'm-antigo', display_name: 'Membro Antigo de Conta Anterior', total_count: 1 }],
+      });
+    }
+
+    assert.equal(state.members[0].display_name, 'Membro Atual');
+  });
 });
+
 
