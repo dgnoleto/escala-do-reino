@@ -34,15 +34,36 @@ export function AuthProvider({ children }) {
   const currentUserIdRef    = useRef(null);
   // Identificador da geração da sessão atual: incrementa a cada login/logout para descartar respostas antigas
   const sessionIdRef        = useRef(0);
+  // Geração monotônica de eventos de autenticação para evitar que getSession tardio sobrescreva evento mais recente
+  const authGenerationRef   = useRef(0);
   // Sequência monotônica para impedir que consulta mais lenta sobrescreva a mais recente
   const requestSeqRef       = useRef(0);
   // Timer agendado de consulta (cancelado em logout ou troca de sessão)
   const scheduledTimerRef   = useRef(null);
-  // Flag para coordenar getSession() inicial com evento INITIAL_SESSION de onAuthStateChange
+  // Flag para coordenar getSession() inicial com evento de onAuthStateChange
   const initialHandledRef   = useRef(false);
   // Ref para acompanhar o estado do vínculo em event listeners de foco/online
   const churchAccessRef     = useRef(null);
   churchAccessRef.current   = churchAccess;
+
+  /**
+   * Remove comandos pendentes de membros retidos na sessão para evitar vazamento entre contas.
+   */
+  function clearMemberCommandStorage() {
+    if (typeof window === 'undefined' || !window.sessionStorage) return;
+    try {
+      const keysToRemove = [];
+      for (let i = 0; i < window.sessionStorage.length; i++) {
+        const key = window.sessionStorage.key(i);
+        if (key && key.startsWith('escala_pending_member_cmd:')) {
+          keysToRemove.push(key);
+        }
+      }
+      keysToRemove.forEach((k) => window.sessionStorage.removeItem(k));
+    } catch (err) {
+      console.warn('[AuthContext] Falha ao limpar storage de sessão de membros:', err);
+    }
+  }
 
   /**
    * Limpa o contexto de vínculo e cancela timers pendentes.
@@ -130,8 +151,17 @@ export function AuthProvider({ children }) {
       return;
     }
 
-    // Função de sincronização com nova sessão
-    function applySession(newSession) {
+    let isEffectActive = true;
+    let hasAuthEventArrived = false;
+
+    // Função de sincronização com nova sessão baseada em ordem de geração
+    function applySession(newSession, eventGen) {
+      if (!isEffectActive) return;
+      if (eventGen < authGenerationRef.current) {
+        // Ignora snapshots obsoletos que resolveram fora de ordem
+        return;
+      }
+
       const newUserId = newSession?.user?.id ?? null;
       const previousUserId = currentUserIdRef.current;
 
@@ -142,6 +172,7 @@ export function AuthProvider({ children }) {
         sessionIdRef.current += 1;
         currentUserIdRef.current = null;
         clearAccessContext();
+        clearMemberCommandStorage();
         setAuthState('unauthenticated');
         return;
       }
@@ -151,6 +182,7 @@ export function AuthProvider({ children }) {
         sessionIdRef.current += 1;
         currentUserIdRef.current = newUserId;
         clearAccessContext();
+        clearMemberCommandStorage();
 
         // Cancela timer anterior se houver
         if (scheduledTimerRef.current) {
@@ -160,28 +192,31 @@ export function AuthProvider({ children }) {
         // Agenda a consulta evitando bloquear o listener de Auth
         scheduledTimerRef.current = setTimeout(() => {
           scheduledTimerRef.current = null;
-          fetchChurchAccess(newUserId);
+          if (isEffectActive && currentUserIdRef.current === newUserId) {
+            fetchChurchAccess(newUserId);
+          }
         }, 0);
       }
     }
 
-    // 1. Recupera sessão existente salva no storage
-    supabase.auth.getSession().then(({ data: { session: existingSession } }) => {
-      if (initialHandledRef.current) return;
-      initialHandledRef.current = true;
-      applySession(existingSession);
-    });
-
-    // 2. Escuta mudanças de estado do Supabase Auth
+    // 1. Escuta mudanças de estado do Supabase Auth (fonte autoritativa de eventos)
     const { data: { subscription } } = supabase.auth.onAuthStateChange(
       (event, newSession) => {
-        if (event === 'INITIAL_SESSION') {
-          if (initialHandledRef.current) return;
-          initialHandledRef.current = true;
-        }
-        applySession(newSession);
+        if (!isEffectActive) return;
+        hasAuthEventArrived = true;
+        initialHandledRef.current = true;
+        const currentGen = ++authGenerationRef.current;
+        applySession(newSession, currentGen);
       }
     );
+
+    // 2. Recupera sessão existente salva no storage como fallback se nenhum evento tiver chegado
+    supabase.auth.getSession().then(({ data: { session: existingSession } }) => {
+      if (!isEffectActive || hasAuthEventArrived || initialHandledRef.current) return;
+      initialHandledRef.current = true;
+      const currentGen = ++authGenerationRef.current;
+      applySession(existingSession, currentGen);
+    });
 
     // 3. Revalidação ao recuperar foco da janela ou reconectar à internet
     function handleFocusOrOnline() {
@@ -200,6 +235,7 @@ export function AuthProvider({ children }) {
     document.addEventListener('visibilitychange', handleFocusOrOnline);
 
     return () => {
+      isEffectActive = false;
       subscription.unsubscribe();
       window.removeEventListener('focus', handleFocusOrOnline);
       window.removeEventListener('online', handleFocusOrOnline);
@@ -254,10 +290,12 @@ export function AuthProvider({ children }) {
   async function signOut() {
     if (!supabase) return;
 
-    // Invalida sessões imediatamente para descartar qualquer resposta em voo
+    // Invalida sessões e gerações imediatamente para descartar qualquer resposta em voo
+    authGenerationRef.current += 1;
     sessionIdRef.current += 1;
     currentUserIdRef.current = null;
     clearAccessContext();
+    clearMemberCommandStorage();
     setAuthError(null);
 
     try {

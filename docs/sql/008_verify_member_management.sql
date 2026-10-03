@@ -29,6 +29,7 @@ select
   p.list_proc is not null
     and (select prosecdef from pg_catalog.pg_proc where oid = p.list_proc)
     and (select proconfig @> array['search_path=""'] or proconfig @> array['search_path='] from pg_catalog.pg_proc where oid = p.list_proc)
+    and (select proconfig @> array['statement_timeout=5s'] from pg_catalog.pg_proc where oid = p.list_proc)
     and has_function_privilege('authenticated', p.list_proc, 'EXECUTE')
     and not has_function_privilege('anon', p.list_proc, 'EXECUTE')
     and not has_function_privilege('service_role', p.list_proc, 'EXECUTE')
@@ -41,6 +42,7 @@ select
   p.create_proc is not null
     and (select prosecdef from pg_catalog.pg_proc where oid = p.create_proc)
     and (select proconfig @> array['search_path=""'] or proconfig @> array['search_path='] from pg_catalog.pg_proc where oid = p.create_proc)
+    and (select proconfig @> array['statement_timeout=5s'] from pg_catalog.pg_proc where oid = p.create_proc)
     and has_function_privilege('authenticated', p.create_proc, 'EXECUTE')
     and not has_function_privilege('anon', p.create_proc, 'EXECUTE')
     and not has_function_privilege('service_role', p.create_proc, 'EXECUTE')
@@ -53,6 +55,7 @@ select
   p.receipt_proc is not null
     and (select prosecdef from pg_catalog.pg_proc where oid = p.receipt_proc)
     and (select proconfig @> array['search_path=""'] or proconfig @> array['search_path='] from pg_catalog.pg_proc where oid = p.receipt_proc)
+    and (select proconfig @> array['statement_timeout=5s'] from pg_catalog.pg_proc where oid = p.receipt_proc)
     and has_function_privilege('authenticated', p.receipt_proc, 'EXECUTE')
     and not has_function_privilege('anon', p.receipt_proc, 'EXECUTE')
     and not has_function_privilege('service_role', p.receipt_proc, 'EXECUTE')

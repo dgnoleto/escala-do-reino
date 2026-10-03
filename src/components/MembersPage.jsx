@@ -29,12 +29,21 @@ import {
  * - Estados de carregamento, lista vazia, erro e processamento.
  * - Uso legível no navegador do celular.
  */
-export default function MembersPage({ onBack }) {
-  const { churchAccess, authState } = useAuth();
+import { isDefinitiveServerError, isUncertainResponse } from '../utils/memberErrors';
+export { isDefinitiveServerError, isUncertainResponse };
 
-  const churchId   = churchAccess?.church_id;
-  const churchName = churchAccess?.church_name || 'Igreja';
-  const isAdmin    = churchAccess?.is_admin || false;
+export default function MembersPage({ onBack }) {
+  const { session, churchAccess, authState } = useAuth();
+
+  const churchId     = churchAccess?.church_id;
+  const churchName   = churchAccess?.church_name || 'Igreja';
+  const isAdmin      = churchAccess?.is_admin || false;
+  const currentUserId = session?.user?.id;
+
+  // Chave de isolamento de comando pendente por conta e igreja no storage de sessão
+  const storageKey = churchId && currentUserId
+    ? `escala_pending_member_cmd:${currentUserId}:${churchId}`
+    : null;
 
   // Estado da listagem
   const [members, setMembers]         = useState([]);
@@ -48,6 +57,7 @@ export default function MembersPage({ onBack }) {
   const [showCreateModal, setShowCreateModal]   = useState(false);
   const [nameInput, setNameInput]               = useState('');
   const [submitting, setSubmitting]             = useState(false);
+  const [retrying, setRetrying]                 = useState(false);
   const [formError, setFormError]               = useState(null);
   const [successMessage, setSuccessMessage]     = useState(null);
 
@@ -84,6 +94,35 @@ export default function MembersPage({ onBack }) {
       window.removeEventListener('offline', handleOffline);
     };
   }, []);
+
+  // Recupera comando pendente retido no storage de sessão para esta conta e igreja
+  useEffect(() => {
+    if (!storageKey) {
+      setUncertainCommand(null);
+      return;
+    }
+    try {
+      const raw = sessionStorage.getItem(storageKey);
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        if (
+          parsed?.commandId &&
+          parsed?.churchId === churchId &&
+          parsed?.userId === currentUserId &&
+          parsed?.displayName
+        ) {
+          setUncertainCommand(parsed);
+        } else {
+          sessionStorage.removeItem(storageKey);
+          setUncertainCommand(null);
+        }
+      } else {
+        setUncertainCommand(null);
+      }
+    } catch {
+      setUncertainCommand(null);
+    }
+  }, [storageKey, churchId, currentUserId]);
 
   // Limpar lista se perder autorização ou trocar de conta
   useEffect(() => {
@@ -147,11 +186,92 @@ export default function MembersPage({ onBack }) {
   }, [churchId, isAdmin, page, loadMembers]);
 
   /**
+   * Executa a chamada RPC de criação de membro, retendo a identidade do comando
+   * antes do envio e gerenciando respostas incertas versus definitivas.
+   */
+  async function executeMemberCreation(commandId, normalizedName) {
+    if (!supabase || !churchId) return;
+
+    const pendingCmd = {
+      commandId,
+      churchId,
+      userId: currentUserId,
+      displayName: normalizedName,
+      timestamp: Date.now(),
+    };
+
+    // Reter o comando antes do envio no storage de sessão
+    if (storageKey) {
+      try {
+        sessionStorage.setItem(storageKey, JSON.stringify(pendingCmd));
+      } catch (err) {
+        console.warn('[MembersPage] Falha ao gravar comando no storage de sessão:', err);
+      }
+    }
+
+    let rpcData = null;
+    let rpcError = null;
+
+    try {
+      const res = await supabase.schema('public').rpc('create_church_member', {
+        p_church_id: churchId,
+        p_command_id: commandId,
+        p_display_name: normalizedName,
+      });
+      rpcData = res?.data;
+      rpcError = res?.error;
+    } catch (networkErr) {
+      rpcError = networkErr;
+    }
+
+    if (!isMountedRef.current) return;
+
+    // Reconhecer resposta incerta (transporte, timeout, 5xx ou resposta em formato inválido)
+    if (isUncertainResponse(rpcError, rpcData)) {
+      console.warn('[MembersPage] Resposta incerta após envio do comando:', rpcError || 'formato inválido');
+      setUncertainCommand(pendingCmd);
+      setShowCreateModal(false);
+      setFormError(
+        'A confirmação do cadastro não chegou devido a uma oscilação na rede ou formato de resposta. ' +
+        'O comando foi retido para verificação segura sem gerar duplicidade.'
+      );
+      return;
+    }
+
+    if (rpcError) {
+      // Rejeição definitiva pelo servidor (ex.: permissão, parâmetros inválidos ou cota excedida)
+      console.error('[MembersPage] Erro definitivo retornado ao criar membro:', rpcError.message);
+      if (storageKey) {
+        try { sessionStorage.removeItem(storageKey); } catch {}
+      }
+      setUncertainCommand(null);
+      setFormError(rpcError.message || 'Falha ao cadastrar membro.');
+      return;
+    }
+
+    // Sucesso confirmado pelo servidor
+    const created = rpcData[0];
+    if (storageKey) {
+      try { sessionStorage.removeItem(storageKey); } catch {}
+    }
+    setUncertainCommand(null);
+    setNameInput('');
+    setShowCreateModal(false);
+    setSuccessMessage(
+      created.already_existed
+        ? `Membro "${created.display_name || normalizedName}" já constava como cadastrado.`
+        : `Membro "${created.display_name || normalizedName}" cadastrado com sucesso!`
+    );
+    setPage(1);
+    loadMembers(1);
+  }
+
+  /**
    * Submete a criação de um novo membro.
    */
   async function handleCreateMember(e) {
     e.preventDefault();
-    if (submitting) return;
+    if (submitting || retrying) return;
 
     if (!isOnline) {
       setFormError('Você está sem conexão com a internet. O cadastro não pode ser realizado offline.');
@@ -164,66 +284,27 @@ export default function MembersPage({ onBack }) {
       return;
     }
 
-    if (trimmed.length > 120) {
-      setFormError('O nome deve ter no máximo 120 caracteres.');
+    // Normalização canônica em NFC no cliente antes da validação
+    const normalized = trimmed.normalize('NFC');
+    if (normalized.length < 1 || normalized.length > 120) {
+      setFormError('O nome deve ter entre 1 e 120 caracteres.');
       return;
     }
 
-    // Se há um comando incerto pendente, exigir reconciliação prévia
+    // Se há um comando incerto pendente, exigir reconciliação ou reexecução prévia
     if (uncertainCommand) {
       setFormError('Existe um comando anterior com resposta incerta. Reconcilie o resultado antes de tentar novamente.');
       return;
     }
 
+    // Cria a identidade do comando antes do envio
     const commandId = crypto.randomUUID();
     setSubmitting(true);
     setFormError(null);
     setSuccessMessage(null);
 
     try {
-      const { data, error } = await supabase.schema('public').rpc('create_church_member', {
-        p_church_id: churchId,
-        p_command_id: commandId,
-        p_display_name: trimmed,
-      });
-
-      if (!isMountedRef.current) return;
-
-      if (error) {
-        console.error('[MembersPage] Erro retornado ao criar membro:', error.message);
-        setFormError(error.message || 'Falha ao cadastrar membro.');
-        setSubmitting(false);
-        return;
-      }
-
-      // Sucesso confirmado pelo servidor
-      const created = data?.[0];
-      const existed = created?.already_existed;
-      setSuccessMessage(
-        existed
-          ? `Membro "${created?.display_name || trimmed}" já constava como cadastrado.`
-          : `Membro "${created?.display_name || trimmed}" cadastrado com sucesso!`
-      );
-      setNameInput('');
-      setShowCreateModal(false);
-      setUncertainCommand(null);
-
-      // Recarrega na primeira página para exibir o cadastro
-      setPage(1);
-      loadMembers(1);
-    } catch (networkErr) {
-      if (!isMountedRef.current) return;
-      console.warn('[MembersPage] Resposta incerta após envio do comando:', networkErr);
-      // Registra comando incerto para reconciliação
-      setUncertainCommand({
-        commandId,
-        churchId,
-        displayName: trimmed,
-      });
-      setFormError(
-        'A confirmação do cadastro não chegou devido a uma oscilação na rede. ' +
-        'O comando foi retido para verificação segura. Não reenvie sem verificar.'
-      );
+      await executeMemberCreation(commandId, normalized);
     } finally {
       if (isMountedRef.current) {
         setSubmitting(false);
@@ -232,10 +313,33 @@ export default function MembersPage({ onBack }) {
   }
 
   /**
+   * Reexecuta com segurança o comando retido com o mesmo command_id e os mesmos parâmetros.
+   * A função RPC idempotente devolverá o resultado original ou executará uma única criação.
+   */
+  async function handleRetryCommand() {
+    if (!uncertainCommand || retrying || reconciling) return;
+    if (!isOnline) {
+      setFormError('Sem conexão com a internet. Verifique a rede antes de reexecutar.');
+      return;
+    }
+
+    setRetrying(true);
+    setFormError(null);
+    try {
+      await executeMemberCreation(uncertainCommand.commandId, uncertainCommand.displayName);
+    } finally {
+      if (isMountedRef.current) {
+        setRetrying(false);
+      }
+    }
+  }
+
+  /**
    * Reconcilia um comando com resposta incerta chamando get_create_member_receipt.
+   * Uma consulta vazia não comprova término sem gravação; o comando não é descartado.
    */
   async function handleReconcileReceipt() {
-    if (!uncertainCommand || !supabase || reconciling) return;
+    if (!uncertainCommand || !supabase || reconciling || retrying) return;
 
     setReconciling(true);
     setFormError(null);
@@ -249,27 +353,37 @@ export default function MembersPage({ onBack }) {
       if (!isMountedRef.current) return;
 
       if (error) {
-        setFormError('Falha ao verificar confirmação: ' + error.message);
-        setReconciling(false);
+        if (isDefinitiveServerError(error)) {
+          setFormError('Acesso não autorizado ou erro definitivo na consulta de recibo: ' + error.message);
+          if (storageKey) {
+            try { sessionStorage.removeItem(storageKey); } catch {}
+          }
+          setUncertainCommand(null);
+        } else {
+          setFormError('Falha de rede ao consultar o recibo. Verifique a conexão e tente novamente.');
+        }
         return;
       }
 
       if (data && data.length > 0) {
         // Confirmado no servidor!
         const member = data[0];
-        setSuccessMessage(`Cadastro de "${member.display_name}" confirmado com sucesso no servidor!`);
+        if (storageKey) {
+          try { sessionStorage.removeItem(storageKey); } catch {}
+        }
         setUncertainCommand(null);
         setNameInput('');
         setShowCreateModal(false);
+        setSuccessMessage(`Cadastro de "${member.display_name}" confirmado com sucesso no servidor!`);
         setPage(1);
         loadMembers(1);
       } else {
-        // Não foi processado no servidor; o usuário pode reenviar com segurança
+        // Recibo ainda não localizado: NÃO comprova término sem gravação!
+        // NÃO descarta o comando e autoriza reexecução com a mesma chave.
         setFormError(
-          'O servidor confirmou que o comando não foi gravado. ' +
-          'Você pode tentar salvar o membro novamente.'
+          'O recibo ainda não consta no banco de dados. O registro pode estar em processamento ou não ter sido recebido. ' +
+          'Você pode verificar novamente ou reexecutar o cadastro com segurança usando a mesma chave.'
         );
-        setUncertainCommand(null);
       }
     } catch (err) {
       if (!isMountedRef.current) return;
@@ -341,8 +455,9 @@ export default function MembersPage({ onBack }) {
               setShowCreateModal(true);
               setFormError(null);
             }}
-            disabled={!isOnline}
+            disabled={!isOnline || !!uncertainCommand}
             aria-label="Cadastrar novo membro"
+            title={uncertainCommand ? "Reconcilie ou reexecute o comando pendente antes de cadastrar outro membro" : undefined}
           >
             <UserPlus size={16} />
             <span>Cadastrar membro</span>
@@ -366,21 +481,43 @@ export default function MembersPage({ onBack }) {
               <strong>Resposta incerta do servidor:</strong>
               <p>
                 O envio de "{uncertainCommand.displayName}" foi interrompido antes da confirmação.
-                Verifique antes de tentar novo cadastro.
+                A identidade da operação foi retida para evitar duplicidade.
               </p>
-              <button
-                type="button"
-                className="btn btn-secondary btn-sm"
-                onClick={handleReconcileReceipt}
-                disabled={reconciling || !isOnline}
-              >
-                {reconciling ? (
-                  <RefreshCw size={14} className="spin-icon" />
-                ) : (
-                  <RefreshCw size={14} />
-                )}
-                <span>Verificar confirmação</span>
-              </button>
+              {formError && (
+                <p style={{ marginTop: '4px', fontSize: '0.9rem', color: '#991b1b' }}>
+                  {formError}
+                </p>
+              )}
+              <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', marginTop: '8px' }}>
+                <button
+                  type="button"
+                  id="btn-reconcile-receipt"
+                  className="btn btn-secondary btn-sm"
+                  onClick={handleReconcileReceipt}
+                  disabled={reconciling || retrying || !isOnline}
+                >
+                  {reconciling ? (
+                    <RefreshCw size={14} className="spin-icon" />
+                  ) : (
+                    <RefreshCw size={14} />
+                  )}
+                  <span>Verificar confirmação</span>
+                </button>
+                <button
+                  type="button"
+                  id="btn-retry-command"
+                  className="btn btn-primary btn-sm"
+                  onClick={handleRetryCommand}
+                  disabled={reconciling || retrying || !isOnline}
+                >
+                  {retrying ? (
+                    <RefreshCw size={14} className="spin-icon" />
+                  ) : (
+                    <RefreshCw size={14} />
+                  )}
+                  <span>Reexecutar cadastro</span>
+                </button>
+              </div>
             </div>
           </div>
         )}

@@ -94,6 +94,7 @@ language plpgsql
 stable
 security definer
 set search_path = ''
+set statement_timeout = '5s'
 as $function$
 declare
   v_user_id uuid;
@@ -165,6 +166,7 @@ returns table (
 language plpgsql
 security definer
 set search_path = ''
+set statement_timeout = '5s'
 as $function$
 declare
   v_user_id uuid;
@@ -196,7 +198,7 @@ begin
   end if;
 
   -- Normalização em NFC e retirada de espaços externos
-  v_clean_name := pg_catalog.btrim(pg_catalog.normalize(p_display_name, NFC));
+  v_clean_name := pg_catalog.btrim(pg_catalog.normalize(p_display_name, 'NFC'));
   if char_length(v_clean_name) < 1 or char_length(v_clean_name) > 120 then
     raise exception 'Nome deve ter entre 1 e 120 caracteres.' using errcode = '23514';
   end if;
@@ -204,7 +206,7 @@ begin
   -- Resumo SHA-256 dos parâmetros para proteção contra repetição com dados divergentes
   v_params_hash := pg_catalog.sha256(convert_to(p_church_id::text || ':' || v_clean_name, 'UTF8'));
 
-  -- Ordem consistente de bloqueio: 1) Igreja, 2) Vínculo de acesso com o administrador
+  -- Ordem consistente de bloqueio: 1) Igreja, 2) Vínculo de acesso com o administrador, 3) Quota do usuário
   select c.id into v_church_id
   from app_private.churches c
   where c.id = p_church_id and c.status = 'active'
@@ -234,20 +236,10 @@ begin
     raise exception 'Acesso administrativo não autorizado nesta igreja.' using errcode = '42501';
   end if;
 
-  -- Limitação compartilhada de taxa na rota efetiva: máx 30 criações por minuto por usuário
-  select count(*) into v_recent_commands
-  from app_private.command_receipts cr
-  where cr.user_id = v_user_id
-    and cr.created_at >= statement_timestamp() - interval '1 minute';
+  -- Serialização da decisão de criação e controle de quota entre chamadas do mesmo usuário
+  perform pg_catalog.pg_advisory_xact_lock(hashtext('create_church_member_quota'), hashtext(v_user_id::text));
 
-  if v_recent_commands >= 30 then
-    raise exception 'Limite de requisições excedido. Aguarde antes de cadastrar novos membros.' using errcode = 'P0004';
-  end if;
-
-  -- Serialização de comandos concorrentes do mesmo usuário com o mesmo command_id
-  perform pg_catalog.pg_advisory_xact_lock(hashtext(v_user_id::text), hashtext(p_command_id::text));
-
-  -- Verificação de recibo existente para o mesmo comando
+  -- 1) Verificação prioritária de recibo existente: preserva replay idempotente mesmo se quota estiver cheia
   select cr.params_hash, cr.result_member_id
   into v_existing_hash, v_existing_member_id
   from app_private.command_receipts cr
@@ -255,16 +247,27 @@ begin
 
   if v_existing_hash is not null then
     if v_existing_hash = v_params_hash then
-      -- Idêntico: recupera o resultado original sem duplicar registros
+      -- Idêntico: recupera o resultado original sem consumir nova quota ou duplicar registros
       return query
       select m.id as member_id, m.display_name, m.status, m.created_at, true as already_existed
       from app_private.members m
       where m.id = v_existing_member_id and m.church_id = p_church_id;
       return;
     else
-      -- Mesmo comando_id com parâmetros diferentes: rejeição estrita
+      -- Mesmo command_id com parâmetros diferentes: rejeição estrita
       raise exception 'Comando já executado com parâmetros diferentes.' using errcode = '23505';
     end if;
+  end if;
+
+  -- 2) Limitação técnica de taxa compartilhada: máx 30 criações concluídas por minuto por usuário
+  -- Nota: escolha técnica deste PR para proteger o banco; não protege contra chamadas abusivas que falham antes do commit
+  select count(*) into v_recent_commands
+  from app_private.command_receipts cr
+  where cr.user_id = v_user_id
+    and cr.created_at >= statement_timestamp() - interval '1 minute';
+
+  if v_recent_commands >= 30 then
+    raise exception 'Limite de requisições excedido. Aguarde antes de cadastrar novos membros.' using errcode = 'P0004';
   end if;
 
   -- Inserção atômica de membro, auditoria e recibo de comando na mesma transação
@@ -318,6 +321,7 @@ language plpgsql
 stable
 security definer
 set search_path = ''
+set statement_timeout = '5s'
 as $function$
 declare
   v_user_id uuid;
@@ -395,6 +399,7 @@ begin
       where p.oid = v_proc and p.prosecdef
         and (p.proconfig @> array['search_path=""']
              or p.proconfig @> array['search_path='])
+        and p.proconfig @> array['statement_timeout=5s']
     ) then
       raise exception 'Função % sem configuração de segurança esperada.', v_proc;
     end if;
