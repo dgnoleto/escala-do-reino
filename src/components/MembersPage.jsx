@@ -37,6 +37,7 @@ import {
   loadPendingMemberCommand,
   removePendingMemberCommand,
   classifyReceiptCheckResult,
+  dispatchMemberCreation,
 } from '../utils/memberCommandService';
 export { isDefinitiveServerError, isUncertainResponse };
 
@@ -176,75 +177,56 @@ export default function MembersPage({ onBack }) {
   async function executeMemberCreation(commandId, normalizedName) {
     if (!supabase || !churchId) return;
 
-    const pendingCmd = {
-      commandId,
+    const storage = typeof window !== 'undefined' ? window.sessionStorage : null;
+    const rpcCaller = (params) => supabase.schema('public').rpc('create_church_member', params);
+
+    const result = await dispatchMemberCreation({
+      storage,
+      rpcCaller,
       churchId,
       userId: currentUserId,
+      commandId,
       displayName: normalizedName,
-      timestamp: Date.now(),
-    };
-
-    // Reter o comando antes do envio no storage de sessão
-    setUncertainCommand(pendingCmd);
-    if (typeof window !== 'undefined' && window.sessionStorage) {
-      savePendingMemberCommand(window.sessionStorage, pendingCmd);
-    }
-
-    let rpcData = null;
-    let rpcError = null;
-
-    try {
-      const res = await supabase.schema('public').rpc('create_church_member', {
-        p_church_id: churchId,
-        p_command_id: commandId,
-        p_display_name: normalizedName,
-      });
-      rpcData = res?.data;
-      rpcError = res?.error;
-    } catch (networkErr) {
-      rpcError = networkErr;
-    }
+    });
 
     if (!isMountedRef.current) return;
 
-    // Reconhecer resposta incerta (transporte, timeout, 5xx ou resposta em formato inválido)
-    if (isUncertainResponse(rpcError, rpcData)) {
-      console.warn('[MembersPage] Resposta incerta após envio do comando:', rpcError || 'formato inválido');
-      setUncertainCommand(pendingCmd);
+    if (result.status === 'STORAGE_FAILED') {
+      // Se o armazenamento estiver indisponível ou a gravação retornar false,
+      // interrompe antes da RPC, mantém o nome preenchido e mostra mensagem clara.
+      // O modal permanece aberto e nameInput não é alterado.
+      setFormError(result.message);
+      return;
+    }
+
+    if (result.status === 'UNCERTAIN') {
+      setUncertainCommand(result.pendingCmd);
       setShowCreateModal(false);
-      setFormError(
-        'A confirmação do cadastro não chegou devido a uma oscilação na rede ou formato de resposta. ' +
-        'O comando foi retido para verificação segura sem gerar duplicidade.'
-      );
+      setFormError(result.message);
       return;
     }
 
-    if (rpcError) {
-      // Rejeição definitiva pelo servidor (ex.: permissão, parâmetros inválidos ou cota excedida)
-      console.error('[MembersPage] Erro definitivo retornado ao criar membro:', rpcError.message);
-      if (typeof window !== 'undefined' && window.sessionStorage) {
-        removePendingMemberCommand(window.sessionStorage, currentUserId, churchId);
-      }
+    if (result.status === 'DEFINITIVE_ERROR') {
+      console.error('[MembersPage] Erro definitivo retornado ao criar membro:', result.message);
       setUncertainCommand(null);
-      setFormError(rpcError.message || 'Falha ao cadastrar membro.');
+      setFormError(result.message);
       return;
     }
 
-    // Sucesso confirmado pelo servidor
-    const created = rpcData[0];
-    if (typeof window !== 'undefined' && window.sessionStorage) {
-      removePendingMemberCommand(window.sessionStorage, currentUserId, churchId);
+    if (result.status === 'SUCCESS') {
+      setUncertainCommand(null);
+      setNameInput('');
+      setShowCreateModal(false);
+      setSuccessMessage(result.message);
+      setPage(1);
+      loadMembers(1);
+      return;
     }
-    setUncertainCommand(null);
-    setNameInput('');
-    setShowCreateModal(false);
-    setSuccessMessage(
-      created.already_existed
-        ? `Membro "${created.display_name || normalizedName}" já constava como cadastrado.`
-        : `Membro "${created.display_name || normalizedName}" cadastrado com sucesso!`
-    );
-    setPage(1);
-    loadMembers(1);
+
+    if (result.status === 'ABORTED') {
+      setFormError(result.message);
+      return;
+    }
   }
 
   /**

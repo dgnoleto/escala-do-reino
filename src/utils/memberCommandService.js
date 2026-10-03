@@ -310,3 +310,117 @@ export function classifyReceiptCheckResult(error, data) {
       'Você pode verificar novamente ou reexecutar o cadastro com segurança usando a mesma chave.',
   };
 }
+
+/**
+ * Executa o fluxo de envio do comando de criação de membro garantindo que:
+ * 1. O comando é persistido no storage antes da RPC;
+ * 2. Se a persistência falhar (storage indisponível, quota esgotada ou erro), a execução é
+ *    estritamente interrompida ANTES de chamar a RPC;
+ * 3. Se persistido, executa a RPC e classifica a resposta (incerta, erro definitivo ou sucesso).
+ *
+ * @param {object} params
+ * @param {Storage|object|null} params.storage - window.sessionStorage ou mock
+ * @param {Function} params.rpcCaller - Função assíncrona que executa a RPC no Supabase
+ * @param {string} params.churchId - UUID da igreja
+ * @param {string} params.userId - UID do usuário autenticado
+ * @param {string} params.commandId - UUID único do comando
+ * @param {string} params.displayName - Nome normalizado do membro
+ * @returns {Promise<{
+ *   status: 'STORAGE_FAILED'|'UNCERTAIN'|'DEFINITIVE_ERROR'|'SUCCESS'|'ABORTED',
+ *   pendingCmd?: object,
+ *   created?: object,
+ *   rpcError?: object|Error,
+ *   message: string,
+ *   rpcCalled: boolean
+ * }>}
+ */
+export async function dispatchMemberCreation({
+  storage,
+  rpcCaller,
+  churchId,
+  userId,
+  commandId,
+  displayName,
+}) {
+  if (!churchId || !userId || !commandId || !displayName) {
+    return {
+      status: 'ABORTED',
+      rpcCalled: false,
+      message: 'Parâmetros obrigatórios ausentes para criação de membro.',
+    };
+  }
+
+  const pendingCmd = {
+    commandId,
+    churchId,
+    userId,
+    displayName,
+    timestamp: Date.now(),
+  };
+
+  // 1. Tenta persistir no storage ANTES de qualquer envio de rede
+  const isSaved = savePendingMemberCommand(storage, pendingCmd);
+  if (!isSaved) {
+    // Interrompe ANTES da RPC! Não envia operação cuja identidade não possa ser recuperada.
+    return {
+      status: 'STORAGE_FAILED',
+      rpcCalled: false,
+      pendingCmd,
+      message:
+        'Armazenamento local da sessão indisponível. Não foi possível registrar a identidade ' +
+        'da operação para garantir sua recuperação caso ocorra recarga ou falha de rede. O envio foi cancelado.',
+    };
+  }
+
+  // 2. Dispara a chamada RPC
+  let rpcData = null;
+  let rpcError = null;
+
+  try {
+    const res = await rpcCaller({
+      p_church_id: churchId,
+      p_command_id: commandId,
+      p_display_name: displayName,
+    });
+    rpcData = res?.data;
+    rpcError = res?.error;
+  } catch (networkErr) {
+    rpcError = networkErr;
+  }
+
+  // 3. Avalia resposta incerta (queda de conexão, timeout, 5xx ou payload malformado)
+  if (isUncertainResponse(rpcError, rpcData)) {
+    return {
+      status: 'UNCERTAIN',
+      rpcCalled: true,
+      pendingCmd,
+      rpcError,
+      message:
+        'A confirmação do cadastro não chegou devido a uma oscilação na rede ou formato de resposta. ' +
+        'O comando foi retido para verificação segura sem gerar duplicidade.',
+    };
+  }
+
+  // 4. Rejeição definitiva pelo servidor (permissão, constraints, quota, etc.)
+  if (rpcError) {
+    removePendingMemberCommand(storage, userId, churchId);
+    return {
+      status: 'DEFINITIVE_ERROR',
+      rpcCalled: true,
+      rpcError,
+      message: rpcError.message || 'Falha ao cadastrar membro.',
+    };
+  }
+
+  // 5. Sucesso confirmado
+  removePendingMemberCommand(storage, userId, churchId);
+  const created = rpcData[0];
+  return {
+    status: 'SUCCESS',
+    rpcCalled: true,
+    created,
+    message: created?.already_existed
+      ? `Membro "${created?.display_name || displayName}" já constava como cadastrado.`
+      : `Membro "${created?.display_name || displayName}" cadastrado com sucesso!`,
+  };
+}

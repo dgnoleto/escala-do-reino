@@ -78,7 +78,7 @@ Os scripts em `docs/sql/` são preparados para execução manual no SQL Editor d
 2. **Ensaio transacional com ROLLBACK:**
    - Executar inteiro `docs/sql/007_validate_member_management.sql`.
    - O script cria fixtures temporárias sob papel de manutenção, executa chamadas RPC como `authenticated` com JWT claims simuladas, valida atomicidade (inclusive falha intencional de auditoria revertendo membro e recibo), valida bloqueio de contas inelegíveis, valida limite técnico de taxa com replay preservado, e encerra com `ROLLBACK`.
-   - Exigir a linha final: `PASS: ensaio concluído; nenhuma alteração persistida.`
+   - **Instrução obrigatória de conferência:** Conferir ausência de qualquer erro nas asserções durante o bloco e exigir a linha final: `PASS: ensaio concluído; nenhuma alteração persistida.`
    - O encerramento confere a ausência dos objetos temporários e das fixtures de ensaio (`Igreja Ensaio A`, `Igreja Ensaio B`), sem exigir ausência de membros ou igrejas preexistentes no banco.
 
 3. **Criação permanente com COMMIT:**
@@ -96,14 +96,18 @@ Os scripts em `docs/sql/` são preparados para execução manual no SQL Editor d
 
 ## 4. Limites de Evidência e Status dos Testes
 
+- **Controle de Idempotência e Limites no Servidor:**
+  - O controle definitivo de idempotência (unicidade de recibos, cálculo SHA-256 dos parâmetros, recuperação de `already_existed = true` e serialização por `pg_advisory_xact_lock`) reside integralmente nas funções PL/pgSQL do banco de dados. Os testes locais em JavaScript/Node.js validam a coordenação do ciclo de comando e a classificação de respostas pelo cliente, sem constituir comprovação completa do sistema distribuído em operação real.
+
 - **Testes automatizados que executam código de produção (`test/member-command-cycle.test.js`):**
   - Executam diretamente as funções compartilhadas de produção importadas de `src/utils/memberCommandService.js` (utilizadas por `MembersPage.jsx` e `AuthContext.jsx`):
     - `validateAndNormalizeMemberName`: validação e normalização Unicode NFC (acentos, apóstrofos, limites de 1-120 caracteres, rejeição de vazios).
     - `savePendingMemberCommand`, `loadPendingMemberCommand`, `removePendingMemberCommand`: isolamento por usuário e igreja no `sessionStorage`.
-    - `determineAuthTransition`: diferenciação entre restauração inicial da mesma conta (preservando o comando salvo) e troca efetiva de conta/logout (limpando o storage com `clearAllMemberCommandStorage`).
+    - `dispatchMemberCreation`: comprovação de que a persistência do comando no storage é verificada antes do envio e que a chamada RPC é **estritamente cancelada** caso o armazenamento local falhe ou esteja indisponível.
+    - `determineAuthTransition`: diferenciação entre restauração inicial da mesma conta (preservando o comando salvo) e “troca efetiva de conta” / logout (limpando o storage com `clearAllMemberCommandStorage`). A “troca efetiva de conta” é uma classificação interna do aplicativo para isolamento de dados no cliente.
     - `isDefinitiveServerError` e `isUncertainResponse`: classificação de erros definitivos vs incertos (transporte, timeouts, 5xx, payloads inválidos).
-    - `classifyReceiptCheckResult`: garantia de que consultas vazias ou falhas de rede/servidor na checagem de recibo não descartam o comando pendente, preservando-o para reexecução.
-  - Resultado: 18 testes automatizados executados e aprovados com 100% de sucesso via Node.js nativo (`npm test`).
+    - `classifyReceiptCheckResult`: garantia de que consultas vazias ou falhas de rede/servidor na checagem de recibo não descartam o comando pendente, preservando-o para reexecução com a mesma chave.
+  - Resultado: **19 testes automatizados** executados e aprovados com 100% de sucesso via Node.js nativo (`npm test`).
   - Compilação de produção Vite (`npm run build`) concluída com sucesso (0 erros, 0 avisos).
 
 - **Analisado estaticamente:**
@@ -112,8 +116,8 @@ Os scripts em `docs/sql/` são preparados para execução manual no SQL Editor d
   - Isolamento de papéis e simulação de revogação válida em `007_validate_member_management.sql`.
   - Não alegar execução em PostgreSQL quando houver apenas análise estática.
 
-- **Validações que permanecem pendentes no banco real Supabase:**
-  - Aplicação manual autorizada dos scripts SQL no Supabase SQL Editor.
-  - Comprovação operacional de aborto por timeout de 5 segundos via API HTTP sob transações lentas.
-  - Concorrência massiva real com múltiplas conexões paralelas simultâneas disputando o advisory lock transacional `pg_advisory_xact_lock`.
-  - Integração ponta a ponta com a API do Supabase em rede real.
+- **Validações explicitamente pendentes no Supabase e no navegador:**
+  - Execução manual autorizada dos scripts SQL no Supabase SQL Editor (`007_preflight`, `007_validate`, `007_member_management`, `008_verify`).
+  - Comprovação operacional de cancelamento por timeout de 5 segundos via API HTTP sob transações lentas.
+  - Concorrência massiva real com conexões simultâneas disputando o advisory lock transacional `pg_advisory_xact_lock`.
+  - Validações ponta a ponta no navegador conectado ao projeto Supabase real (comportamento sob modo anônimo, perda abrupta de conexão e restauração visual da sessão).

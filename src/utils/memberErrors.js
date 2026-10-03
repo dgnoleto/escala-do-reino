@@ -12,4 +12,5 @@ export {
   clearAllMemberCommandStorage,
   determineAuthTransition,
   classifyReceiptCheckResult,
+  dispatchMemberCreation,
 } from './memberCommandService.js';

@@ -11,6 +11,7 @@ import {
   clearAllMemberCommandStorage,
   determineAuthTransition,
   classifyReceiptCheckResult,
+  dispatchMemberCreation,
 } from '../src/utils/memberCommandService.js';
 
 /**
@@ -138,6 +139,57 @@ describe('3. Ciclo de Comando, Idempotência e Retenção no Aplicativo (Produç
     assert.equal(loaded?.displayName, displayName);
     assert.equal(loaded?.churchId, churchId);
     assert.equal(loaded?.userId, userId);
+  });
+
+  it('interrompe e NÃO chama a RPC quando a persistência do comando no storage falha', async () => {
+    let rpcCallCount = 0;
+    const mockRpcCaller = async () => {
+      rpcCallCount++;
+      return { data: [{ member_id: 'should-not-be-called' }], error: null };
+    };
+
+    // 1. Simula storage com falha (ex.: sessionStorage desabilitado, sem permissão ou quota excedida)
+    const failingStorage = {
+      setItem: () => {
+        throw new Error('QuotaExceededError: sessionStorage is full or disabled');
+      },
+      getItem: () => null,
+      removeItem: () => {},
+      length: 0,
+      key: () => null,
+    };
+
+    const result = await dispatchMemberCreation({
+      storage: failingStorage,
+      rpcCaller: mockRpcCaller,
+      churchId,
+      userId,
+      commandId: 'cmd-storage-failure-999',
+      displayName: 'Lucas Evangelista',
+    });
+
+    // Comprova que o status reportado é STORAGE_FAILED
+    assert.equal(result.status, 'STORAGE_FAILED');
+    assert.equal(result.rpcCalled, false);
+    assert.equal(result.message.includes('Armazenamento local da sessão indisponível'), true);
+
+    // COMPROVAÇÃO CRÍTICA: A RPC NUNCA foi chamada!
+    assert.equal(rpcCallCount, 0);
+
+    // 2. Simula storage nulo (armazenamento totalmente indisponível)
+    rpcCallCount = 0;
+    const nullStorageResult = await dispatchMemberCreation({
+      storage: null,
+      rpcCaller: mockRpcCaller,
+      churchId,
+      userId,
+      commandId: 'cmd-storage-null-888',
+      displayName: 'Lucas Evangelista',
+    });
+
+    assert.equal(nullStorageResult.status, 'STORAGE_FAILED');
+    assert.equal(nullStorageResult.rpcCalled, false);
+    assert.equal(rpcCallCount, 0);
   });
 
   it('restauração inicial da mesma conta com comando pendente (F5 / recarga da página)', () => {
