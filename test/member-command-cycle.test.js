@@ -379,3 +379,249 @@ describe('4. Coordenação de Inicialização e Concorrência da Sessão no Auth
     assert.equal(transition.isStale, false);
   });
 });
+
+describe('5. Ciclo de Envio com dispatchMemberCreation e Respostas Controladas da RPC', () => {
+  let storage;
+  const userId = 'user-admin-123';
+  const churchId = 'church-sp-456';
+
+  beforeEach(() => {
+    storage = new MockSessionStorage();
+  });
+
+  it('1. Sucesso: o comando está salvo antes da chamada e é removido somente após confirmação válida', async () => {
+    const commandId = 'cmd-success-101';
+    const displayName = 'Filemom de Colossos';
+    let storageCheckedDuringRpc = false;
+
+    const mockRpcCaller = async (params) => {
+      // Verifica os parâmetros recebidos pela RPC
+      assert.equal(params.p_church_id, churchId);
+      assert.equal(params.p_command_id, commandId);
+      assert.equal(params.p_display_name, displayName);
+
+      // Comprova que o comando já estava salvo no storage ANTES da RPC responder
+      const inFlight = loadPendingMemberCommand(storage, userId, churchId);
+      assert.notEqual(inFlight, null);
+      assert.equal(inFlight.commandId, commandId);
+      assert.equal(inFlight.displayName, displayName);
+      storageCheckedDuringRpc = true;
+
+      return {
+        data: [{ member_id: 'mem-filemom-1', display_name: displayName, already_existed: false }],
+        error: null,
+      };
+    };
+
+    const result = await dispatchMemberCreation({
+      storage,
+      rpcCaller: mockRpcCaller,
+      churchId,
+      userId,
+      commandId,
+      displayName,
+    });
+
+    assert.equal(storageCheckedDuringRpc, true);
+    assert.equal(result.status, 'SUCCESS');
+    assert.equal(result.rpcCalled, true);
+    assert.equal(result.created.member_id, 'mem-filemom-1');
+
+    // Comprova que o comando é removido do storage SOMENTE após confirmação válida
+    const afterSuccess = loadPendingMemberCommand(storage, userId, churchId);
+    assert.equal(afterSuccess, null);
+  });
+
+  it('2. Falha de transporte retornada em error: o comando permanece com o mesmo identificador e parâmetros', async () => {
+    const commandId = 'cmd-transport-202';
+    const displayName = 'Febe de Cencréia';
+
+    const transportError = { message: 'Failed to fetch', status: 0 };
+    const mockRpcCaller = async () => ({
+      data: null,
+      error: transportError,
+    });
+
+    const result = await dispatchMemberCreation({
+      storage,
+      rpcCaller: mockRpcCaller,
+      churchId,
+      userId,
+      commandId,
+      displayName,
+    });
+
+    assert.equal(result.status, 'UNCERTAIN');
+    assert.equal(result.rpcCalled, true);
+    assert.equal(result.pendingCmd.commandId, commandId);
+
+    // O comando permanece gravado no storage com os exatos mesmos identificador e parâmetros
+    const retained = loadPendingMemberCommand(storage, userId, churchId);
+    assert.notEqual(retained, null);
+    assert.equal(retained.commandId, commandId);
+    assert.equal(retained.displayName, displayName);
+    assert.equal(retained.churchId, churchId);
+    assert.equal(retained.userId, userId);
+  });
+
+  it('3. Exceção durante a chamada: a identidade também permanece preservada', async () => {
+    const commandId = 'cmd-exception-303';
+    const displayName = 'Tíquico da Ásia';
+
+    const mockRpcCaller = async () => {
+      throw new TypeError('Network connection lost mid-flight');
+    };
+
+    const result = await dispatchMemberCreation({
+      storage,
+      rpcCaller: mockRpcCaller,
+      churchId,
+      userId,
+      commandId,
+      displayName,
+    });
+
+    assert.equal(result.status, 'UNCERTAIN');
+    assert.equal(result.rpcCalled, true);
+    assert.equal(result.rpcError.message, 'Network connection lost mid-flight');
+
+    // A identidade permanece rigorosamente preservada no storage
+    const retained = loadPendingMemberCommand(storage, userId, churchId);
+    assert.notEqual(retained, null);
+    assert.equal(retained.commandId, commandId);
+    assert.equal(retained.displayName, displayName);
+  });
+
+  it('4. Resposta vazia ou inválida: não apresenta sucesso nem libera uma nova identidade', async () => {
+    const commandId = 'cmd-invalid-404';
+    const displayName = 'Epafras de Hierápolis';
+
+    // Simula resposta HTTP 200 com array vazio ou sem member_id
+    const mockRpcCaller = async () => ({
+      data: [],
+      error: null,
+    });
+
+    const result = await dispatchMemberCreation({
+      storage,
+      rpcCaller: mockRpcCaller,
+      churchId,
+      userId,
+      commandId,
+      displayName,
+    });
+
+    // Não deve apresentar sucesso
+    assert.notEqual(result.status, 'SUCCESS');
+    assert.equal(result.status, 'UNCERTAIN');
+    assert.equal(result.rpcCalled, true);
+
+    // O comando continua retido no storage, impedindo que a operação seja descartada
+    // e impedindo a geração de uma nova identidade antes da reconciliação
+    const retained = loadPendingMemberCommand(storage, userId, churchId);
+    assert.notEqual(retained, null);
+    assert.equal(retained.commandId, commandId);
+  });
+
+  it('5. Rejeição definitiva da criação: encerra o comando conforme o contrato', async () => {
+    const commandId = 'cmd-rejected-505';
+    const displayName = 'Onésimo de Colossos';
+
+    const definitiveError = {
+      code: '42501',
+      message: 'Acesso administrativo não autorizado nesta igreja.',
+    };
+
+    const mockRpcCaller = async () => ({
+      data: null,
+      error: definitiveError,
+    });
+
+    const result = await dispatchMemberCreation({
+      storage,
+      rpcCaller: mockRpcCaller,
+      churchId,
+      userId,
+      commandId,
+      displayName,
+    });
+
+    assert.equal(result.status, 'DEFINITIVE_ERROR');
+    assert.equal(result.rpcCalled, true);
+    assert.equal(result.rpcError.code, '42501');
+
+    // Rejeição definitiva encerra o comando: remove do storage conforme o contrato
+    const afterRejection = loadPendingMemberCommand(storage, userId, churchId);
+    assert.equal(afterRejection, null);
+  });
+
+  it('6. Nova execução do comando incerto: envia exatamente o mesmo commandId, igreja e nome normalizado', async () => {
+    const commandId = 'cmd-retry-606';
+    const rawInputName = '   Tito de Creta   ';
+    const validation = validateAndNormalizeMemberName(rawInputName);
+    assert.equal(validation.valid, true);
+    const normalizedName = validation.normalizedName;
+    assert.equal(normalizedName, 'Tito de Creta');
+
+    let rpcCallCount = 0;
+    const capturedParams = [];
+
+    const mockRpcCaller = async (params) => {
+      rpcCallCount++;
+      capturedParams.push(params);
+
+      if (rpcCallCount === 1) {
+        // Primeira chamada falha por oscilação de rede
+        return { data: null, error: { message: 'Network timeout', status: 0 } };
+      }
+
+      // Segunda chamada (reexecução do comando pendente) obtém confirmação idempotente
+      return {
+        data: [{ member_id: 'mem-tito-606', display_name: normalizedName, already_existed: true }],
+        error: null,
+      };
+    };
+
+    // 1. Primeira tentativa enviando o nome normalizado
+    const firstAttempt = await dispatchMemberCreation({
+      storage,
+      rpcCaller: mockRpcCaller,
+      churchId,
+      userId,
+      commandId,
+      displayName: normalizedName,
+    });
+    assert.equal(firstAttempt.status, 'UNCERTAIN');
+    assert.equal(rpcCallCount, 1);
+
+    // O comando está pendente no storage com o nome normalizado e commandId
+    const pendingInStorage = loadPendingMemberCommand(storage, userId, churchId);
+    assert.notEqual(pendingInStorage, null);
+    assert.equal(pendingInStorage.displayName, normalizedName);
+    assert.equal(pendingInStorage.commandId, commandId);
+
+    // 2. Reexecução: recupera exatamente a mesma identidade e parâmetros do comando retido
+    const retryAttempt = await dispatchMemberCreation({
+      storage,
+      rpcCaller: mockRpcCaller,
+      churchId: pendingInStorage.churchId,
+      userId: pendingInStorage.userId,
+      commandId: pendingInStorage.commandId,
+      displayName: pendingInStorage.displayName,
+    });
+
+    assert.equal(retryAttempt.status, 'SUCCESS');
+    assert.equal(rpcCallCount, 2);
+
+    // Comprova que a segunda chamada enviou rigorosamente os mesmos parâmetros
+    assert.equal(capturedParams[1].p_church_id, capturedParams[0].p_church_id);
+    assert.equal(capturedParams[1].p_command_id, capturedParams[0].p_command_id);
+    assert.equal(capturedParams[1].p_display_name, capturedParams[0].p_display_name);
+    assert.equal(capturedParams[1].p_command_id, commandId);
+    assert.equal(capturedParams[1].p_display_name, normalizedName);
+
+    // Após o sucesso da reexecução, o storage é liberado
+    const afterRetry = loadPendingMemberCommand(storage, userId, churchId);
+    assert.equal(afterRetry, null);
+  });
+});

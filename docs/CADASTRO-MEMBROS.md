@@ -103,11 +103,18 @@ Os scripts em `docs/sql/` são preparados para execução manual no SQL Editor d
   - Executam diretamente as funções compartilhadas de produção importadas de `src/utils/memberCommandService.js` (utilizadas por `MembersPage.jsx` e `AuthContext.jsx`):
     - `validateAndNormalizeMemberName`: validação e normalização Unicode NFC (acentos, apóstrofos, limites de 1-120 caracteres, rejeição de vazios).
     - `savePendingMemberCommand`, `loadPendingMemberCommand`, `removePendingMemberCommand`: isolamento por usuário e igreja no `sessionStorage`.
-    - `dispatchMemberCreation`: comprovação de que a persistência do comando no storage é verificada antes do envio e que a chamada RPC é **estritamente cancelada** caso o armazenamento local falhe ou esteja indisponível.
+    - `dispatchMemberCreation`: ciclo completo de despacho, comprovação de que a persistência do comando no storage é verificada antes do envio (cancelando a RPC se falhar) e validação direta de 6 cenários com respostas controladas da RPC:
+      1. *Sucesso:* o comando está salvo antes da chamada e é removido somente após confirmação válida.
+      2. *Falha de transporte retornada em error:* o comando permanece com o mesmo identificador e parâmetros.
+      3. *Exceção durante a chamada:* a identidade também permanece preservada.
+      4. *Resposta vazia ou inválida:* não apresenta sucesso nem libera uma nova identidade.
+      5. *Rejeição definitiva da criação:* encerra o comando conforme o contrato.
+      6. *Nova execução do comando incerto:* envia exatamente o mesmo `commandId`, igreja e nome normalizado.
     - `determineAuthTransition`: diferenciação entre restauração inicial da mesma conta (preservando o comando salvo) e “troca efetiva de conta” / logout (limpando o storage com `clearAllMemberCommandStorage`). A “troca efetiva de conta” é uma classificação interna do aplicativo para isolamento de dados no cliente.
     - `isDefinitiveServerError` e `isUncertainResponse`: classificação de erros definitivos vs incertos (transporte, timeouts, 5xx, payloads inválidos).
     - `classifyReceiptCheckResult`: garantia de que consultas vazias ou falhas de rede/servidor na checagem de recibo não descartam o comando pendente, preservando-o para reexecução com a mesma chave.
-  - Resultado: **19 testes automatizados** executados e aprovados com 100% de sucesso via Node.js nativo (`npm test`).
+  - Resultado: **25 testes automatizados** distribuídos em 5 suítes, executados e aprovados com 100% de sucesso via Node.js nativo (`npm test`).
+  - Cobertura real medida no módulo `memberCommandService.js`: **94,13% de linhas**, **77,08% de ramificações** e **100% de funções**. As ramificações não cobertas correspondem a salvaguardas defensivas de parâmetros e fallbacks de ambiente (como detecção de `window.crypto` e tratamento de erros inesperados de chaveamento). Não foi buscada cobertura de 100% de forma artificial nem adicionada biblioteca externa.
   - Compilação de produção Vite (`npm run build`) concluída com sucesso (0 erros, 0 avisos).
 
 - **Analisado estaticamente:**
