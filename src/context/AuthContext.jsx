@@ -1,5 +1,9 @@
 import React, { createContext, useContext, useState, useEffect, useRef, useCallback } from 'react';
 import { supabase, isSupabaseConfigured } from '../lib/supabaseClient';
+import {
+  determineAuthTransition,
+  clearAllMemberCommandStorage,
+} from '../utils/memberCommandService';
 
 const AuthContext = createContext(null);
 
@@ -14,86 +18,124 @@ const AuthContext = createContext(null);
  *   'access_granted'    → sessão válida, vínculo confirmado → ChurchHomePage
  *   'access_error'      → sessão válida, falha ao consultar vínculo → ErrorPage
  *
- * Regras de segurança:
+ * Regras de segurança e robustez:
  * - A identidade deriva exclusivamente de auth.uid() no banco (via Supabase Auth).
  * - O cliente nunca envia user_id, is_admin ou papel como parâmetro.
- * - A função RPC não aceita parâmetros.
- * - Respostas de sessões anteriores são descartadas ao trocar de conta.
- * - Erros de consulta são distinguidos de "sem vínculo" — não colapsam em
- *   'access_pending', para não esconder falhas de infraestrutura.
+ * - Respostas de sessões anteriores são descartadas (inclusive logout e reentrada com mesmo UID).
+ * - Consultas antigas em voo não sobrescrevem resultados mais recentes (sequência monotônica).
+ * - Consultas agendadas são canceladas ao sair ou trocar de conta.
+ * - Recuperação inicial de sessão e eventos de Auth são estritamente coordenados.
+ * - Erros no logout são tratados sem deixar a aplicação em estado inconsistente.
+ * - Revalidação automática ao recuperar foco/conexão com limpeza imediata em caso de perda de acesso.
  */
 export function AuthProvider({ children }) {
-  const [session, setSession]       = useState(undefined);
-  const [authState, setAuthState]   = useState('initializing');
-  const [authError, setAuthError]   = useState(null);
-  // Dados reais do vínculo; null = sem vínculo confirmado.
+  const [session, setSession]           = useState(undefined);
+  const [authState, setAuthState]       = useState('initializing');
+  const [authError, setAuthError]       = useState(null);
   const [churchAccess, setChurchAccess] = useState(null);
 
-  // Ref para cancelar respostas de consultas que chegarem após troca de sessão.
-  const currentUserIdRef = useRef(null);
+  // Rastreia o UID da sessão ativa
+  const currentUserIdRef    = useRef(null);
+  // Identificador da geração da sessão atual: incrementa a cada login/logout para descartar respostas antigas
+  const sessionIdRef        = useRef(0);
+  // Geração monotônica de eventos de autenticação para evitar que getSession tardio sobrescreva evento mais recente
+  const authGenerationRef   = useRef(0);
+  // Sequência monotônica para impedir que consulta mais lenta sobrescreva a mais recente
+  const requestSeqRef       = useRef(0);
+  // Timer agendado de consulta (cancelado em logout ou troca de sessão)
+  const scheduledTimerRef   = useRef(null);
+  // Flag para coordenar getSession() inicial com evento de onAuthStateChange
+  const initialHandledRef   = useRef(false);
+  // Ref para acompanhar o estado do vínculo em event listeners de foco/online
+  const churchAccessRef     = useRef(null);
+  churchAccessRef.current   = churchAccess;
 
   /**
-   * Consulta o vínculo real da conta autenticada chamando a função RPC
-   * `public.get_my_church_access()` — sem parâmetros.
-   *
-   * Distingue três casos:
-   *  - Lista vazia → 'access_pending' (conta válida, sem vínculo elegível)
-   *  - Lista com registros → 'access_granted' (vínculo confirmado)
-   *  - Erro → 'access_error' (falha de rede, função ausente ou outro erro)
-   *
-   * @param {string} expectedUserId — UID da sessão no momento do disparo.
-   *   Usado para descartar a resposta se a sessão trocar antes de ela chegar.
+   * Remove comandos pendentes de membros retidos na sessão para evitar vazamento entre contas.
    */
-  const fetchChurchAccess = useCallback(async (expectedUserId) => {
-    if (!supabase || !expectedUserId) return;
+  const clearMemberCommandStorage = useCallback(() => {
+    if (typeof window === 'undefined' || !window.sessionStorage) return;
+    clearAllMemberCommandStorage(window.sessionStorage);
+  }, []);
 
-    setAuthState('checking_access');
+  /**
+   * Limpa o contexto de vínculo e cancela timers pendentes.
+   */
+  const clearAccessContext = useCallback(() => {
     setChurchAccess(null);
+    churchAccessRef.current = null;
     setAuthError(null);
-
-    try {
-      const { data, error } = await supabase.schema('public').rpc('get_my_church_access');
-
-      // Descartar resposta se a sessão trocou enquanto a consulta estava em voo.
-      if (currentUserIdRef.current !== expectedUserId) return;
-
-      if (error) {
-        // Erro de rede, função ausente ou outro problema de infraestrutura.
-        // NÃO tratar como "sem vínculo" — exibir mensagem de erro com retry.
-        console.error('[AuthContext] Falha ao consultar vínculo:', error.message);
-        setAuthError(error.message || 'Falha ao verificar o acesso.');
-        setAuthState('access_error');
-        return;
-      }
-
-      if (!data || data.length === 0) {
-        // Conta válida, mas sem vínculo elegível com nenhuma igreja.
-        setChurchAccess(null);
-        setAuthState('access_pending');
-        return;
-      }
-
-      // Vínculo confirmado. Usar o primeiro registro (uma conta pode ter vínculo
-      // com múltiplas igrejas; neste incremento exibe somente o primeiro).
-      setChurchAccess(data[0]);
-      setAuthState('access_granted');
-
-    } catch (unexpectedErr) {
-      if (currentUserIdRef.current !== expectedUserId) return;
-      console.error('[AuthContext] Erro inesperado na consulta de vínculo:', unexpectedErr);
-      setAuthError('Erro inesperado ao verificar o acesso.');
-      setAuthState('access_error');
+    if (scheduledTimerRef.current) {
+      clearTimeout(scheduledTimerRef.current);
+      scheduledTimerRef.current = null;
     }
   }, []);
 
   /**
-   * Limpa o contexto de vínculo e reinicia o estado de acesso.
-   * Chamado ao sair ou detectar troca de sessão.
+   * Consulta o vínculo real da conta autenticada chamando public.get_my_church_access().
+   *
+   * @param {string} expectedUserId - UID da sessão esperada
+   * @param {object} options - { isBackground: boolean } para revalidação silenciosa em foco/reconexão
    */
-  const clearAccessContext = useCallback(() => {
-    setChurchAccess(null);
-    setAuthError(null);
-  }, []);
+  const fetchChurchAccess = useCallback(async (expectedUserId, { isBackground = false } = {}) => {
+    if (!supabase || !expectedUserId) return;
+
+    // Registra a geração da sessão e a sequência desta requisição
+    const thisSessionId = sessionIdRef.current;
+    const thisSeq       = ++requestSeqRef.current;
+
+    if (!isBackground) {
+      setAuthState('checking_access');
+      setChurchAccess(null);
+      setAuthError(null);
+    }
+
+    try {
+      const { data, error } = await supabase.schema('public').rpc('get_my_church_access');
+
+      // Descartar se a sessão mudou ou se uma consulta mais recente já foi disparada
+      if (sessionIdRef.current !== thisSessionId || requestSeqRef.current !== thisSeq) {
+        return;
+      }
+
+      if (error) {
+        console.error('[AuthContext] Falha ao consultar vínculo:', error.message);
+        if (!isBackground) {
+          setAuthError(error.message || 'Falha ao verificar o acesso.');
+          setAuthState('access_error');
+        } else {
+          // Em revalidação de fundo, se o erro indicar perda de permissão, atualizar estado
+          if (error.code === '42501' || error.message?.includes('permission')) {
+            clearAccessContext();
+            setAuthState('access_pending');
+          }
+        }
+        return;
+      }
+
+      if (!data || data.length === 0) {
+        // Conta válida, mas sem vínculo elegível
+        clearAccessContext();
+        setAuthState('access_pending');
+        return;
+      }
+
+      // Vínculo confirmado
+      setChurchAccess(data[0]);
+      churchAccessRef.current = data[0];
+      setAuthState('access_granted');
+
+    } catch (unexpectedErr) {
+      if (sessionIdRef.current !== thisSessionId || requestSeqRef.current !== thisSeq) {
+        return;
+      }
+      console.error('[AuthContext] Erro inesperado na consulta de vínculo:', unexpectedErr);
+      if (!isBackground) {
+        setAuthError('Erro inesperado ao verificar o acesso.');
+        setAuthState('access_error');
+      }
+    }
+  }, [clearAccessContext]);
 
   useEffect(() => {
     if (!isSupabaseConfigured()) {
@@ -102,54 +144,137 @@ export function AuthProvider({ children }) {
       return;
     }
 
-    // 1. Recupera sessão existente (localStorage / cookie).
-    supabase.auth.getSession().then(({ data: { session: existingSession } }) => {
-      if (existingSession) {
-        setSession(existingSession);
-        currentUserIdRef.current = existingSession.user.id;
-        // Chamada assíncrona fora do callback síncrono — evita bloqueio do listener.
-        fetchChurchAccess(existingSession.user.id);
-      } else {
-        setSession(null);
-        currentUserIdRef.current = null;
-        setAuthState('unauthenticated');
+    let isEffectActive = true;
+    let hasAuthEventArrived = false;
+
+    // Função de sincronização com nova sessão baseada em ordem de geração
+    function applySession(newSession, eventGen) {
+      if (!isEffectActive) return;
+      if (eventGen < authGenerationRef.current) {
+        // Ignora snapshots obsoletos que resolveram fora de ordem
+        return;
       }
-    });
 
-    // 2. Escuta mudanças de estado (login, logout, token refresh, OAuth callback).
+      const previousUserId = currentUserIdRef.current;
+      const newUserId = newSession?.user?.id ?? null;
+
+      const transition = determineAuthTransition({
+        previousUserId,
+        newUserId,
+        currentGen: eventGen,
+        authGen: authGenerationRef.current,
+      });
+
+      if (transition.isStale) {
+        // Ignora snapshots obsoletos que resolveram fora de ordem
+        return;
+      }
+
+      setSession(newSession);
+
+      if (transition.type === 'LOGOUT' || transition.type === 'UNAUTHENTICATED') {
+        sessionIdRef.current += 1;
+        currentUserIdRef.current = null;
+        clearAccessContext();
+        if (transition.shouldClearMemberStorage) {
+          clearMemberCommandStorage();
+        }
+        setAuthState('unauthenticated');
+        return;
+      }
+
+      if (transition.type === 'INITIAL_SESSION') {
+        // Restauração inicial da mesma conta após reload/montagem.
+        // PRESERVA o storage de comandos pendentes sem chamar clearMemberCommandStorage!
+        sessionIdRef.current += 1;
+        currentUserIdRef.current = newUserId;
+        clearAccessContext();
+
+        if (scheduledTimerRef.current) {
+          clearTimeout(scheduledTimerRef.current);
+        }
+
+        scheduledTimerRef.current = setTimeout(() => {
+          scheduledTimerRef.current = null;
+          if (isEffectActive && currentUserIdRef.current === newUserId) {
+            fetchChurchAccess(newUserId);
+          }
+        }, 0);
+        return;
+      }
+
+      if (transition.type === 'ACCOUNT_SWITCH') {
+        // Troca efetiva de conta (usuário A -> usuário B).
+        // Limpa o storage para garantir isolamento e evitar vazamento de dados.
+        sessionIdRef.current += 1;
+        currentUserIdRef.current = newUserId;
+        clearAccessContext();
+        clearMemberCommandStorage();
+
+        if (scheduledTimerRef.current) {
+          clearTimeout(scheduledTimerRef.current);
+        }
+
+        scheduledTimerRef.current = setTimeout(() => {
+          scheduledTimerRef.current = null;
+          if (isEffectActive && currentUserIdRef.current === newUserId) {
+            fetchChurchAccess(newUserId);
+          }
+        }, 0);
+        return;
+      }
+    }
+
+    // 1. Escuta mudanças de estado do Supabase Auth (fonte autoritativa de eventos)
     const { data: { subscription } } = supabase.auth.onAuthStateChange(
-      (_event, newSession) => {
-        const previousUserId = currentUserIdRef.current;
-        const newUserId      = newSession?.user?.id ?? null;
-
-        setSession(newSession);
-
-        if (!newSession) {
-          // Logout ou sessão expirada.
-          currentUserIdRef.current = null;
-          clearAccessContext();
-          setAuthState('unauthenticated');
-          return;
-        }
-
-        if (newUserId !== previousUserId) {
-          // Novo login ou troca de conta — descartar dados anteriores.
-          clearAccessContext();
-          currentUserIdRef.current = newUserId;
-          // Consulta fora do callback síncrono — não bloqueia onAuthStateChange.
-          setTimeout(() => fetchChurchAccess(newUserId), 0);
-        }
-        // Se o userId não mudou (ex.: refresh de token), não rebuscar.
+      (event, newSession) => {
+        if (!isEffectActive) return;
+        hasAuthEventArrived = true;
+        initialHandledRef.current = true;
+        const currentGen = ++authGenerationRef.current;
+        applySession(newSession, currentGen);
       }
     );
 
-    return () => subscription.unsubscribe();
+    // 2. Recupera sessão existente salva no storage como fallback se nenhum evento tiver chegado
+    supabase.auth.getSession().then(({ data: { session: existingSession } }) => {
+      if (!isEffectActive || hasAuthEventArrived || initialHandledRef.current) return;
+      initialHandledRef.current = true;
+      const currentGen = ++authGenerationRef.current;
+      applySession(existingSession, currentGen);
+    });
+
+    // 3. Revalidação ao recuperar foco da janela ou reconectar à internet
+    function handleFocusOrOnline() {
+      if (
+        document.visibilityState === 'visible' &&
+        navigator.onLine &&
+        currentUserIdRef.current &&
+        churchAccessRef.current
+      ) {
+        fetchChurchAccess(currentUserIdRef.current, { isBackground: true });
+      }
+    }
+
+    window.addEventListener('focus', handleFocusOrOnline);
+    window.addEventListener('online', handleFocusOrOnline);
+    document.addEventListener('visibilitychange', handleFocusOrOnline);
+
+    return () => {
+      isEffectActive = false;
+      subscription.unsubscribe();
+      window.removeEventListener('focus', handleFocusOrOnline);
+      window.removeEventListener('online', handleFocusOrOnline);
+      document.removeEventListener('visibilitychange', handleFocusOrOnline);
+      if (scheduledTimerRef.current) {
+        clearTimeout(scheduledTimerRef.current);
+        scheduledTimerRef.current = null;
+      }
+    };
   }, [fetchChurchAccess, clearAccessContext]);
 
   /**
-   * Revalida o vínculo manualmente (ex.: usuário clica "Tentar novamente"
-   * ou o aplicativo recupera foco após longa inatividade).
-   * Evita chamada se não há sessão ativa.
+   * Revalida o vínculo manualmente (botão "Tentar novamente").
    */
   function retryAccessCheck() {
     const uid = currentUserIdRef.current;
@@ -185,16 +310,33 @@ export function AuthProvider({ children }) {
   }
 
   /**
-   * Encerra a sessão atual — limpa dados de vínculo antes de deslogar.
+   * Encerra a sessão atual com tratamento seguro de erros.
+   * Garante que os dados locais e de membros sejam sempre limpos, mesmo se o servidor falhar.
    */
   async function signOut() {
     if (!supabase) return;
-    // Limpar imediatamente para não deixar dados anteriores na tela.
-    clearAccessContext();
+
+    // Invalida sessões e gerações imediatamente para descartar qualquer resposta em voo
+    authGenerationRef.current += 1;
+    sessionIdRef.current += 1;
     currentUserIdRef.current = null;
+    clearAccessContext();
+    clearMemberCommandStorage();
     setAuthError(null);
-    await supabase.auth.signOut();
-    // onAuthStateChange completará a transição para 'unauthenticated'.
+
+    try {
+      const { error } = await supabase.auth.signOut();
+      if (error) {
+        console.error('[AuthContext] Erro retornado ao deslogar:', error.message);
+        setAuthError('Erro ao encerrar a sessão no servidor. O aplicativo retornou ao login.');
+      }
+    } catch (err) {
+      console.error('[AuthContext] Erro inesperado ao deslogar:', err);
+      setAuthError('Erro inesperado ao encerrar a sessão.');
+    } finally {
+      setSession(null);
+      setAuthState('unauthenticated');
+    }
   }
 
   return (

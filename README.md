@@ -13,6 +13,7 @@ Documentação de produto consolidada em **30/09/2026**, com regras atualizadas 
 - [Schema inicial — campos e restrições de igreja, membros e acesso](docs/SCHEMA-ACESSO.md).
 - [Aprovação de nome e auditoria — segundo incremento de schema aplicado e verificado](docs/SCHEMA-APROVACAO-AUDITORIA.md).
 - [Consulta autorizada do próprio acesso — contrato, scripts e limites de validação](docs/CONSULTA-ACESSO.md).
+- [Cadastro e listagem de membros na web — contratos, auditoria e idempotência](docs/CADASTRO-MEMBROS.md).
 - [Evolução futura — decisões preservadas e propostas adiadas](docs/EVOLUCAO-FUTURA.md).
 
 O MVP é focado no culto. Convites de participação, reservas, prazos e aceite eletrônico continuam futuros. O convite para **acessar a igreja**, com login Google ou e-mail/senha e vínculo a um membro cadastrado, faz parte da primeira versão. O convite vale 72 horas e é de uso único. Não haverá CPF. O Supabase Auth gerencia as senhas; a aplicação oferece recuperação por e-mail sem permitir ao admin definir a senha alheia. Os logins Apple e Microsoft (referido como Windows na discussão do projeto) foram descartados do escopo atual pelo responsável, em razão dos custos de configuração avaliados nesta etapa. Não há compromisso de implementá-los posteriormente.
@@ -79,9 +80,11 @@ O fluxo de autenticação usa o [Supabase Auth com OAuth do Google](https://supa
 - Sem sessão: exibe a tela de login, atualmente apenas com Google.
 - Sessão válida: consulta `public.get_my_church_access()`, sem parâmetros de identidade.
 - Vínculo elegível: exibe nome cadastrado do membro, igreja e perfil retornados pelo banco.
+- Administrador: exibe ação para acessar a tela de **Gestão de Membros** da igreja.
 - Sem vínculo elegível: exibe "Acesso à igreja ainda não liberado", com identificação da própria conta e botão "Sair".
 - Falha na consulta: exibe erro com "Tentar novamente" e "Sair"; não confunde falha com ausência de vínculo.
 - Recarga: recupera a sessão e consulta o vínculo novamente, sem montar as telas fictícias do protótipo.
+- Revalidação em segundo plano: ao retomar foco na aba ou reconectar à internet, revalida silenciosamente o acesso e atualiza a interface caso haja revogação.
 
 Login sozinho não concede acesso. A consulta exige conta confirmada e elegível, onboarding concluído e vínculo, igreja e membro ativos. O perfil administrativo deriva do vínculo no banco, nunca de e-mail fixo ou metadados editáveis do navegador. Neste incremento, quando há mais de uma igreja autorizada, a tela apresenta somente o primeiro vínculo retornado; a seleção de contexto ainda não foi implementada.
 
@@ -91,17 +94,22 @@ Google e e-mail/senha continuam sendo os métodos previstos no PRD. A interface 
 
 Conforme as evidências e os resultados informados pelo responsável nas etapas anteriores, existem seis tabelas internas em `app_private`: `churches`, `members`, `church_access`, `access_invitations`, `access_requests` e `audit_entries`. A estrutura foi criada com RLS e privilégios diretos bloqueados para `anon`, `authenticated` e `service_role`. `app_private` permanece fora da Data API; a exposição automática de novas tabelas foi desligada conforme relato do responsável.
 
-A igreja do piloto e o primeiro membro com vínculo administrativo ativo, onboarding concluído e auditoria de inicialização já foram cadastrados. A consulta `public.get_my_church_access()` foi instalada permanentemente após ensaio com `ROLLBACK` e resultado PASS informado pelo responsável. A captura da aplicação mostrou nome, igreja e perfil reais; o botão Sair voltou ao login.
+A igreja do piloto e o primeiro membro com vínculo administrativo ativo, onboarding concluído e auditoria de inicialização já foram cadastrados. A consulta `public.get_my_church_access()` foi instalada permanentemente após ensaio com `ROLLBACK` e resultado PASS informado pelo responsável.
 
-Esses registros não equivalem a uma nova inspeção do Supabase. A evidência completa de todas as colunas da verificação 006 não foi apresentada. Testes HTTP, segunda conta real sem vínculo, troca de conta e concorrência não estão integralmente comprovados. A limitação compartilhada de requisições permanece pendente.
+Neste incremento, foram preparados os scripts `docs/sql/007_preflight_member_management.sql`, `007_validate_member_management.sql`, `007_member_management.sql` e `008_verify_member_management.sql`, criando a tabela de idempotência `app_private.command_receipts` e os endpoints `public.list_church_members`, `public.create_church_member` e `public.get_create_member_receipt`. A aplicação real no banco requer execução manual autorizada no SQL Editor do Supabase.
 
-**Não repetir os scripts de criação das tabelas, o bootstrap ou a instalação da consulta já realizada.** Alguns documentos vinculados ainda descrevem autenticação e inicialização como pendentes; são registros de progresso desatualizados, sem alteração das regras do PRD. Os scripts em `docs/sql` são de aplicação manual; merge de código não instala objetos no banco.
+Esses registros não equivalem a uma nova inspeção do Supabase. A evidência completa de todas as colunas da verificação 006 não foi apresentada. Testes HTTP, segunda conta real sem vínculo, troca de conta e concorrência não estão integralmente comprovados. A limitação compartilhada de requisições foi implementada na rota RPC no banco; proteções em camada de borda permanecem pendentes.
 
-## Próximo incremento
+**Não repetir os scripts de criação das tabelas, o bootstrap ou a instalação da consulta já realizada.** Os scripts em `docs/sql` são de aplicação manual; merge de código não instala objetos no banco.
 
-O próximo recorte é o **cadastro real de membros na web**, com criação e listagem por administrador autorizado na própria igreja. Ainda não está implementado. O cadastro não cria conta Auth, concede acesso, emite convite ou atribui liderança. Nomes não são únicos e não haverá CPF.
+## Gestão de membros e próximos incrementos
 
-Autorização no servidor, validação de entrada, consultas parametrizadas, auditoria transacional e proteção contra repetição de comandos devem acompanhar essa entrega. Edição de nome, exclusão, desativação, reativação, convites, equipes e planejamento ficam para incrementos próprios, respeitando as pendências do PRD.
+O incremento de **cadastro real de membros na web** está preparado: listagem paginada e criação com apenas o nome por administrador autorizado, com validação de entrada, autorização no servidor, auditoria transacional e proteção contra repetição de comandos e respostas perdidas. Nomes não são únicos (homônimos permitidos) e não há CPF.
+
+**Decisão sobre exclusão lógica:**
+Ficou decidido pelo responsável que remoções de cadastros na aplicação devem ser lógicas e recuperáveis, preservando identificadores, integridade referencial e histórico de auditoria. O fluxo de produto não deve apagar fisicamente membros da base. A representação física (avaliando sua relação com o `status` `'active'`/`'inactive'` já existente para evitar redundâncias), autorização, efeitos sobre vínculos e escalas, e o fluxo administrativo de recuperação ficam para o próximo incremento. Não foram adicionados `deleted_at` ou comandos de exclusão neste momento.
+
+Membro, conta Auth e vínculo de acesso são entidades distintas: o cadastro de membro não cria usuário Auth, não concede acesso e não gera convite. Edição de nome, exclusão lógica, convites de acesso, equipes e planejamento do culto permanecem para incrementos próprios.
 
 O `AppContext` e os perfis simulados continuam preservados para avaliação futura, sem montagem no fluxo real. A existência dessas telas não comprova conformidade integral com o PRD nem autoriza reutilizar suas regras de permissão.
 
