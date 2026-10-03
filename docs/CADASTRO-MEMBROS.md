@@ -113,8 +113,9 @@ Os scripts em `docs/sql/` são preparados para execução manual no SQL Editor d
     - `determineAuthTransition`: diferenciação entre restauração inicial da mesma conta (preservando o comando salvo) e “troca efetiva de conta” / logout (limpando o storage com `clearAllMemberCommandStorage`). A “troca efetiva de conta” é uma classificação interna do aplicativo para isolamento de dados no cliente.
     - `isDefinitiveServerError` e `isUncertainResponse`: classificação de erros definitivos vs incertos (transporte, timeouts, 5xx, payloads inválidos).
     - `classifyReceiptCheckResult`: garantia de que consultas vazias ou falhas de rede/servidor na checagem de recibo não descartam o comando pendente, preservando-o para reexecução com a mesma chave.
-  - Resultado: **25 testes automatizados** distribuídos em 5 suítes, executados e aprovados com 100% de sucesso via Node.js nativo (`npm test`).
-  - Cobertura real medida no módulo `memberCommandService.js`: **94,13% de linhas**, **77,08% de ramificações** e **100% de funções**. As ramificações não cobertas correspondem a salvaguardas defensivas de parâmetros e fallbacks de ambiente (como detecção de `window.crypto` e tratamento de erros inesperados de chaveamento). Não foi buscada cobertura de 100% de forma artificial nem adicionada biblioteca externa.
+    - `applyMemberListTransition`, `getMemberListViewState`, `formatListErrorMessage`, `createListRequestCoordinator`: coordenação dos estados de listagem (consulta vazia bem-sucedida, falha inicial com bloqueio de estado vazio, falha de atualização preservando dados anteriores e totalizador coerentes com indicação de desatualização, recuperação posterior e descarte de respostas obsoletas para prevenção de concorrência).
+  - Resultado: **32 testes automatizados** distribuídos em **6 suítes**, executados e aprovados com 100% de sucesso via Node.js nativo (`npm test`).
+  - Cobertura real medida no módulo `memberCommandService.js`: **94,05% de linhas**, **79,22% de ramificações** e **90,48% de funções**. As ramificações não cobertas correspondem a salvaguardas defensivas de parâmetros e fallbacks de ambiente (como detecção de `window.crypto` e tratamento de erros inesperados de chaveamento). Não foi buscada cobertura de 100% de forma artificial nem adicionada biblioteca externa.
   - Compilação de produção Vite (`npm run build`) concluída com sucesso (0 erros, 0 avisos).
 
 - **Analisado estaticamente:**
@@ -123,8 +124,9 @@ Os scripts em `docs/sql/` são preparados para execução manual no SQL Editor d
   - Isolamento de papéis e simulação de revogação válida em `007_validate_member_management.sql`.
   - Não alegar execução em PostgreSQL quando houver apenas análise estática.
 
-- **Validações explicitamente pendentes no Supabase e no navegador:**
+- **Evidências no navegador e validações pendentes:**
+  - **Teste manual realizado no navegador:** confirmou a recuperação da listagem de membros após restabelecimento da conexão (os 4 registros foram exibidos com sucesso após a reconexão e atualização da tela).
+  - **Limitação / Pendência de ensaio no navegador:** o estado de resposta incerta da criação de membro (interrupção física durante a chamada RPC `create_church_member` com retenção do comando pendente no `sessionStorage` e acionamento manual da reconciliação de recibo) ainda não foi exercitado no navegador real.
   - Execução manual autorizada dos scripts SQL no Supabase SQL Editor (`007_preflight`, `007_validate`, `007_member_management`, `008_verify`).
   - Comprovação operacional de cancelamento por timeout de 5 segundos via API HTTP sob transações lentas.
   - Concorrência massiva real com conexões simultâneas disputando o advisory lock transacional `pg_advisory_xact_lock`.
-  - Validações ponta a ponta no navegador conectado ao projeto Supabase real (comportamento sob modo anônimo, perda abrupta de conexão e restauração visual da sessão).

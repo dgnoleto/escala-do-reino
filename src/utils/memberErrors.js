@@ -13,4 +13,10 @@ export {
   determineAuthTransition,
   classifyReceiptCheckResult,
   dispatchMemberCreation,
+  formatListErrorMessage,
+  createInitialMemberListState,
+  applyMemberListTransition,
+  getMemberListViewState,
+  createListRequestCoordinator,
 } from './memberCommandService.js';
+

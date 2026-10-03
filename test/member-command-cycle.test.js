@@ -12,7 +12,13 @@ import {
   determineAuthTransition,
   classifyReceiptCheckResult,
   dispatchMemberCreation,
+  formatListErrorMessage,
+  createInitialMemberListState,
+  applyMemberListTransition,
+  getMemberListViewState,
+  createListRequestCoordinator,
 } from '../src/utils/memberCommandService.js';
+
 
 /**
  * Mock simples de sessionStorage em memória para ambiente Node.js.
@@ -625,3 +631,292 @@ describe('5. Ciclo de Envio com dispatchMemberCreation e Respostas Controladas d
     assert.equal(afterRetry, null);
   });
 });
+
+describe('6. Coordenação de Estados da Listagem de Membros e Proteção contra Concorrência', () => {
+  it('1. Consulta vazia bem-sucedida: exibe estado vazio somente após confirmação do servidor com ausência de membros (Requisito 1)', () => {
+    const s0 = createInitialMemberListState();
+    assert.equal(s0.status, 'idle');
+    assert.equal(s0.hasLoadedSuccessfully, false);
+    assert.equal(s0.members.length, 0);
+
+    // Início da busca
+    const s1 = applyMemberListTransition(s0, { type: 'FETCH_START' });
+    const v1 = getMemberListViewState(s1);
+    assert.equal(s1.status, 'loading');
+    assert.equal(v1.isInitialLoading, true);
+    assert.equal(v1.showEmptyState, false); // NUNCA exibe vazio durante o carregamento inicial
+    assert.equal(v1.showInitialErrorState, false);
+
+    // Resposta bem-sucedida com lista vazia
+    const s2 = applyMemberListTransition(s1, { type: 'FETCH_SUCCESS', data: [] });
+    const v2 = getMemberListViewState(s2);
+    assert.equal(s2.status, 'success');
+    assert.equal(s2.hasLoadedSuccessfully, true);
+    assert.equal(s2.members.length, 0);
+    assert.equal(s2.totalCount, 0);
+    assert.equal(s2.errorMessage, null);
+    assert.equal(v2.showEmptyState, true); // Exibido SOMENTE após consulta confirmada com 0 membros
+    assert.equal(v2.showInitialErrorState, false);
+    assert.equal(v2.showTable, false);
+    assert.equal(v2.totalizerText, '0 membros cadastrados');
+  });
+
+  it('2. Falha inicial: apresenta mensagem compreensível, ação de tentar novamente e bloqueia estado vazio e botão de primeiro membro (Requisito 2)', () => {
+    const s0 = createInitialMemberListState();
+    const s1 = applyMemberListTransition(s0, { type: 'FETCH_START' });
+
+    // Falha de rede simulando "TypeError: Failed to fetch"
+    const networkError = new TypeError('Failed to fetch');
+    const s2 = applyMemberListTransition(s1, { type: 'FETCH_ERROR', error: networkError });
+    const v2 = getMemberListViewState(s2);
+
+    assert.equal(s2.status, 'error');
+    assert.equal(s2.hasLoadedSuccessfully, false);
+    assert.equal(s2.members.length, 0);
+    assert.equal(s2.totalCount, 0);
+    // Mensagem amigável em português sem exibir termo técnico cru
+    assert.equal(s2.errorMessage, 'Não foi possível carregar a lista de membros por falha de conexão. Verifique sua rede e tente novamente.');
+    assert.equal(s2.errorMessage.includes('TypeError'), false);
+
+    // Regras visuais estritas do Requisito 2:
+    assert.equal(v2.showEmptyState, false); // Falha NÃO é interpretada como lista vazia!
+    assert.equal(v2.showInitialErrorState, true); // Apresenta caixa de erro com ação para tentar novamente
+    assert.equal(v2.showTable, false);
+    assert.equal(v2.totalizerText, 'Consulta indisponível'); // Totalizador coerente
+  });
+
+  it('3. Falha após dados carregados: preserva lista e totalizador anteriores, sinaliza que dados não foram atualizados e não exibe estado vazio (Requisito 3)', () => {
+    // Estado com 3 membros já carregados previamente
+    const initialData = [
+      { member_id: 'm1', display_name: 'Ana Silva', status: 'active', total_count: 3 },
+      { member_id: 'm2', display_name: 'Bruno Costa', status: 'active', total_count: 3 },
+      { member_id: 'm3', display_name: 'Carla Dias', status: 'active', total_count: 3 },
+    ];
+    const s0 = applyMemberListTransition(createInitialMemberListState(), {
+      type: 'FETCH_SUCCESS',
+      data: initialData,
+    });
+    assert.equal(s0.members.length, 3);
+    assert.equal(s0.totalCount, 3);
+
+    // Tentativa de atualização (refresh) após novo cadastro ou clique no botão Atualizar
+    const s1 = applyMemberListTransition(s0, { type: 'FETCH_START' });
+    assert.equal(s1.members.length, 3); // Dados anteriores preservados durante a requisição
+    assert.equal(s1.totalCount, 3);
+
+    // Falha na conexão durante a atualização
+    const networkError = new Error('Failed to fetch');
+    const s2 = applyMemberListTransition(s1, { type: 'FETCH_ERROR', error: networkError });
+    const v2 = getMemberListViewState(s2);
+
+    assert.equal(s2.status, 'error');
+    assert.equal(s2.hasLoadedSuccessfully, true);
+    assert.equal(s2.isStale, true); // Sinaliza que a atualização não foi possível
+    assert.equal(s2.members.length, 3); // PRESERVADO! Não esvazia o array para []
+    assert.equal(s2.totalCount, 3); // PRESERVADO! Mantém coerência estrita com a lista
+
+    // Regras visuais:
+    assert.equal(v2.showEmptyState, false); // NÃO exibe "Nenhum membro cadastrado"!
+    assert.equal(v2.showInitialErrorState, false);
+    assert.equal(v2.showTable, true); // Mantém a tabela com os 3 membros visível
+    assert.equal(v2.isStale, true);
+    assert.equal(v2.totalizerText, '3 membros cadastrados (não foi possível atualizar)');
+    assert.equal(
+      s2.errorMessage,
+      'Não foi possível atualizar a lista de membros por falha de conexão. Os dados exibidos abaixo podem estar desatualizados.'
+    );
+  });
+
+  it('4. Recuperação posterior: recarrega com sucesso após falha, limpa erro, atualiza totalizador e exibe novos membros', () => {
+    // Partindo do estado de falha com 3 membros preservados
+    const staleState = {
+      members: [
+        { member_id: 'm1', display_name: 'Ana Silva', status: 'active', total_count: 3 },
+        { member_id: 'm2', display_name: 'Bruno Costa', status: 'active', total_count: 3 },
+        { member_id: 'm3', display_name: 'Carla Dias', status: 'active', total_count: 3 },
+      ],
+      totalCount: 3,
+      hasLoadedSuccessfully: true,
+      status: 'error',
+      errorMessage: 'Falha de conexão',
+      isStale: true,
+    };
+
+    // Usuário clica em "Tentar novamente"
+    const s1 = applyMemberListTransition(staleState, { type: 'FETCH_START' });
+    assert.equal(s1.status, 'loading');
+    assert.equal(s1.errorMessage, null); // Erro limpo ao tentar novamente
+    assert.equal(s1.members.length, 3); // Dados ainda exibidos enquanto recarrega
+
+    // Conexão restabelecida: servidor retorna os 4 membros atualizados
+    const freshData = [
+      { member_id: 'm1', display_name: 'Ana Silva', status: 'active', total_count: 4 },
+      { member_id: 'm2', display_name: 'Bruno Costa', status: 'active', total_count: 4 },
+      { member_id: 'm3', display_name: 'Carla Dias', status: 'active', total_count: 4 },
+      { member_id: 'm4', display_name: 'Daniel Santos', status: 'active', total_count: 4 },
+    ];
+    const s2 = applyMemberListTransition(s1, { type: 'FETCH_SUCCESS', data: freshData });
+    const v2 = getMemberListViewState(s2);
+
+    assert.equal(s2.status, 'success');
+    assert.equal(s2.isStale, false);
+    assert.equal(s2.errorMessage, null);
+    assert.equal(s2.members.length, 4);
+    assert.equal(s2.totalCount, 4);
+
+    assert.equal(v2.showTable, true);
+    assert.equal(v2.showEmptyState, false);
+    assert.equal(v2.showInitialErrorState, false);
+    assert.equal(v2.isStale, false);
+    assert.equal(v2.totalizerText, '4 membros cadastrados');
+  });
+
+  it('5. Preserva confirmação de cadastro concluído e distingue da falha ao atualizar a listagem (Requisito 4)', () => {
+    // Simulação do cenário exato reproduzido no navegador:
+    // 1. Criação do membro no servidor concluída com sucesso
+    const creationResult = {
+      status: 'SUCCESS',
+      created: { member_id: 'm4', display_name: 'Daniel Santos' },
+      message: 'Membro "Daniel Santos" cadastrado com sucesso!',
+    };
+
+    // Mensagem de sucesso do cadastro retida no componente
+    const successMessage = creationResult.message;
+    assert.equal(successMessage, 'Membro "Daniel Santos" cadastrado com sucesso!');
+
+    // 2. A atualização da lista subsequente falha com conexão interrompida
+    const previousState = {
+      members: [
+        { member_id: 'm1', display_name: 'Ana Silva', status: 'active', total_count: 3 },
+        { member_id: 'm2', display_name: 'Bruno Costa', status: 'active', total_count: 3 },
+        { member_id: 'm3', display_name: 'Carla Dias', status: 'active', total_count: 3 },
+      ],
+      totalCount: 3,
+      hasLoadedSuccessfully: true,
+      status: 'loading',
+      errorMessage: null,
+      isStale: false,
+    };
+
+    const listErrorState = applyMemberListTransition(previousState, {
+      type: 'FETCH_ERROR',
+      error: new TypeError('Failed to fetch'),
+      hasPendingCreationSuccess: true,
+    });
+
+    // A confirmação do cadastro permanece preservada
+    assert.equal(successMessage, 'Membro "Daniel Santos" cadastrado com sucesso!');
+
+    // A falha da lista é claramente explicada como falha de atualização da listagem
+    assert.equal(
+      listErrorState.errorMessage,
+      'O cadastro foi concluído no servidor, mas não foi possível atualizar a lista por falha de conexão. Clique em tentar novamente para atualizar a listagem.'
+    );
+    // Os dados preexistentes permanecem para não mostrar vazio
+    assert.equal(listErrorState.members.length, 3);
+    assert.equal(listErrorState.totalCount, 3);
+    assert.equal(listErrorState.isStale, true);
+
+    const viewState = getMemberListViewState(listErrorState);
+    assert.equal(viewState.showEmptyState, false); // NUNCA exibe "Nenhum membro cadastrado"
+    assert.equal(viewState.showTable, true);
+    assert.equal(viewState.totalizerText, '3 membros cadastrados (não foi possível atualizar)');
+  });
+
+  it('6. Concorrência e descarte de resposta antiga: resposta atrasada não sobrescreve consulta mais recente (Requisito 5)', () => {
+    const coordinator = createListRequestCoordinator();
+
+    // Dispara requisição 1 (ex: página 1)
+    const req1 = coordinator.getNextRequestId();
+    assert.equal(req1, 1);
+    assert.equal(coordinator.isCurrent(req1), true);
+
+    // Logo em seguida, dispara requisição 2 (ex: página 2 ou atualização manual)
+    const req2 = coordinator.getNextRequestId();
+    assert.equal(req2, 2);
+    assert.equal(coordinator.isCurrent(req2), true);
+    assert.equal(coordinator.isCurrent(req1), false); // Req 1 agora está obsoleta
+
+    // Simulação: Req 2 responde primeiro (rápida)
+    let state = applyMemberListTransition(createInitialMemberListState(), {
+      type: 'FETCH_SUCCESS',
+      data: [{ member_id: 'p2-1', display_name: 'Membro P2', total_count: 10 }],
+    });
+    assert.equal(state.members[0].display_name, 'Membro P2');
+
+    // Req 1 responde depois (lenta): deve ser descartada!
+    if (coordinator.isCurrent(req1)) {
+      state = applyMemberListTransition(state, {
+        type: 'FETCH_SUCCESS',
+        data: [{ member_id: 'p1-1', display_name: 'Membro P1', total_count: 10 }],
+      });
+    }
+    // O estado PERMANECE com a resposta da requisição 2
+    assert.equal(state.members[0].display_name, 'Membro P2');
+
+    // Cenário com erro antigo: Req 3 é disparada, depois Req 4 é disparada e tem sucesso.
+    // Se Req 3 falhar depois com timeout, o erro antigo NÃO deve sobrescrever o sucesso de Req 4.
+    const req3 = coordinator.getNextRequestId();
+    const req4 = coordinator.getNextRequestId();
+    assert.equal(coordinator.isCurrent(req4), true);
+    assert.equal(coordinator.isCurrent(req3), false);
+
+    // Req 4 sucede:
+    state = applyMemberListTransition(state, {
+      type: 'FETCH_SUCCESS',
+      data: [{ member_id: 'p4-1', display_name: 'Membro P4', total_count: 10 }],
+    });
+
+    // Req 3 falha atrasada:
+    if (coordinator.isCurrent(req3)) {
+      state = applyMemberListTransition(state, {
+        type: 'FETCH_ERROR',
+        error: new Error('Failed to fetch'),
+      });
+    }
+    // Estado NÃO vira erro, mantém o sucesso de Req 4!
+    assert.equal(state.status, 'success');
+    assert.equal(state.members[0].display_name, 'Membro P4');
+  });
+
+  it('7. Formatação de erros: traduz mensagens técnicas para mensagens amigáveis em português (Requisito 2)', () => {
+    // Falhas de rede comuns de navegadores
+    assert.equal(
+      formatListErrorMessage(new TypeError('Failed to fetch')),
+      'Não foi possível carregar a lista de membros por falha de conexão. Verifique sua rede e tente novamente.'
+    );
+    assert.equal(
+      formatListErrorMessage('NetworkError when attempting to fetch resource'),
+      'Não foi possível carregar a lista de membros por falha de conexão. Verifique sua rede e tente novamente.'
+    );
+    assert.equal(
+      formatListErrorMessage(new Error('The operation was aborted')),
+      'Não foi possível carregar a lista de membros por falha de conexão. Verifique sua rede e tente novamente.'
+    );
+
+    // Falhas em contexto de refresh
+    assert.equal(
+      formatListErrorMessage(new TypeError('Failed to fetch'), { isRefresh: true }),
+      'Não foi possível atualizar a lista de membros por falha de conexão. Os dados exibidos abaixo podem estar desatualizados.'
+    );
+
+    // Falhas em contexto de cadastro recém-concluído
+    assert.equal(
+      formatListErrorMessage(new TypeError('Failed to fetch'), { hasPendingCreationSuccess: true }),
+      'O cadastro foi concluído no servidor, mas não foi possível atualizar a lista por falha de conexão. Clique em tentar novamente para atualizar a listagem.'
+    );
+
+    // Erro de autorização / privilégio
+    assert.equal(
+      formatListErrorMessage({ code: '42501', message: 'insufficient privilege' }),
+      'Permissão insuficiente para consultar a lista de membros desta igreja.'
+    );
+
+    // Mensagem de negócio direta sem ruído técnico
+    assert.equal(
+      formatListErrorMessage({ message: 'Igreja inativa para consulta.' }),
+      'Igreja inativa para consulta.'
+    );
+  });
+});
+

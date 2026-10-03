@@ -38,8 +38,13 @@ import {
   removePendingMemberCommand,
   classifyReceiptCheckResult,
   dispatchMemberCreation,
+  createInitialMemberListState,
+  applyMemberListTransition,
+  getMemberListViewState,
+  createListRequestCoordinator,
 } from '../utils/memberCommandService';
 export { isDefinitiveServerError, isUncertainResponse };
+
 
 export default function MembersPage({ onBack }) {
   const { session, churchAccess, authState } = useAuth();
@@ -49,13 +54,15 @@ export default function MembersPage({ onBack }) {
   const isAdmin      = churchAccess?.is_admin || false;
   const currentUserId = session?.user?.id;
 
-  // Estado da listagem
-  const [members, setMembers]         = useState([]);
-  const [totalCount, setTotalCount]   = useState(0);
+  // Estado da listagem e coordenação de concorrência
+  const [listState, setListState]     = useState(createInitialMemberListState);
+  const coordinatorRef                = useRef(null);
+  if (!coordinatorRef.current) {
+    coordinatorRef.current = createListRequestCoordinator();
+  }
   const [page, setPage]               = useState(1);
   const pageSize                      = 10;
-  const [loading, setLoading]         = useState(true);
-  const [listError, setListError]     = useState(null);
+
 
   // Estado do formulário de criação
   const [showCreateModal, setShowCreateModal]   = useState(false);
@@ -112,19 +119,19 @@ export default function MembersPage({ onBack }) {
   // Limpar lista se perder autorização ou trocar de conta
   useEffect(() => {
     if (!churchAccess || authState !== 'access_granted') {
-      setMembers([]);
-      setTotalCount(0);
+      if (coordinatorRef.current) coordinatorRef.current.reset();
+      setListState(createInitialMemberListState());
     }
   }, [churchAccess, authState]);
 
   /**
-   * Consulta a lista paginada de membros da igreja autorizada.
+   * Consulta a lista paginada de membros da igreja autorizada com proteção contra concorrência.
    */
-  const loadMembers = useCallback(async (targetPage = page) => {
+  const loadMembers = useCallback(async (targetPage = page, options = {}) => {
     if (!supabase || !churchId || !isAdmin) return;
 
-    setLoading(true);
-    setListError(null);
+    const requestId = coordinatorRef.current.getNextRequestId();
+    setListState((prev) => applyMemberListTransition(prev, { type: 'FETCH_START' }));
 
     try {
       const offset = (targetPage - 1) * pageSize;
@@ -134,32 +141,41 @@ export default function MembersPage({ onBack }) {
         p_offset: offset,
       });
 
-      if (!isMountedRef.current) return;
-
-      if (error) {
-        console.error('[MembersPage] Falha ao consultar membros:', error.message);
-        setListError(error.message || 'Falha ao carregar a lista de membros.');
-        setMembers([]);
+      // Ignora respostas obsoletas se o componente desmontou ou se uma consulta mais recente foi disparada (Requisito 5)
+      if (!isMountedRef.current || !coordinatorRef.current.isCurrent(requestId)) {
         return;
       }
 
-      if (!data || data.length === 0) {
-        setMembers([]);
-        setTotalCount(0);
-      } else {
-        setMembers(data);
-        const reportedTotal = Number(data[0].total_count);
-        setTotalCount(isNaN(reportedTotal) ? data.length : reportedTotal);
+      if (error) {
+        console.error('[MembersPage] Falha ao consultar membros:', error.message);
+        setListState((prev) =>
+          applyMemberListTransition(prev, {
+            type: 'FETCH_ERROR',
+            error,
+            hasPendingCreationSuccess: Boolean(options.hasPendingCreationSuccess),
+          })
+        );
+        return;
       }
+
+      setListState((prev) =>
+        applyMemberListTransition(prev, {
+          type: 'FETCH_SUCCESS',
+          data,
+        })
+      );
     } catch (err) {
-      if (!isMountedRef.current) return;
-      console.error('[MembersPage] Erro inesperado ao listar membros:', err);
-      setListError('Erro de conexão ao carregar a lista de membros.');
-      setMembers([]);
-    } finally {
-      if (isMountedRef.current) {
-        setLoading(false);
+      if (!isMountedRef.current || !coordinatorRef.current.isCurrent(requestId)) {
+        return;
       }
+      console.error('[MembersPage] Erro inesperado ao listar membros:', err);
+      setListState((prev) =>
+        applyMemberListTransition(prev, {
+          type: 'FETCH_ERROR',
+          error: err,
+          hasPendingCreationSuccess: Boolean(options.hasPendingCreationSuccess),
+        })
+      );
     }
   }, [churchId, isAdmin, page, pageSize]);
 
@@ -219,7 +235,7 @@ export default function MembersPage({ onBack }) {
       setShowCreateModal(false);
       setSuccessMessage(result.message);
       setPage(1);
-      loadMembers(1);
+      loadMembers(1, { hasPendingCreationSuccess: true });
       return;
     }
 
@@ -328,7 +344,7 @@ export default function MembersPage({ onBack }) {
         setShowCreateModal(false);
         setSuccessMessage(`Cadastro de "${result.member.display_name}" confirmado com sucesso no servidor!`);
         setPage(1);
-        loadMembers(1);
+        loadMembers(1, { hasPendingCreationSuccess: true });
         return;
       }
 
@@ -373,6 +389,8 @@ export default function MembersPage({ onBack }) {
     );
   }
 
+  const viewState = getMemberListViewState(listState);
+  const { members, totalCount } = listState;
   const totalPages = Math.max(1, Math.ceil(totalCount / pageSize));
 
   return (
@@ -490,17 +508,20 @@ export default function MembersPage({ onBack }) {
           </div>
         )}
 
-        {listError && (
+        {listState.errorMessage && viewState.showTable && (
           <div className="alert-banner alert-banner--error" role="alert">
             <AlertCircle size={16} />
-            <span>{listError}</span>
-            <button
-              type="button"
-              className="btn btn-secondary btn-sm"
-              onClick={() => loadMembers(page)}
-            >
-              Tentar novamente
-            </button>
+            <div className="alert-banner-content" style={{ display: 'flex', flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', width: '100%', gap: '12px' }}>
+              <span>{listState.errorMessage}</span>
+              <button
+                type="button"
+                className="btn btn-secondary btn-sm"
+                onClick={() => loadMembers(page)}
+                style={{ whiteSpace: 'nowrap' }}
+              >
+                <RefreshCw size={13} /> Tentar novamente
+              </button>
+            </div>
           </div>
         )}
 
@@ -589,9 +610,7 @@ export default function MembersPage({ onBack }) {
             <div>
               <h2 className="members-section-title">Membros Cadastrados</h2>
               <p className="members-section-subtitle">
-                {totalCount === 1
-                  ? '1 membro cadastrado'
-                  : `${totalCount} membros cadastrados`}
+                {viewState.totalizerText}
               </p>
             </div>
 
@@ -599,21 +618,34 @@ export default function MembersPage({ onBack }) {
               type="button"
               className="btn btn-secondary btn-refresh"
               onClick={() => loadMembers(page)}
-              disabled={loading}
+              disabled={listState.status === 'loading'}
               title="Atualizar lista"
               aria-label="Atualizar lista de membros"
             >
-              <RefreshCw size={14} className={loading ? 'spin-icon' : ''} />
+              <RefreshCw size={14} className={listState.status === 'loading' ? 'spin-icon' : ''} />
               <span>Atualizar</span>
             </button>
           </div>
 
-          {loading ? (
+          {viewState.isInitialLoading ? (
             <div className="members-state-box" role="status" aria-live="polite">
               <RefreshCw size={24} className="spin-icon" color="var(--primary)" />
               <p>Carregando membros…</p>
             </div>
-          ) : members.length === 0 ? (
+          ) : viewState.showInitialErrorState ? (
+            <div className="members-state-box members-state-box--error" role="alert">
+              <AlertCircle size={36} color="#ef4444" />
+              <h3>Não foi possível carregar a lista de membros</h3>
+              <p>{listState.errorMessage}</p>
+              <button
+                type="button"
+                className="btn btn-secondary"
+                onClick={() => loadMembers(page)}
+              >
+                <RefreshCw size={15} /> Tentar novamente
+              </button>
+            </div>
+          ) : viewState.showEmptyState ? (
             <div className="members-state-box members-state-box--empty">
               <Users size={36} color="var(--text-muted)" />
               <h3>Nenhum membro cadastrado</h3>
@@ -678,7 +710,7 @@ export default function MembersPage({ onBack }) {
                 type="button"
                 className="btn-pagination"
                 onClick={() => setPage((p) => Math.max(1, p - 1))}
-                disabled={page <= 1 || loading}
+                disabled={page <= 1 || listState.status === 'loading'}
                 aria-label="Página anterior"
               >
                 <ChevronLeft size={16} />
@@ -693,7 +725,7 @@ export default function MembersPage({ onBack }) {
                 type="button"
                 className="btn-pagination"
                 onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
-                disabled={page >= totalPages || loading}
+                disabled={page >= totalPages || listState.status === 'loading'}
                 aria-label="Próxima página"
               >
                 <span>Próxima</span>
@@ -974,17 +1006,19 @@ export default function MembersPage({ onBack }) {
           color: var(--text-muted);
         }
 
-        .members-state-box--empty h3 {
+        .members-state-box--empty h3,
+        .members-state-box--error h3 {
           font-size: 16px;
           font-weight: 700;
           color: var(--text-primary);
           margin: 0;
         }
 
-        .members-state-box--empty p {
+        .members-state-box--empty p,
+        .members-state-box--error p {
           font-size: 13px;
           color: var(--text-secondary);
-          max-width: 400px;
+          max-width: 440px;
           margin: 0 0 8px;
         }
 

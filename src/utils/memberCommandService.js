@@ -424,3 +424,216 @@ export async function dispatchMemberCreation({
       : `Membro "${created?.display_name || displayName}" cadastrado com sucesso!`,
   };
 }
+
+/**
+ * 6. Gestão de Estado, Resiliência e Prevenção de Concorrência na Listagem de Membros
+ */
+
+/**
+ * Formata mensagens de erro de consulta de membros para exibição clara e compreensível ao usuário,
+ * evitando termos técnicos crus como "TypeError: Failed to fetch" (Requisito 2).
+ *
+ * @param {object|Error|string|null} error
+ * @param {{ isRefresh?: boolean, hasPendingCreationSuccess?: boolean }} options
+ * @returns {string}
+ */
+export function formatListErrorMessage(error, { isRefresh = false, hasPendingCreationSuccess = false } = {}) {
+  const rawMsg = typeof error === 'string' ? error : String(error?.message || '');
+  const lower = rawMsg.toLowerCase();
+
+  const isNetworkFailure =
+    lower.includes('failed to fetch') ||
+    lower.includes('network') ||
+    lower.includes('networkerror') ||
+    lower.includes('load failed') ||
+    lower.includes('abort') ||
+    lower.includes('conexão') ||
+    lower.includes('offline');
+
+  if (hasPendingCreationSuccess) {
+    if (isNetworkFailure) {
+      return 'O cadastro foi concluído no servidor, mas não foi possível atualizar a lista por falha de conexão. Clique em tentar novamente para atualizar a listagem.';
+    }
+    return 'O cadastro foi concluído no servidor, mas ocorreu uma falha ao atualizar a lista de membros. Tente atualizar novamente.';
+  }
+
+  if (isNetworkFailure) {
+    if (isRefresh) {
+      return 'Não foi possível atualizar a lista de membros por falha de conexão. Os dados exibidos abaixo podem estar desatualizados.';
+    }
+    return 'Não foi possível carregar a lista de membros por falha de conexão. Verifique sua rede e tente novamente.';
+  }
+
+  if (error?.code === '42501' || lower.includes('privilégio') || lower.includes('não autorizado')) {
+    return 'Permissão insuficiente para consultar a lista de membros desta igreja.';
+  }
+
+  // Se houver mensagem específica razoável que não seja erro de runtime interno
+  if (rawMsg.trim() && !rawMsg.includes('TypeError') && !rawMsg.includes('ReferenceError') && rawMsg.length < 150) {
+    return rawMsg;
+  }
+
+  if (isRefresh) {
+    return 'Não foi possível atualizar a lista de membros. Tente novamente.';
+  }
+  return 'Não foi possível carregar a lista de membros. Tente novamente.';
+}
+
+/**
+ * Estado inicial da listagem de membros.
+ */
+export function createInitialMemberListState() {
+  return {
+    members: [],
+    totalCount: 0,
+    hasLoadedSuccessfully: false,
+    status: 'idle', // 'idle' | 'loading' | 'success' | 'error'
+    errorMessage: null,
+    isStale: false,
+  };
+}
+
+/**
+ * Transição pura de estado da listagem de membros.
+ *
+ * Garante que:
+ * 1. O estado vazio só ocorre após consulta bem-sucedida confirmando ausência de membros (Requisito 1).
+ * 2. Em falha de carregamento, se houver dados prévios, eles são PRESERVADOS com flag isStale = true (Requisito 3).
+ * 3. Totalizador e lista permanecem coerentes (Requisito 3).
+ * 4. A mensagem de erro é compreensível e contextualizada (Requisito 2 e 4).
+ *
+ * @param {object} currentState
+ * @param {object} action
+ * @returns {object} Novo estado da listagem
+ */
+export function applyMemberListTransition(currentState, action) {
+  if (!currentState) {
+    currentState = createInitialMemberListState();
+  }
+
+  switch (action.type) {
+    case 'FETCH_START':
+      return {
+        ...currentState,
+        status: 'loading',
+        errorMessage: null,
+      };
+
+    case 'FETCH_SUCCESS': {
+      const data = Array.isArray(action.data) ? action.data : [];
+      let total = 0;
+      if (data.length > 0) {
+        const reported = Number(data[0]?.total_count);
+        total = isNaN(reported) ? data.length : reported;
+      }
+      return {
+        members: data,
+        totalCount: total,
+        hasLoadedSuccessfully: true,
+        status: 'success',
+        errorMessage: null,
+        isStale: false,
+      };
+    }
+
+    case 'FETCH_ERROR': {
+      const hasLoadedBefore = Boolean(currentState.hasLoadedSuccessfully);
+      const formattedError = formatListErrorMessage(action.error, {
+        isRefresh: hasLoadedBefore,
+        hasPendingCreationSuccess: Boolean(action.hasPendingCreationSuccess),
+      });
+
+      return {
+        // Preserva dados anteriores se já houver carregamento anterior bem-sucedido
+        members: hasLoadedBefore ? currentState.members : [],
+        totalCount: hasLoadedBefore ? currentState.totalCount : 0,
+        hasLoadedSuccessfully: hasLoadedBefore,
+        status: 'error',
+        errorMessage: formattedError,
+        isStale: hasLoadedBefore,
+      };
+    }
+
+    case 'RESET_ON_AUTH_CHANGE':
+      return createInitialMemberListState();
+
+    default:
+      return currentState;
+  }
+}
+
+/**
+ * Deriva os estados visuais da listagem para renderização na tela.
+ *
+ * @param {object} state - Estado atual retornado por applyMemberListTransition
+ * @returns {object} Flags e textos para renderização
+ */
+export function getMemberListViewState(state) {
+  const isInitialLoading = state.status === 'loading' && !state.hasLoadedSuccessfully;
+  const isRefreshing = state.status === 'loading' && state.hasLoadedSuccessfully;
+
+  // Requisito 1: Exiba o estado vazio somente após uma consulta bem-sucedida que confirme ausência de membros.
+  const showEmptyState =
+    state.hasLoadedSuccessfully &&
+    state.status === 'success' &&
+    state.members.length === 0;
+
+  // Requisito 2: Em falha inicial de carregamento, exibir erro e ação de tentar novamente.
+  // Nunca oferecer "Cadastrar primeiro membro" em erro.
+  const showInitialErrorState =
+    state.status === 'error' && !state.hasLoadedSuccessfully;
+
+  // Requisito 3: Preservar dados anteriores durante a falha, mantendo lista e totalizador coerentes
+  const showTable = state.members.length > 0;
+  const isStale = Boolean(state.isStale);
+
+  // Totalizador coerente
+  let totalizerText = '';
+  if (!state.hasLoadedSuccessfully && state.status === 'error') {
+    totalizerText = 'Consulta indisponível';
+  } else if (!state.hasLoadedSuccessfully && state.status === 'loading') {
+    totalizerText = 'Carregando membros…';
+  } else if (isStale) {
+    const count = state.totalCount;
+    const itemStr = count === 1 ? 'membro cadastrado' : 'membros cadastrados';
+    totalizerText = `${count} ${itemStr} (não foi possível atualizar)`;
+  } else {
+    const count = state.totalCount;
+    totalizerText = count === 1 ? '1 membro cadastrado' : `${count} membros cadastrados`;
+  }
+
+  return {
+    isInitialLoading,
+    isRefreshing,
+    showEmptyState,
+    showInitialErrorState,
+    showTable,
+    isStale,
+    totalizerText,
+  };
+}
+
+/**
+ * Coordenador de concorrência e descarte de respostas obsoletas para consultas assíncronas.
+ * Garante que uma resposta de requisição antiga não sobrescreva uma mais recente (Requisito 5).
+ */
+export function createListRequestCoordinator() {
+  let latestRequestId = 0;
+
+  return {
+    getNextRequestId() {
+      latestRequestId += 1;
+      return latestRequestId;
+    },
+    getCurrentRequestId() {
+      return latestRequestId;
+    },
+    isCurrent(requestId) {
+      return requestId === latestRequestId;
+    },
+    reset() {
+      latestRequestId = 0;
+    },
+  };
+}
+
