@@ -1,171 +1,230 @@
--- Escala do Reino — ensaio da função get_my_church_access
--- Termina em ROLLBACK: não deixa nenhum objeto persistido.
--- Executar antes de aplicar o script 005_get_my_church_access.sql.
---
--- Pré-requisito: as seis tabelas do app_private já devem existir.
--- Se ainda não existirem, aplicar 001_initial_access_structure.sql
--- e 003_access_requests_and_audit.sql antes deste ensaio.
---
--- Resultado esperado na última linha:
---   PASS: ensaio concluído; função não persistida.
-
+-- Escala do Reino: consulta autorizada pelo endpoint public.get_my_church_access().
+-- app_private continua fora da Data API e sem acesso direto para clientes.
 begin;
-
--- ── Pré-verificações ──────────────────────────────────────────────────────────
+set local lock_timeout = '5s';
+set local statement_timeout = '30s';
 
 do $preflight$
+declare v_role text;
 begin
-  -- UTF-8
   if current_setting('server_encoding') <> 'UTF8'
      or current_setting('client_encoding') <> 'UTF8' then
-    raise exception 'O banco e a conexão precisam usar UTF8.';
+    raise exception 'Banco e conexao precisam usar UTF8.';
   end if;
-
-  -- auth.users precisa existir (Supabase Auth)
-  if to_regclass('auth.users') is null then
-    raise exception 'Supabase Auth não encontrado: auth.users ausente.';
+  if to_regclass('auth.users') is null
+     or to_regclass('app_private.churches') is null
+     or to_regclass('app_private.members') is null
+     or to_regclass('app_private.church_access') is null
+     or to_regclass('app_private.access_invitations') is null
+     or to_regclass('app_private.access_requests') is null
+     or to_regclass('app_private.audit_entries') is null then
+    raise exception 'Estrutura anterior ausente. Parar e conferir; nao repetir scripts ja aplicados.';
   end if;
-
-  -- As seis tabelas internas precisam estar presentes
-  if to_regclass('app_private.churches')          is null
-  or to_regclass('app_private.members')           is null
-  or to_regclass('app_private.church_access')     is null
-  or to_regclass('app_private.access_invitations') is null
-  or to_regclass('app_private.access_requests')   is null
-  or to_regclass('app_private.audit_entries')     is null then
-    raise exception 'Uma ou mais tabelas de app_private estão ausentes. Aplicar os scripts anteriores primeiro.';
+  if exists (
+    select 1 from pg_catalog.pg_proc p
+    join pg_catalog.pg_namespace n on n.oid = p.pronamespace
+    where n.nspname = 'public' and p.proname = 'get_my_church_access'
+  ) then
+    raise exception 'Ja existe public.get_my_church_access. Parar e revisar a definicao.';
   end if;
-
-  -- A função NÃO deve existir ainda neste projeto
-  if to_regproc('app_private.get_my_church_access') is not null then
-    raise exception
-      'A função app_private.get_my_church_access já existe neste banco. '
-      'Examine sua definição antes de substituí-la. '
-      'Se precisar recriá-la, encerre o ensaio, revogue e remova a definição '
-      'existente com atenção, depois execute este ensaio novamente.';
-  end if;
+  foreach v_role in array array['anon', 'authenticated', 'service_role'] loop
+    if has_schema_privilege(v_role, 'app_private', 'USAGE,CREATE')
+       or exists (
+         select 1 from pg_catalog.pg_class c
+         join pg_catalog.pg_namespace n on n.oid = c.relnamespace
+         where n.nspname = 'app_private' and c.relkind = 'r'
+           and has_table_privilege(v_role, c.oid,
+             'SELECT,INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER')
+       ) then
+      raise exception 'Permissoes internas inesperadas para %. Parar e revisar.', v_role;
+    end if;
+  end loop;
 end;
 $preflight$;
 
--- ── Criação da função dentro da transação ────────────────────────────────────
---
--- SECURITY DEFINER com search_path vazio e referências qualificadas.
--- A identidade vem exclusivamente de auth.uid().
--- Nenhum parâmetro aceito — nada proveniente do navegador influencia a consulta.
-
-create function app_private.get_my_church_access()
+create function public.get_my_church_access()
 returns table (
-  church_id              uuid,
-  church_name            text,
-  timezone               text,
-  member_id              uuid,
-  display_name           text,
-  is_admin               boolean,
-  default_duration_policy text
+  church_id uuid, church_name text, timezone text, member_id uuid,
+  display_name text, is_admin boolean, default_duration_policy text
 )
 language sql
+stable
 security definer
 set search_path = ''
-as $$
-  -- Autorização explícita: rejeitar chamadas de PUBLIC, anon e service_role.
-  -- O verificador abaixo é executado antes do corpo da consulta.
-  -- Mesmo com SECURITY DEFINER, a identidade do chamador deve ser authenticated.
-  select
-    c.id               as church_id,
-    c.name             as church_name,
-    c.timezone         as timezone,
-    m.id               as member_id,
-    m.display_name     as display_name,
-    ca.is_admin        as is_admin,
-    c.default_duration_policy as default_duration_policy
-  from app_private.church_access  as ca
-  join app_private.churches       as c  on c.id = ca.church_id
-  join app_private.members        as m  on m.church_id = ca.church_id
-                                       and m.id        = ca.member_id
-  join auth.users                 as u  on u.id = ca.user_id
-  where
-    -- Identidade derivada exclusivamente da sessão autenticada
-    ca.user_id               = auth.uid()
-    -- Conta com e-mail confirmado e sem bloqueio vigente
+as $function$
+  select c.id, c.name, c.timezone, m.id, m.display_name,
+         ca.is_admin, c.default_duration_policy
+  from app_private.church_access ca
+  join app_private.churches c on c.id = ca.church_id
+  join app_private.members m on m.church_id = ca.church_id and m.id = ca.member_id
+  join auth.users u on u.id = ca.user_id
+  where ca.user_id = (select auth.uid())
     and u.email_confirmed_at is not null
-    and u.banned_until       is null
-    -- Vínculo ativo com onboarding concluído
-    and ca.status            = 'active'
+    and u.deleted_at is null
+    and not coalesce(u.is_anonymous, false)
+    and (u.banned_until is null or u.banned_until <= statement_timestamp())
+    and ca.status = 'active'
     and ca.onboarding_completed_at is not null
-    -- Igreja ativa
-    and c.status             = 'active'
-    -- Membro ativo pertencente à mesma igreja
-    and m.status             = 'active'
-    and m.church_id          = ca.church_id
-$$;
+    and c.status = 'active'
+    and m.status = 'active'
+  order by c.id
+$function$;
 
--- ── Verificações pós-criação ──────────────────────────────────────────────────
+-- Revogar explicitamente os privilegios padrao de public antes do COMMIT.
+revoke all on function public.get_my_church_access()
+  from public, anon, authenticated, service_role;
+grant execute on function public.get_my_church_access() to authenticated;
 
-do $checks$
-declare
-  v_secdef    boolean;
-  v_argcount  int;
-  v_lang      text;
-  v_grants    text;
+do $verify$
+declare v_function oid := to_regprocedure('public.get_my_church_access()');
 begin
-  -- 1. A função foi criada com SECURITY DEFINER?
-  select p.prosecdef
-    into v_secdef
-    from pg_catalog.pg_proc      as p
-    join pg_catalog.pg_namespace as n on n.oid = p.pronamespace
-   where n.nspname = 'app_private'
-     and p.proname = 'get_my_church_access'
-     and p.pronargs = 0;
-
-  if not found then
-    raise exception 'Verificação 1 falhou: função não encontrada após criação.';
-  end if;
-  if not v_secdef then
-    raise exception 'Verificação 1 falhou: função não foi criada como SECURITY DEFINER.';
-  end if;
-
-  -- 2. search_path está vazio?
-  --    pg_proc.proconfig armazena configurações de execução; verificar 'search_path='.
   if not exists (
-    select 1
-      from pg_catalog.pg_proc      as p
-      join pg_catalog.pg_namespace as n on n.oid = p.pronamespace
-     where n.nspname = 'app_private'
-       and p.proname = 'get_my_church_access'
-       and p.pronargs = 0
-       -- search_path vazio: configuração 'search_path=' presente
-       and array_to_string(p.proconfig, ',') ilike '%search_path=%'
+    select 1 from pg_catalog.pg_proc p
+    where p.oid = v_function and p.prosecdef and p.pronargs = 0
+      and (p.proconfig @> array['search_path=""']
+           or p.proconfig @> array['search_path='])
   ) then
-    raise exception 'Verificação 2 falhou: search_path não foi definido na função.';
+    raise exception 'Funcao sem configuracao de seguranca esperada.';
   end if;
-
-  -- 3. PUBLIC, anon, authenticated e service_role não têm EXECUTE.
-  --    Após criação em transação sem GRANT explícito,
-  --    o proprietário tem EXECUTE mas os papéis externos não devem ter.
-  --    Confirmar ausência de EXECUTE para esses papéis.
-  if exists (
-    select 1
-      from information_schema.routine_privileges as rp
-     where rp.specific_schema = 'app_private'
-       and rp.routine_name    = 'get_my_church_access'
-       and rp.grantee in ('PUBLIC', 'anon', 'authenticated', 'service_role')
-       and rp.privilege_type  = 'EXECUTE'
-  ) then
-    raise exception 'Verificação 3 falhou: um ou mais papéis indevidos têm EXECUTE na função.';
+  if not has_function_privilege('authenticated', v_function, 'EXECUTE')
+     or has_function_privilege('anon', v_function, 'EXECUTE')
+     or has_function_privilege('service_role', v_function, 'EXECUTE')
+     or exists (
+       select 1 from pg_catalog.pg_proc p,
+         lateral pg_catalog.aclexplode(
+           coalesce(p.proacl, pg_catalog.acldefault('f', p.proowner))
+         ) a
+       where p.oid = v_function and a.grantee = 0
+         and a.privilege_type = 'EXECUTE'
+     ) then
+    raise exception 'Permissoes de execucao diferentes do contrato.';
   end if;
-
-  raise notice 'PASS: função criada com SECURITY DEFINER, search_path vazio e sem grants indevidos.';
 end;
-$checks$;
+$verify$;
 
--- ── Desfaz tudo ───────────────────────────────────────────────────────────────
+-- Ensaio sob os papeis efetivos, usando somente fixtures novas que serao desfeitas.
+-- Nenhuma conta Auth ou registro real existente e alterado.
+lock table app_private.churches, app_private.members, app_private.church_access
+  in share row exclusive mode;
+
+do $tests$
+declare
+  v_operator text := current_user;
+  v_user uuid;
+  v_church uuid;
+  v_unlinked uuid;
+  v_member uuid;
+  v_access uuid;
+  v_phase int;
+  v_count int;
+  v_admin boolean;
+  v_role text;
+  v_unrelated uuid;
+begin
+  select u.id into v_user
+  from auth.users u
+  where u.email_confirmed_at is not null and u.deleted_at is null
+    and not coalesce(u.is_anonymous, false)
+    and (u.banned_until is null or u.banned_until <= statement_timestamp())
+  order by u.id limit 1;
+  if v_user is null then
+    raise exception 'Ensaio exige uma conta confirmada elegivel ja existente.';
+  end if;
+
+  insert into app_private.churches (name, timezone, default_duration_policy)
+    values ('SQL test linked', 'America/Sao_Paulo', 'warn') returning id into v_church;
+  insert into app_private.churches (name, timezone, default_duration_policy)
+    values ('SQL test unlinked', 'America/Sao_Paulo', 'warn') returning id into v_unlinked;
+  insert into app_private.members (church_id, display_name, created_by_user_id)
+    values (v_church, normalize('João da Conceição', NFC), v_user) returning id into v_member;
+  insert into app_private.church_access
+    (church_id, member_id, user_id, is_admin, onboarding_completed_at, granted_by_user_id)
+    values (v_church, v_member, v_user, false, statement_timestamp(), v_user)
+    returning id into v_access;
+
+  perform set_config('request.jwt.claim.sub', v_user::text, true);
+  perform set_config('request.jwt.claims',
+    jsonb_build_object('sub', v_user::text, 'role', 'authenticated',
+      'user_metadata', jsonb_build_object('is_admin', true))::text, true);
+
+  for v_phase in 0..3 loop
+    if v_phase = 1 then
+      update app_private.church_access
+        set status = 'revoked', revoked_by_user_id = v_user, revoked_at = clock_timestamp()
+        where id = v_access;
+    elsif v_phase = 2 then
+      update app_private.church_access
+        set status = 'active', revoked_by_user_id = null, revoked_at = null where id = v_access;
+      update app_private.members set status = 'inactive' where id = v_member;
+    elsif v_phase = 3 then
+      update app_private.members set status = 'active' where id = v_member;
+      update app_private.churches set status = 'inactive' where id = v_church;
+    end if;
+
+    perform set_config('role', 'authenticated', true);
+    if current_user <> 'authenticated' then
+      raise exception 'O teste nao esta executando como authenticated.';
+    end if;
+
+    select count(*), bool_or(a.is_admin) into v_count, v_admin
+      from public.get_my_church_access() a where a.church_id = v_church;
+    if v_phase = 0 then
+      if v_count <> 1 or v_admin is distinct from false then
+        raise exception 'Vinculo proprio basico nao reconhecido ou metadata concedeu admin.';
+      end if;
+      if not exists (
+        select 1 from public.get_my_church_access() a
+        where a.church_id = v_church and a.member_id = v_member
+          and a.display_name = normalize('João da Conceição', NFC)
+      ) then
+        raise exception 'Nome UTF8 ou membro divergente.';
+      end if;
+    elsif v_count <> 0 then
+      raise exception 'Vinculo revogado ou cadastro inativo liberou acesso; fase %.', v_phase;
+    end if;
+    if exists (select 1 from public.get_my_church_access() a where a.church_id = v_unlinked) then
+      raise exception 'Igreja sem vinculo foi exposta.';
+    end if;
+    perform set_config('role', v_operator, true);
+  end loop;
+
+  -- UID sem conta: simula identidade sem acesso, nao cria conta Auth artificial.
+  -- Uma segunda conta REAL confirmada sem vinculo ainda deve ser testada via login.
+  loop
+    v_unrelated := gen_random_uuid();
+    exit when not exists (select 1 from auth.users where id = v_unrelated);
+  end loop;
+  perform set_config('request.jwt.claim.sub', v_unrelated::text, true);
+  perform set_config('request.jwt.claims',
+    jsonb_build_object('sub', v_unrelated::text, 'role', 'authenticated')::text, true);
+  perform set_config('role', 'authenticated', true);
+  if exists (select 1 from public.get_my_church_access()) then
+    raise exception 'UID sem conta recebeu dados.';
+  end if;
+  perform set_config('request.jwt.claim.sub', '', true);
+  perform set_config('request.jwt.claims', '{"role":"authenticated"}', true);
+  if exists (select 1 from public.get_my_church_access()) then
+    raise exception 'Identidade ausente recebeu dados.';
+  end if;
+  perform set_config('role', v_operator, true);
+
+  foreach v_role in array array['anon', 'service_role'] loop
+    perform set_config('role', v_role, true);
+    begin
+      perform 1 from public.get_my_church_access();
+      raise exception 'Papel % conseguiu executar a consulta.', v_role;
+    exception when insufficient_privilege then
+      null;
+    end;
+    perform set_config('role', v_operator, true);
+  end loop;
+end;
+$tests$;
 
 rollback;
 
--- Resultado esperado na linha final:
---   PASS: ensaio concluído; função não persistida.
-do $final$
-begin
-  raise notice 'PASS: ensaio concluído; função não persistida.';
-end;
-$final$;
+select case
+  when to_regprocedure('public.get_my_church_access()') is null
+  then 'PASS: ensaio concluído; função e dados de teste não persistidos.'
+  else 'FAIL: função presente após ensaio; parar e revisar.'
+end as validation_result;

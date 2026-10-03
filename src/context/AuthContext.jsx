@@ -34,7 +34,7 @@ export function AuthProvider({ children }) {
 
   /**
    * Consulta o vínculo real da conta autenticada chamando a função RPC
-   * `app_private.get_my_church_access()` — sem parâmetros.
+   * `public.get_my_church_access()` — sem parâmetros.
    *
    * Distingue três casos:
    *  - Lista vazia → 'access_pending' (conta válida, sem vínculo elegível)
@@ -52,7 +52,7 @@ export function AuthProvider({ children }) {
     setAuthError(null);
 
     try {
-      const { data, error } = await supabase.rpc('get_my_church_access');
+      const { data, error } = await supabase.schema('public').rpc('get_my_church_access');
 
       // Descartar resposta se a sessão trocou enquanto a consulta estava em voo.
       if (currentUserIdRef.current !== expectedUserId) return;
