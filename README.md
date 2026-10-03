@@ -6,15 +6,16 @@ Projeto em definição, com piloto previsto no **Ministério Shalom**, focado em
 
 ## Etapa atual
 
-Documentação consolidada em **30/09/2026** e atualizada em **02/10/2026**. Há um **protótipo web local em avaliação**, ainda não pronto para produção. A arquitetura, a segurança e a tecnologia do aplicativo Android/iOS permanecem em definição.
+Documentação de produto consolidada em **30/09/2026**, com regras atualizadas em **02/10/2026**. Estado de implementação registrado neste README em **03/10/2026**: a web tem login Google e consulta autorizada do próprio vínculo, com tela inicial de dados reais. O planejamento e a condução do culto permanecem como **protótipo preservado no código**, sem integração com o banco e sem exposição no fluxo atual. A aplicação ainda não está pronta para produção. A arquitetura, a segurança e a tecnologia do aplicativo Android/iOS permanecem em definição.
 
 - [PRD — escopo do MVP, regras e critérios de aceite](docs/PRD.md).
 - [Arquitetura do banco e das permissões — modelo lógico, segurança e pendências](docs/ARQUITETURA-BANCO.md).
 - [Schema inicial — campos e restrições de igreja, membros e acesso](docs/SCHEMA-ACESSO.md).
 - [Aprovação de nome e auditoria — segundo incremento de schema aplicado e verificado](docs/SCHEMA-APROVACAO-AUDITORIA.md).
+- [Consulta autorizada do próprio acesso — contrato, scripts e limites de validação](docs/CONSULTA-ACESSO.md).
 - [Evolução futura — decisões preservadas e propostas adiadas](docs/EVOLUCAO-FUTURA.md).
 
-O MVP é focado no culto. Convites de participação, reservas, prazos e aceite eletrônico continuam futuros. O convite para **acessar a igreja**, com login Google ou e-mail/senha e vínculo a um membro cadastrado, faz parte da primeira versão. O convite vale 72 horas e é de uso único. Não haverá CPF. O Supabase Auth gerencia as senhas; a aplicação oferece recuperação por e-mail sem permitir ao admin definir a senha alheia. Apple e Microsoft ficam para evolução posterior.
+O MVP é focado no culto. Convites de participação, reservas, prazos e aceite eletrônico continuam futuros. O convite para **acessar a igreja**, com login Google ou e-mail/senha e vínculo a um membro cadastrado, faz parte da primeira versão. O convite vale 72 horas e é de uso único. Não haverá CPF. O Supabase Auth gerencia as senhas; a aplicação oferece recuperação por e-mail sem permitir ao admin definir a senha alheia. Os logins Apple e Microsoft (referido como Windows na discussão do projeto) foram descartados do escopo atual pelo responsável, em razão dos custos de configuração avaliados nesta etapa. Não há compromisso de implementá-los posteriormente.
 
 ## Como funcionará o piloto
 
@@ -64,7 +65,7 @@ Para iniciar o servidor de desenvolvimento na porta 3000:
 npm run dev
 ```
 
-## Login com Google
+## Login e acesso à igreja
 
 O fluxo de autenticação usa o [Supabase Auth com OAuth do Google](https://supabase.com/docs/guides/auth/social-login/auth-google).
 
@@ -72,11 +73,35 @@ O fluxo de autenticação usa o [Supabase Auth com OAuth do Google](https://supa
 - Google configurado em Authentication → Providers.
 - `http://localhost:3000` adicionado em Authentication → URL Configuration → Site URL e Redirect URLs.
 
-**Comportamento atual (incremento de login):**
-- Sem sessão: exibe somente a tela de login.
-- Sessão válida: exibe a tela "Acesso à igreja ainda não liberado", com nome, e-mail e foto da conta Google e botão "Sair".
-- Recarga da página: a sessão é recuperada do `localStorage` sem exibir as telas do protótipo.
-- Falha ou cancelamento: permite nova tentativa.
+**Comportamento atual:**
 
-O protótipo de planejamento e condução do culto está preservado no código para integração futura, mas não é exibido neste incremento.
+- Inicialização: recupera a sessão salva antes de decidir qual tela mostrar.
+- Sem sessão: exibe a tela de login, atualmente apenas com Google.
+- Sessão válida: consulta `public.get_my_church_access()`, sem parâmetros de identidade.
+- Vínculo elegível: exibe nome cadastrado do membro, igreja e perfil retornados pelo banco.
+- Sem vínculo elegível: exibe "Acesso à igreja ainda não liberado", com identificação da própria conta e botão "Sair".
+- Falha na consulta: exibe erro com "Tentar novamente" e "Sair"; não confunde falha com ausência de vínculo.
+- Recarga: recupera a sessão e consulta o vínculo novamente, sem montar as telas fictícias do protótipo.
+
+Login sozinho não concede acesso. A consulta exige conta confirmada e elegível, onboarding concluído e vínculo, igreja e membro ativos. O perfil administrativo deriva do vínculo no banco, nunca de e-mail fixo ou metadados editáveis do navegador. Neste incremento, quando há mais de uma igreja autorizada, a tela apresenta somente o primeiro vínculo retornado; a seleção de contexto ainda não foi implementada.
+
+Google e e-mail/senha continuam sendo os métodos previstos no PRD. A interface de e-mail/senha, confirmação e recuperação ainda precisa ser implementada e testada; SMTP próprio permanece pendente antes do piloto com membros.
+
+## Estado do banco e evidências
+
+Conforme as evidências e os resultados informados pelo responsável nas etapas anteriores, existem seis tabelas internas em `app_private`: `churches`, `members`, `church_access`, `access_invitations`, `access_requests` e `audit_entries`. A estrutura foi criada com RLS e privilégios diretos bloqueados para `anon`, `authenticated` e `service_role`. `app_private` permanece fora da Data API; a exposição automática de novas tabelas foi desligada conforme relato do responsável.
+
+A igreja do piloto e o primeiro membro com vínculo administrativo ativo, onboarding concluído e auditoria de inicialização já foram cadastrados. A consulta `public.get_my_church_access()` foi instalada permanentemente após ensaio com `ROLLBACK` e resultado PASS informado pelo responsável. A captura da aplicação mostrou nome, igreja e perfil reais; o botão Sair voltou ao login.
+
+Esses registros não equivalem a uma nova inspeção do Supabase. A evidência completa de todas as colunas da verificação 006 não foi apresentada. Testes HTTP, segunda conta real sem vínculo, troca de conta e concorrência não estão integralmente comprovados. A limitação compartilhada de requisições permanece pendente.
+
+**Não repetir os scripts de criação das tabelas, o bootstrap ou a instalação da consulta já realizada.** Alguns documentos vinculados ainda descrevem autenticação e inicialização como pendentes; são registros de progresso desatualizados, sem alteração das regras do PRD. Os scripts em `docs/sql` são de aplicação manual; merge de código não instala objetos no banco.
+
+## Próximo incremento
+
+O próximo recorte é o **cadastro real de membros na web**, com criação e listagem por administrador autorizado na própria igreja. Ainda não está implementado. O cadastro não cria conta Auth, concede acesso, emite convite ou atribui liderança. Nomes não são únicos e não haverá CPF.
+
+Autorização no servidor, validação de entrada, consultas parametrizadas, auditoria transacional e proteção contra repetição de comandos devem acompanhar essa entrega. Edição de nome, exclusão, desativação, reativação, convites, equipes e planejamento ficam para incrementos próprios, respeitando as pendências do PRD.
+
+O `AppContext` e os perfis simulados continuam preservados para avaliação futura, sem montagem no fluxo real. A existência dessas telas não comprova conformidade integral com o PRD nem autoriza reutilizar suas regras de permissão.
 
