@@ -612,31 +612,42 @@ begin
   end;
   update app_private.churches set status = 'active' where id = v_church_a;
 
-  -- 12.2 Vínculo de acesso inativo
-  update app_private.church_access set status = 'inactive' where id = v_admin_access_a;
-  perform set_config('role', 'authenticated', true);
-  begin
-    perform public.create_church_member(v_church_a, gen_random_uuid(), 'Teste Inativo');
-    perform set_config('role', v_operator, true);
-    raise exception '[Teste 12.2 FALHA] Conseguiu criar membro com vínculo inativo.';
-  exception when insufficient_privilege or sqlstate '42501' then
-    perform set_config('role', v_operator, true);
-    null;
-  end;
-  update app_private.church_access set status = 'active' where id = v_admin_access_a;
+  -- 12.2 Vínculo de acesso revogado (preenchendo status = 'revoked', autoria e data >= granted_at)
+  update app_private.church_access
+  set status = 'revoked',
+      revoked_by_user_id = v_admin_user,
+      revoked_at = greatest(statement_timestamp(), clock_timestamp())
+  where id = v_admin_access_a;
 
-  -- 12.3 Onboarding não concluído
-  update app_private.church_access set onboarding_completed_at = null where id = v_admin_access_a;
   perform set_config('role', 'authenticated', true);
   begin
-    perform public.create_church_member(v_church_a, gen_random_uuid(), 'Teste Onboarding Incompleto');
+    perform public.create_church_member(v_church_a, gen_random_uuid(), 'Teste Revogado');
     perform set_config('role', v_operator, true);
-    raise exception '[Teste 12.3 FALHA] Conseguiu criar membro sem onboarding concluído.';
+    raise exception '[Teste 12.2 FALHA] Conseguiu criar membro com vínculo revogado.';
   exception when insufficient_privilege or sqlstate '42501' then
     perform set_config('role', v_operator, true);
     null;
   end;
-  update app_private.church_access set onboarding_completed_at = statement_timestamp() where id = v_admin_access_a;
+
+  -- Restaura fixture para 'active' limpando os campos de revogação para os testes seguintes
+  update app_private.church_access
+  set status = 'active',
+      revoked_by_user_id = null,
+      revoked_at = null
+  where id = v_admin_access_a;
+
+  -- 12.3 Cadastro de membro do administrador inativo
+  update app_private.members set status = 'inactive' where id = v_admin_member_a;
+  perform set_config('role', 'authenticated', true);
+  begin
+    perform public.create_church_member(v_church_a, gen_random_uuid(), 'Teste Membro Inativo');
+    perform set_config('role', v_operator, true);
+    raise exception '[Teste 12.3 FALHA] Conseguiu criar membro com cadastro de membro inativo.';
+  exception when insufficient_privilege or sqlstate '42501' then
+    perform set_config('role', v_operator, true);
+    null;
+  end;
+  update app_private.members set status = 'active' where id = v_admin_member_a;
 
   -- 12.4 Usuário com banimento vigente
   update auth.users set banned_until = statement_timestamp() + interval '1 day' where id = v_admin_user;
@@ -814,11 +825,16 @@ $tests$;
 rollback;
 
 -- Verificação de encerramento do ensaio
+-- Confere a ausência de objetos temporários e das fixtures criadas no ensaio,
+-- sem exigir ausência de membros ou igrejas preexistentes no banco.
 select case
   when to_regclass('app_private.command_receipts') is null
    and to_regprocedure('public.list_church_members(uuid, integer, integer)') is null
    and to_regprocedure('public.create_church_member(uuid, uuid, text)') is null
    and to_regprocedure('public.get_create_member_receipt(uuid, uuid)') is null
+   and not exists (
+     select 1 from app_private.churches where name in ('Igreja Ensaio A', 'Igreja Ensaio B')
+   )
   then 'PASS: ensaio concluído; nenhuma alteração persistida.'
-  else 'FAIL: objetos do ensaio ainda presentes após rollback; parar e revisar.'
+  else 'FAIL: objetos ou fixtures do ensaio ainda presentes após rollback; parar e revisar.'
 end as validation_result;

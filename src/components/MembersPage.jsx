@@ -29,7 +29,15 @@ import {
  * - Estados de carregamento, lista vazia, erro e processamento.
  * - Uso legível no navegador do celular.
  */
-import { isDefinitiveServerError, isUncertainResponse } from '../utils/memberErrors';
+import {
+  isDefinitiveServerError,
+  isUncertainResponse,
+  validateAndNormalizeMemberName,
+  savePendingMemberCommand,
+  loadPendingMemberCommand,
+  removePendingMemberCommand,
+  classifyReceiptCheckResult,
+} from '../utils/memberCommandService';
 export { isDefinitiveServerError, isUncertainResponse };
 
 export default function MembersPage({ onBack }) {
@@ -39,11 +47,6 @@ export default function MembersPage({ onBack }) {
   const churchName   = churchAccess?.church_name || 'Igreja';
   const isAdmin      = churchAccess?.is_admin || false;
   const currentUserId = session?.user?.id;
-
-  // Chave de isolamento de comando pendente por conta e igreja no storage de sessão
-  const storageKey = churchId && currentUserId
-    ? `escala_pending_member_cmd:${currentUserId}:${churchId}`
-    : null;
 
   // Estado da listagem
   const [members, setMembers]         = useState([]);
@@ -97,32 +100,13 @@ export default function MembersPage({ onBack }) {
 
   // Recupera comando pendente retido no storage de sessão para esta conta e igreja
   useEffect(() => {
-    if (!storageKey) {
+    if (!currentUserId || !churchId || typeof window === 'undefined') {
       setUncertainCommand(null);
       return;
     }
-    try {
-      const raw = sessionStorage.getItem(storageKey);
-      if (raw) {
-        const parsed = JSON.parse(raw);
-        if (
-          parsed?.commandId &&
-          parsed?.churchId === churchId &&
-          parsed?.userId === currentUserId &&
-          parsed?.displayName
-        ) {
-          setUncertainCommand(parsed);
-        } else {
-          sessionStorage.removeItem(storageKey);
-          setUncertainCommand(null);
-        }
-      } else {
-        setUncertainCommand(null);
-      }
-    } catch {
-      setUncertainCommand(null);
-    }
-  }, [storageKey, churchId, currentUserId]);
+    const saved = loadPendingMemberCommand(window.sessionStorage, currentUserId, churchId);
+    setUncertainCommand(saved);
+  }, [churchId, currentUserId]);
 
   // Limpar lista se perder autorização ou trocar de conta
   useEffect(() => {
@@ -201,12 +185,9 @@ export default function MembersPage({ onBack }) {
     };
 
     // Reter o comando antes do envio no storage de sessão
-    if (storageKey) {
-      try {
-        sessionStorage.setItem(storageKey, JSON.stringify(pendingCmd));
-      } catch (err) {
-        console.warn('[MembersPage] Falha ao gravar comando no storage de sessão:', err);
-      }
+    setUncertainCommand(pendingCmd);
+    if (typeof window !== 'undefined' && window.sessionStorage) {
+      savePendingMemberCommand(window.sessionStorage, pendingCmd);
     }
 
     let rpcData = null;
@@ -241,8 +222,8 @@ export default function MembersPage({ onBack }) {
     if (rpcError) {
       // Rejeição definitiva pelo servidor (ex.: permissão, parâmetros inválidos ou cota excedida)
       console.error('[MembersPage] Erro definitivo retornado ao criar membro:', rpcError.message);
-      if (storageKey) {
-        try { sessionStorage.removeItem(storageKey); } catch {}
+      if (typeof window !== 'undefined' && window.sessionStorage) {
+        removePendingMemberCommand(window.sessionStorage, currentUserId, churchId);
       }
       setUncertainCommand(null);
       setFormError(rpcError.message || 'Falha ao cadastrar membro.');
@@ -251,8 +232,8 @@ export default function MembersPage({ onBack }) {
 
     // Sucesso confirmado pelo servidor
     const created = rpcData[0];
-    if (storageKey) {
-      try { sessionStorage.removeItem(storageKey); } catch {}
+    if (typeof window !== 'undefined' && window.sessionStorage) {
+      removePendingMemberCommand(window.sessionStorage, currentUserId, churchId);
     }
     setUncertainCommand(null);
     setNameInput('');
@@ -278,18 +259,12 @@ export default function MembersPage({ onBack }) {
       return;
     }
 
-    const trimmed = nameInput.trim();
-    if (!trimmed) {
-      setFormError('Informe o nome do membro.');
+    const validation = validateAndNormalizeMemberName(nameInput);
+    if (!validation.valid) {
+      setFormError(validation.error);
       return;
     }
-
-    // Normalização canônica em NFC no cliente antes da validação
-    const normalized = trimmed.normalize('NFC');
-    if (normalized.length < 1 || normalized.length > 120) {
-      setFormError('O nome deve ter entre 1 e 120 caracteres.');
-      return;
-    }
+    const normalized = validation.normalizedName;
 
     // Se há um comando incerto pendente, exigir reconciliação ou reexecução prévia
     if (uncertainCommand) {
@@ -336,7 +311,7 @@ export default function MembersPage({ onBack }) {
 
   /**
    * Reconcilia um comando com resposta incerta chamando get_create_member_receipt.
-   * Uma consulta vazia não comprova término sem gravação; o comando não é descartado.
+   * Falha na consulta NÃO comprova término sem gravação; o comando não é descartado.
    */
   async function handleReconcileReceipt() {
     if (!uncertainCommand || !supabase || reconciling || retrying) return;
@@ -352,42 +327,38 @@ export default function MembersPage({ onBack }) {
 
       if (!isMountedRef.current) return;
 
-      if (error) {
-        if (isDefinitiveServerError(error)) {
-          setFormError('Acesso não autorizado ou erro definitivo na consulta de recibo: ' + error.message);
-          if (storageKey) {
-            try { sessionStorage.removeItem(storageKey); } catch {}
-          }
-          setUncertainCommand(null);
-        } else {
-          setFormError('Falha de rede ao consultar o recibo. Verifique a conexão e tente novamente.');
-        }
+      const result = classifyReceiptCheckResult(error, data);
+
+      if (result.status === 'ERROR') {
+        // Falha na consulta de recibo: NÃO comprova término sem gravação!
+        // O comando NÃO é descartado. Mantém a identidade e o storage.
+        setFormError(result.message);
         return;
       }
 
-      if (data && data.length > 0) {
+      if (result.status === 'CONFIRMED') {
         // Confirmado no servidor!
-        const member = data[0];
-        if (storageKey) {
-          try { sessionStorage.removeItem(storageKey); } catch {}
+        if (typeof window !== 'undefined' && window.sessionStorage) {
+          removePendingMemberCommand(window.sessionStorage, uncertainCommand.userId, uncertainCommand.churchId);
         }
         setUncertainCommand(null);
         setNameInput('');
         setShowCreateModal(false);
-        setSuccessMessage(`Cadastro de "${member.display_name}" confirmado com sucesso no servidor!`);
+        setSuccessMessage(`Cadastro de "${result.member.display_name}" confirmado com sucesso no servidor!`);
         setPage(1);
         loadMembers(1);
-      } else {
+        return;
+      }
+
+      if (result.status === 'EMPTY_RECEIPT') {
         // Recibo ainda não localizado: NÃO comprova término sem gravação!
         // NÃO descarta o comando e autoriza reexecução com a mesma chave.
-        setFormError(
-          'O recibo ainda não consta no banco de dados. O registro pode estar em processamento ou não ter sido recebido. ' +
-          'Você pode verificar novamente ou reexecutar o cadastro com segurança usando a mesma chave.'
-        );
+        setFormError(result.message);
       }
     } catch (err) {
       if (!isMountedRef.current) return;
-      setFormError('Erro ao consultar o servidor para reconciliação. Verifique a conexão.');
+      // Exceção de rede: também NÃO descarta o comando!
+      setFormError('Erro ao consultar o servidor para reconciliação. A operação pendente foi preservada.');
     } finally {
       if (isMountedRef.current) {
         setReconciling(false);

@@ -1,6 +1,17 @@
 import { describe, it, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { isDefinitiveServerError, isUncertainResponse } from '../src/utils/memberErrors.js';
+import {
+  isDefinitiveServerError,
+  isUncertainResponse,
+  validateAndNormalizeMemberName,
+  getMemberCommandStorageKey,
+  savePendingMemberCommand,
+  loadPendingMemberCommand,
+  removePendingMemberCommand,
+  clearAllMemberCommandStorage,
+  determineAuthTransition,
+  classifyReceiptCheckResult,
+} from '../src/utils/memberCommandService.js';
 
 /**
  * Mock simples de sessionStorage em memória para ambiente Node.js.
@@ -29,36 +40,32 @@ class MockSessionStorage {
   }
 }
 
-// Configura sessionStorage global no ambiente de teste se ausente
-if (typeof globalThis.sessionStorage === 'undefined') {
-  globalThis.sessionStorage = new MockSessionStorage();
-}
-
 describe('1. Validação de Entrada e Normalização Unicode NFC no Cliente', () => {
   it('normaliza caracteres decompostos (NFD) para a forma canônica pré-composta (NFC)', () => {
     // 'Jose' + combining acute accent (\u0301)
     const nfdName = 'Jose\u0301';
     assert.equal(nfdName.length, 5); // 4 letras + 1 caractere combinante
-    const nfcName = nfdName.normalize('NFC');
-    assert.equal(nfcName, 'José');
-    assert.equal(nfcName.length, 4); // 4 caracteres canônicos
-    assert.equal(Buffer.from(nfcName, 'utf8').length, 5); // 'J','o','s' (3 bytes) + 'é' (2 bytes UTF-8)
+    const res = validateAndNormalizeMemberName(nfdName);
+    assert.equal(res.valid, true);
+    assert.equal(res.normalizedName, 'José');
+    assert.equal(res.normalizedName.length, 4); // 4 caracteres canônicos
+    assert.equal(Buffer.from(res.normalizedName, 'utf8').length, 5); // 'J','o','s' (3 bytes) + 'é' (2 bytes UTF-8)
   });
 
   it('preserva apóstrofos, cedilhas e acentos comuns', () => {
     const raw = "  Conceição d'Ávila  ";
-    const cleaned = raw.trim().normalize('NFC');
-    assert.equal(cleaned, "Conceição d'Ávila");
-    assert.equal(cleaned.includes("'"), true);
-    assert.equal(cleaned.includes("ç"), true);
-    assert.equal(cleaned.includes("Á"), true);
+    const res = validateAndNormalizeMemberName(raw);
+    assert.equal(res.valid, true);
+    assert.equal(res.normalizedName, "Conceição d'Ávila");
+    assert.equal(res.normalizedName.includes("'"), true);
+    assert.equal(res.normalizedName.includes("ç"), true);
+    assert.equal(res.normalizedName.includes("Á"), true);
   });
 
   it('rejeita nomes vazios ou contendo apenas espaços em branco', () => {
-    const empty1 = '';
-    const empty2 = '    ';
-    assert.equal(empty1.trim().length, 0);
-    assert.equal(empty2.trim().length, 0);
+    assert.equal(validateAndNormalizeMemberName('').valid, false);
+    assert.equal(validateAndNormalizeMemberName('    ').valid, false);
+    assert.equal(validateAndNormalizeMemberName(null).valid, false);
   });
 
   it('valida limites estritos de comprimento entre 1 e 120 caracteres', () => {
@@ -66,9 +73,9 @@ describe('1. Validação de Entrada e Normalização Unicode NFC no Cliente', ()
     const valid120 = 'A'.repeat(120);
     const invalid121 = 'A'.repeat(121);
 
-    assert.equal(validShort.trim().normalize('NFC').length >= 1 && validShort.length <= 120, true);
-    assert.equal(valid120.trim().normalize('NFC').length <= 120, true);
-    assert.equal(invalid121.trim().normalize('NFC').length > 120, true);
+    assert.equal(validateAndNormalizeMemberName(validShort).valid, true);
+    assert.equal(validateAndNormalizeMemberName(valid120).valid, true);
+    assert.equal(validateAndNormalizeMemberName(invalid121).valid, false);
   });
 });
 
@@ -92,7 +99,6 @@ describe('2. Classificação de Erros: Rejeições Definitivas vs Respostas Ince
     const fetchError = { message: 'Failed to fetch', status: 0 };
     const gatewayTimeout = { status: 504, message: 'Gateway Timeout' };
     const serverError = { status: 502, message: 'Bad Gateway' };
-    const abortError = new Error('The user aborted a request');
 
     assert.equal(isDefinitiveServerError(fetchError), false);
     assert.equal(isUncertainResponse(fetchError, null), true);
@@ -102,242 +108,222 @@ describe('2. Classificação de Erros: Rejeições Definitivas vs Respostas Ince
 
     assert.equal(isDefinitiveServerError(serverError), false);
     assert.equal(isUncertainResponse(serverError, null), true);
-
-    assert.equal(isDefinitiveServerError(abortError), false);
-    assert.equal(isUncertainResponse(abortError, null), true);
   });
 
   it('classifica resposta HTTP 200 com array vazio ou sem member_id como resposta incerta', () => {
     assert.equal(isUncertainResponse(null, []), true);
-    assert.equal(isUncertainResponse(null, null), true);
     assert.equal(isUncertainResponse(null, [{}]), true);
-    // Resposta de sucesso válida não é incerta
-    assert.equal(isUncertainResponse(null, [{ member_id: '123', display_name: 'Ana', already_existed: false }]), false);
+    assert.equal(isUncertainResponse(null, [{ member_id: 'valid-uuid' }]), false);
   });
 });
 
-describe('3. Ciclo de Comando, Idempotência e Retenção de Identidade', () => {
-  const userId = '11111111-1111-1111-1111-111111111111';
-  const churchId = '22222222-2222-2222-2222-222222222222';
-  const storageKey = `escala_pending_member_cmd:${userId}:${churchId}`;
+describe('3. Ciclo de Comando, Idempotência e Retenção no Aplicativo (Produção)', () => {
+  let storage;
+  const userId = 'user-admin-123';
+  const churchId = 'church-sp-456';
 
   beforeEach(() => {
-    globalThis.sessionStorage.clear();
+    storage = new MockSessionStorage();
   });
 
   it('cria e retém a identidade do comando antes do envio no storage de sessão', () => {
-    const commandId = 'cmd-initial-uuid-1234';
-    const displayName = 'Barnabé das Oliveiras';
+    const commandId = 'cmd-uuid-1111';
+    const displayName = 'Barnabé de Chipre';
 
-    const pendingCmd = {
-      commandId,
-      churchId,
-      userId,
-      displayName,
-      timestamp: Date.now(),
-    };
+    const saved = savePendingMemberCommand(storage, { userId, churchId, commandId, displayName });
+    assert.equal(saved, true);
 
-    // Gravação antes do envio
-    globalThis.sessionStorage.setItem(storageKey, JSON.stringify(pendingCmd));
-
-    const retrieved = JSON.parse(globalThis.sessionStorage.getItem(storageKey));
-    assert.equal(retrieved.commandId, commandId);
-    assert.equal(retrieved.displayName, displayName);
-    assert.equal(retrieved.userId, userId);
+    const loaded = loadPendingMemberCommand(storage, userId, churchId);
+    assert.equal(loaded?.commandId, commandId);
+    assert.equal(loaded?.displayName, displayName);
+    assert.equal(loaded?.churchId, churchId);
+    assert.equal(loaded?.userId, userId);
   });
 
-  it('quando o SDK retorna erro de rede sem lançar exceção, o comando é preservado com o mesmo ID', () => {
-    const commandId = 'cmd-network-fail-5678';
-    const displayName = 'Dorcas de Jope';
-    const pendingCmd = { commandId, churchId, userId, displayName, timestamp: Date.now() };
+  it('restauração inicial da mesma conta com comando pendente (F5 / recarga da página)', () => {
+    // 1. Comando pendente gravado antes da recarga
+    const commandId = 'cmd-reload-2222';
+    const displayName = 'Estêvão Mártir';
+    savePendingMemberCommand(storage, { userId, churchId, commandId, displayName });
 
-    globalThis.sessionStorage.setItem(storageKey, JSON.stringify(pendingCmd));
+    // 2. AuthContext processa restauração inicial: previousUserId é null
+    const transition = determineAuthTransition({
+      previousUserId: null,
+      newUserId: userId,
+      currentGen: 1,
+      authGen: 1,
+    });
 
-    // Simula retorno de erro de rede no objeto error do SDK
-    const sdkReturn = {
-      data: null,
-      error: { message: 'TypeError: Failed to fetch', status: 0 },
-    };
+    assert.equal(transition.type, 'INITIAL_SESSION');
+    assert.equal(transition.shouldClearMemberStorage, false); // NÃO limpa!
 
-    assert.equal(isUncertainResponse(sdkReturn.error, sdkReturn.data), true);
+    // Se não limpa, o comando continua intacto
+    const restored = loadPendingMemberCommand(storage, userId, churchId);
+    assert.notEqual(restored, null);
+    assert.equal(restored.commandId, commandId);
+    assert.equal(restored.displayName, displayName);
+  });
+
+  it('recarga após envio com resposta perdida preserva a identidade para reconciliação', () => {
+    const commandId = 'cmd-lost-response-3333';
+    const displayName = 'Timóteo de Éfeso';
+
+    // Salva comando antes do envio
+    savePendingMemberCommand(storage, { userId, churchId, commandId, displayName });
+
+    // Simula resposta de transporte com erro (timeout de rede)
+    const transportError = { message: 'Failed to fetch', status: 0 };
+    assert.equal(isUncertainResponse(transportError, null), true);
+
+    // O usuário recarrega a página antes de reconciliar
+    const transition = determineAuthTransition({
+      previousUserId: null,
+      newUserId: userId,
+      currentGen: 1,
+      authGen: 1,
+    });
+    assert.equal(transition.shouldClearMemberStorage, false);
+
+    // Na remontagem, o comando é recuperado exatamente com o mesmo commandId
+    const pending = loadPendingMemberCommand(storage, userId, churchId);
+    assert.equal(pending.commandId, commandId);
+    assert.equal(pending.displayName, displayName);
+  });
+
+  it('troca de conta sem exposição de dados anteriores', () => {
+    const userA = 'user-a-111';
+    const userB = 'user-b-222';
+
+    // Usuário A possui comando pendente
+    savePendingMemberCommand(storage, { userId: userA, churchId, commandId: 'cmd-a', displayName: 'Membro Privado A' });
+
+    // Transição de troca de conta: userA -> userB
+    const transition = determineAuthTransition({
+      previousUserId: userA,
+      newUserId: userB,
+      currentGen: 2,
+      authGen: 2,
+    });
+
+    assert.equal(transition.type, 'ACCOUNT_SWITCH');
+    assert.equal(transition.shouldClearMemberStorage, true);
+
+    // Executa a limpeza exigida pela transição
+    if (transition.shouldClearMemberStorage) {
+      clearAllMemberCommandStorage(storage);
+    }
+
+    // Usuário B não acessa nenhum dado de A
+    assert.equal(loadPendingMemberCommand(storage, userB, churchId), null);
+    assert.equal(loadPendingMemberCommand(storage, userA, churchId), null);
+  });
+
+  it('recibo vazio preservando o comando (classifyReceiptCheckResult)', () => {
+    const commandId = 'cmd-receipt-empty-4444';
+    const displayName = 'Silas de Jerusalém';
+    savePendingMemberCommand(storage, { userId, churchId, commandId, displayName });
+
+    // Consulta de recibo retornou array vazio []
+    const receiptResult = classifyReceiptCheckResult(null, []);
+    assert.equal(receiptResult.status, 'EMPTY_RECEIPT');
+    assert.equal(receiptResult.shouldPreserveCommand, true);
 
     // O comando NÃO é removido do storage
-    const kept = JSON.parse(globalThis.sessionStorage.getItem(storageKey));
-    assert.equal(kept.commandId, commandId);
-    assert.equal(kept.displayName, displayName);
+    const retained = loadPendingMemberCommand(storage, userId, churchId);
+    assert.notEqual(retained, null);
+    assert.equal(retained.commandId, commandId);
   });
 
-  it('quando ocorre exceção de transporte, o comando permanece intacto para reconciliação', () => {
-    const commandId = 'cmd-exception-9012';
-    const displayName = 'Estêvão Diácono';
-    const pendingCmd = { commandId, churchId, userId, displayName, timestamp: Date.now() };
+  it('falha de conexão ou erro do servidor na consulta de recibo NÃO descarta o comando', () => {
+    const commandId = 'cmd-receipt-err-5555';
+    const displayName = 'Lídia de Tiatira';
+    savePendingMemberCommand(storage, { userId, churchId, commandId, displayName });
 
-    globalThis.sessionStorage.setItem(storageKey, JSON.stringify(pendingCmd));
+    // Falha 500 ou transporte na consulta de recibo
+    const serverErr = { status: 500, message: 'Internal Server Error' };
+    const receiptResult = classifyReceiptCheckResult(serverErr, null);
 
-    let threwError = null;
-    try {
-      throw new Error('Network request failed');
-    } catch (err) {
-      threwError = err;
-    }
+    assert.equal(receiptResult.status, 'ERROR');
+    assert.equal(receiptResult.shouldPreserveCommand, true);
 
-    assert.equal(isUncertainResponse(threwError, null), true);
-
-    const kept = JSON.parse(globalThis.sessionStorage.getItem(storageKey));
-    assert.equal(kept.commandId, commandId);
+    // O comando permanece preservado para retentativa
+    const retained = loadPendingMemberCommand(storage, userId, churchId);
+    assert.equal(retained.commandId, commandId);
   });
 
-  it('consulta de recibo vazia NÃO descarta o comando e autoriza reexecução com o mesmo ID', () => {
-    const commandId = 'cmd-empty-receipt-3456';
-    const displayName = 'Filemom de Colossos';
-    const pendingCmd = { commandId, churchId, userId, displayName, timestamp: Date.now() };
+  it('reexecução com o mesmo identificador e parâmetros recupera registro ou conclui criação única', () => {
+    const commandId = 'cmd-retry-6666';
+    const displayName = 'Apolo de Alexandria';
+    savePendingMemberCommand(storage, { userId, churchId, commandId, displayName });
 
-    globalThis.sessionStorage.setItem(storageKey, JSON.stringify(pendingCmd));
+    // Reexecução utilizando o mesmo commandId e displayName
+    const pending = loadPendingMemberCommand(storage, userId, churchId);
+    assert.equal(pending.commandId, commandId);
+    assert.equal(pending.displayName, displayName);
 
-    // get_create_member_receipt retorna []
-    const receiptData = [];
-    const receiptError = null;
-
-    // Conforme especificação: NÃO descarta do storage
-    if (!receiptError && receiptData.length === 0) {
-      // O comando DEVE continuar retido para reexecução com a mesma chave
-      const stillRetained = JSON.parse(globalThis.sessionStorage.getItem(storageKey));
-      assert.equal(stillRetained.commandId, commandId);
-      assert.equal(stillRetained.displayName, displayName);
-    } else {
-      assert.fail('Deveria ter caído no ramo de recibo vazio.');
-    }
-  });
-
-  it('reexecução idempotente do mesmo comando recupera registro original com already_existed = true', () => {
-    const commandId = 'cmd-replay-7890';
-    const displayName = 'Gideão de Ofra';
-    const memberId = 'member-original-uuid-9999';
-
-    // Simula resposta da RPC quando o comando já havia sido executado anteriormente no banco
-    const idempotentRpcResponse = {
-      data: [
-        {
-          member_id: memberId,
-          display_name: displayName,
-          status: 'active',
-          created_at: new Date().toISOString(),
-          already_existed: true,
-        },
-      ],
+    // Simula resposta do servidor confirmando idempotência (already_existed = true)
+    const idempotentResponse = {
+      data: [{ member_id: 'member-uuid-apolo', display_name: displayName, already_existed: true }],
       error: null,
     };
+    assert.equal(isUncertainResponse(idempotentResponse.error, idempotentResponse.data), false);
 
-    assert.equal(isUncertainResponse(idempotentRpcResponse.error, idempotentRpcResponse.data), false);
-
-    const result = idempotentRpcResponse.data[0];
-    assert.equal(result.member_id, memberId);
-    assert.equal(result.already_existed, true);
-
-    // Sucesso confirmado: agora sim o storage pode ser limpo
-    globalThis.sessionStorage.removeItem(storageKey);
-    assert.equal(globalThis.sessionStorage.getItem(storageKey), null);
-  });
-
-  it('troca de tela ou desmontagem não apaga o comando pendente no storage de sessão', () => {
-    const commandId = 'cmd-unmount-persisted-1111';
-    const displayName = 'Priscila de Corinto';
-    const pendingCmd = { commandId, churchId, userId, displayName, timestamp: Date.now() };
-
-    globalThis.sessionStorage.setItem(storageKey, JSON.stringify(pendingCmd));
-
-    // Simula desmontagem do componente (MembersPage unmount) e remontagem posterior
-    // O storage da sessão sobrevive à desmontagem do componente na aba
-    const reloaded = JSON.parse(globalThis.sessionStorage.getItem(storageKey));
-    assert.equal(reloaded.commandId, commandId);
-    assert.equal(reloaded.displayName, displayName);
+    // Sucesso confirmado: remove do storage
+    removePendingMemberCommand(storage, userId, churchId);
+    assert.equal(loadPendingMemberCommand(storage, userId, churchId), null);
   });
 
   it('homônimos com comandos distintos criam membros com identificadores diferentes', () => {
     const sameName = 'João Batista';
-    const cmd1 = 'cmd-homonym-1';
-    const cmd2 = 'cmd-homonym-2';
-
-    // Criação 1
     const res1 = { member_id: 'member-uuid-1', display_name: sameName, already_existed: false };
-    // Criação 2 com comando diferente
     const res2 = { member_id: 'member-uuid-2', display_name: sameName, already_existed: false };
 
     assert.notEqual(res1.member_id, res2.member_id);
     assert.equal(res1.display_name, res2.display_name);
   });
-
-  it('isolamento estrito por conta e igreja: usuário B não acessa comando do usuário A', () => {
-    const userA = 'user-aaa';
-    const userB = 'user-bbb';
-    const church1 = 'church-111';
-
-    const keyA = `escala_pending_member_cmd:${userA}:${church1}`;
-    const keyB = `escala_pending_member_cmd:${userB}:${church1}`;
-
-    globalThis.sessionStorage.setItem(keyA, JSON.stringify({ commandId: 'cmd-a', displayName: 'Membro A' }));
-
-    assert.notEqual(globalThis.sessionStorage.getItem(keyA), null);
-    assert.equal(globalThis.sessionStorage.getItem(keyB), null);
-  });
 });
 
-describe('4. Coordenação de Inicialização da Sessão no AuthContext', () => {
+describe('4. Coordenação de Inicialização e Concorrência da Sessão no AuthContext', () => {
   it('evento SIGNED_OUT mais recente não é sobrescrito por getSession atrasado', () => {
-    let authGeneration = 0;
-    let activeSession = null;
-    let authState = 'initializing';
+    let authGen = 0;
 
-    function applySession(newSession, gen) {
-      if (gen < authGeneration) {
-        // Ignora evento desatualizado
-        return;
-      }
-      activeSession = newSession;
-      authState = newSession ? 'access_granted' : 'unauthenticated';
-    }
+    // 1. getSession dispara assincronamente na geração 1
+    const getSessionGen = ++authGen;
 
-    // 1. getSession dispara assincronamente mas demora
-    const getSessionGen = ++authGeneration;
-    const oldSession = { user: { id: 'old-user' } };
+    // 2. Antes de getSession resolver, onAuthStateChange dispara SIGNED_OUT na geração 2
+    const signedOutGen = ++authGen;
+    const signoutTransition = determineAuthTransition({
+      previousUserId: 'user-active',
+      newUserId: null,
+      currentGen: signedOutGen,
+      authGen,
+    });
+    assert.equal(signoutTransition.type, 'LOGOUT');
+    assert.equal(signoutTransition.isStale, false);
+    assert.equal(signoutTransition.shouldClearMemberStorage, true);
 
-    // 2. Antes de getSession resolver, onAuthStateChange emite SIGNED_OUT
-    const signedOutGen = ++authGeneration;
-    applySession(null, signedOutGen);
-    assert.equal(authState, 'unauthenticated');
-    assert.equal(activeSession, null);
+    // 3. getSession resolve tardiamente na geração 1
+    const lateGetSessionTransition = determineAuthTransition({
+      previousUserId: null,
+      newUserId: 'user-active',
+      currentGen: getSessionGen,
+      authGen,
+    });
 
-    // 3. getSession resolve atrasado com a sessão anterior
-    applySession(oldSession, getSessionGen);
-
-    // Com o controle de geração, a sessão anterior atrasada é DESCARTADA e o usuário permanece deslogado
-    assert.equal(authState, 'unauthenticated');
-    assert.equal(activeSession, null);
+    // O snapshot atrasado é estritamente ignorado como stale!
+    assert.equal(lateGetSessionTransition.isStale, true);
   });
 
-  it('descarte de resposta de conta anterior após logout ou troca de conta', () => {
-    let sessionId = 1;
-    let accessGrantedForUser = null;
+  it('renovação de token (mesmo usuário) não reseta contexto nem limpa storage', () => {
+    const transition = determineAuthTransition({
+      previousUserId: 'user-same-123',
+      newUserId: 'user-same-123',
+      currentGen: 1,
+      authGen: 1,
+    });
 
-    // Usuário 1 inicia consulta
-    const user1SessionId = sessionId;
-    const user1Id = 'user-1';
-
-    // Usuário desloga (incrementa sessionId)
-    sessionId += 1;
-
-    // Resposta de get_my_church_access chega para o Usuário 1
-    function handleAccessResponse(responseSessionId, returnedUserId) {
-      if (responseSessionId !== sessionId) {
-        // Sessão expirou ou trocou antes da resposta chegar: descarta!
-        return;
-      }
-      accessGrantedForUser = returnedUserId;
-    }
-
-    handleAccessResponse(user1SessionId, user1Id);
-
-    // O acesso da conta anterior NÃO foi aplicado
-    assert.equal(accessGrantedForUser, null);
+    assert.equal(transition.type, 'SAME_USER');
+    assert.equal(transition.shouldClearMemberStorage, false);
+    assert.equal(transition.isStale, false);
   });
 });

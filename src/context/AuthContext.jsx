@@ -1,5 +1,9 @@
 import React, { createContext, useContext, useState, useEffect, useRef, useCallback } from 'react';
 import { supabase, isSupabaseConfigured } from '../lib/supabaseClient';
+import {
+  determineAuthTransition,
+  clearAllMemberCommandStorage,
+} from '../utils/memberCommandService';
 
 const AuthContext = createContext(null);
 
@@ -49,21 +53,10 @@ export function AuthProvider({ children }) {
   /**
    * Remove comandos pendentes de membros retidos na sessão para evitar vazamento entre contas.
    */
-  function clearMemberCommandStorage() {
+  const clearMemberCommandStorage = useCallback(() => {
     if (typeof window === 'undefined' || !window.sessionStorage) return;
-    try {
-      const keysToRemove = [];
-      for (let i = 0; i < window.sessionStorage.length; i++) {
-        const key = window.sessionStorage.key(i);
-        if (key && key.startsWith('escala_pending_member_cmd:')) {
-          keysToRemove.push(key);
-        }
-      }
-      keysToRemove.forEach((k) => window.sessionStorage.removeItem(k));
-    } catch (err) {
-      console.warn('[AuthContext] Falha ao limpar storage de sessão de membros:', err);
-    }
-  }
+    clearAllMemberCommandStorage(window.sessionStorage);
+  }, []);
 
   /**
    * Limpa o contexto de vínculo e cancela timers pendentes.
@@ -162,40 +155,73 @@ export function AuthProvider({ children }) {
         return;
       }
 
-      const newUserId = newSession?.user?.id ?? null;
       const previousUserId = currentUserIdRef.current;
+      const newUserId = newSession?.user?.id ?? null;
+
+      const transition = determineAuthTransition({
+        previousUserId,
+        newUserId,
+        currentGen: eventGen,
+        authGen: authGenerationRef.current,
+      });
+
+      if (transition.isStale) {
+        // Ignora snapshots obsoletos que resolveram fora de ordem
+        return;
+      }
 
       setSession(newSession);
 
-      if (!newSession || !newUserId) {
-        // Logout ou sessão inválida
+      if (transition.type === 'LOGOUT' || transition.type === 'UNAUTHENTICATED') {
         sessionIdRef.current += 1;
         currentUserIdRef.current = null;
         clearAccessContext();
-        clearMemberCommandStorage();
+        if (transition.shouldClearMemberStorage) {
+          clearMemberCommandStorage();
+        }
         setAuthState('unauthenticated');
         return;
       }
 
-      if (newUserId !== previousUserId) {
-        // Nova sessão / troca de conta
+      if (transition.type === 'INITIAL_SESSION') {
+        // Restauração inicial da mesma conta após reload/montagem.
+        // PRESERVA o storage de comandos pendentes sem chamar clearMemberCommandStorage!
         sessionIdRef.current += 1;
         currentUserIdRef.current = newUserId;
         clearAccessContext();
-        clearMemberCommandStorage();
 
-        // Cancela timer anterior se houver
         if (scheduledTimerRef.current) {
           clearTimeout(scheduledTimerRef.current);
         }
 
-        // Agenda a consulta evitando bloquear o listener de Auth
         scheduledTimerRef.current = setTimeout(() => {
           scheduledTimerRef.current = null;
           if (isEffectActive && currentUserIdRef.current === newUserId) {
             fetchChurchAccess(newUserId);
           }
         }, 0);
+        return;
+      }
+
+      if (transition.type === 'ACCOUNT_SWITCH') {
+        // Troca efetiva de conta (usuário A -> usuário B).
+        // Limpa o storage para garantir isolamento e evitar vazamento de dados.
+        sessionIdRef.current += 1;
+        currentUserIdRef.current = newUserId;
+        clearAccessContext();
+        clearMemberCommandStorage();
+
+        if (scheduledTimerRef.current) {
+          clearTimeout(scheduledTimerRef.current);
+        }
+
+        scheduledTimerRef.current = setTimeout(() => {
+          scheduledTimerRef.current = null;
+          if (isEffectActive && currentUserIdRef.current === newUserId) {
+            fetchChurchAccess(newUserId);
+          }
+        }, 0);
+        return;
       }
     }
 
