@@ -29,7 +29,7 @@ O ensaio usa uma conta Auth confirmada existente e cria apenas fixtures novas de
 
 Configurar claims no SQL Editor testa a autorização do banco; não comprova validação de JWT pela API ou o login OAuth real. Testes de login de uma segunda conta real confirmada sem vínculo, chamadas HTTP anônimas, logout e troca de conta continuam necessários. A limitação compartilhada de requisições e os estados de concorrência da sessão não são implementados por esta correção.
 
-Os scripts foram revisados localmente, mas a execução no PostgreSQL do projeto depende da etapa manual acima. Não apresentar o ensaio como já executado nem um PR mesclado como consulta já instalada.
+O responsável pelo projeto informou a conclusão com sucesso do ensaio transacional com `ROLLBACK` (`005_validate_get_my_church_access.sql`), da instalação autorizada de `public.get_my_church_access()` (`005_get_my_church_access.sql`) e da verificação pós-instalação (`006_verify_get_my_church_access.sql`). Esses resultados constituem evidências informadas pelo responsável, sem constituir nova inspeção direta do Supabase neste incremento. Permanecem pendentes as validações com login OAuth e JWT real no navegador, chamadas sob concorrência e proteções em camada de borda.
 
 ## Evolução aprovada: seleção de contexto de igreja
 
