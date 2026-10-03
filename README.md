@@ -6,7 +6,9 @@ Projeto em definição, com piloto previsto no **Ministério Shalom**, focado em
 
 ## Etapa atual
 
-Documentação de produto consolidada em **30/09/2026**, com regras atualizadas em **02/10/2026**. Estado de implementação registrado neste README em **03/10/2026**: a web tem login Google e consulta autorizada do próprio vínculo, com tela inicial de dados reais. O planejamento e a condução do culto permanecem como **protótipo preservado no código**, sem integração com o banco e sem exposição no fluxo atual. A aplicação ainda não está pronta para produção. A arquitetura, a segurança e a tecnologia do aplicativo Android/iOS permanecem em definição.
+Documentação de produto consolidada em **30/09/2026**, com regras atualizadas em **02/10/2026** e novas decisões de produto aprovadas pelo responsável em **03/10/2026**: criação de nova igreja ("Criar minha igreja") com concessão atômica do primeiro administrador, administração ativa em no máximo uma igreja por conta Auth, proteção de continuidade do último administrador, reutilização de conta entre igrejas com seleção explícita de contexto e exclusão lógica recuperável.
+
+Estado de implementação registrado neste README em **03/10/2026**: a web tem login Google, consulta autorizada do próprio vínculo com tela inicial de dados reais e tela de gestão de membros (listagem paginada e cadastro com apenas o nome, com idempotência e auditoria). O planejamento e a condução do culto permanecem como **protótipo preservado no código**, sem integração com o banco e sem exposição no fluxo atual. A aplicação ainda não está pronta para produção. A arquitetura, a segurança e a tecnologia do aplicativo Android/iOS permanecem em definição.
 
 - [PRD — escopo do MVP, regras e critérios de aceite](docs/PRD.md).
 - [Arquitetura do banco e das permissões — modelo lógico, segurança e pendências](docs/ARQUITETURA-BANCO.md).
@@ -86,7 +88,13 @@ O fluxo de autenticação usa o [Supabase Auth com OAuth do Google](https://supa
 - Recarga: recupera a sessão e consulta o vínculo novamente, sem montar as telas fictícias do protótipo.
 - Revalidação em segundo plano: ao retomar foco na aba ou reconectar à internet, revalida silenciosamente o acesso e atualiza a interface caso haja revogação.
 
-Login sozinho não concede acesso. A consulta exige conta confirmada e elegível, onboarding concluído e vínculo, igreja e membro ativos. O perfil administrativo deriva do vínculo no banco, nunca de e-mail fixo ou metadados editáveis do navegador. Neste incremento, quando há mais de uma igreja autorizada, a tela apresenta somente o primeiro vínculo retornado; a seleção de contexto ainda não foi implementada.
+Login sozinho não concede acesso. A consulta exige conta confirmada e elegível, onboarding concluído e vínculo, igreja e membro ativos. O perfil administrativo deriva do vínculo no banco, nunca de e-mail fixo ou metadados editáveis do navegador.
+
+**Decisões aprovadas de criação de igreja e administração:**
+- **Criação de nova igreja:** Uma conta autenticada, com e-mail confirmado e sem administração ativa de outra igreja, poderá escolher "Criar minha igreja". A conclusão criará atomicamente a igreja, o cadastro de membro do criador, seu vínculo administrativo (`is_admin = true`) e a respectiva auditoria. Criar uma nova igreja não concede acesso a igrejas existentes, e o login isolado continua sem liberar dados. A concessão do primeiro administrador decorre dessa operação controlada no servidor, sem autoconcessão pública de privilégios. Regras de fuso IANA, localização Maps e política de duração (`warn`/`block`) continuam preservadas.
+- **Administração em uma única igreja por conta:** Uma conta Auth pode possuir administração ativa em no máximo uma igreja por vez. Ao deixar essa administração, poderá assumir outra. A regra é garantida no servidor e no banco sob concorrência. Não há criação de papel de "proprietário"; uma igreja pode ter vários administradores, desde que cada conta respeite o limite.
+- **Continuidade administrativa (proteção do último administrador):** O último administrador de uma igreja só poderá deixar a administração após outro administrador elegível assumir. O sucessor também deve respeitar o limite de uma igreja administrada por conta. Nenhuma operação de aplicação (como revogação ou desativação) pode contornar essa trava. O tratamento excepcional de bloqueio/exclusão externa da conta Auth e recuperação por manutenção permanece pendente, sem fluxo automático inventado.
+- **Reutilização da conta e seleção de igreja:** A mesma conta poderá ser administradora na igreja A e possuir acesso básico à igreja B por convite (sem concessão automática de administração ou liderança em B). Uma conta com múltiplos vínculos autorizados deverá escolher explicitamente a igreja consultada; consultas, dados e permissões usam esse contexto. Trocar de igreja deve invalidar consultas antigas e impedir mistura de dados. No incremento atual do código, a tela apresenta o primeiro vínculo retornado até a implementação da interface de seleção.
 
 Google e e-mail/senha continuam sendo os métodos previstos no PRD. A interface de e-mail/senha, confirmação e recuperação ainda precisa ser implementada e testada; SMTP próprio permanece pendente antes do piloto com membros.
 
@@ -94,7 +102,7 @@ Google e e-mail/senha continuam sendo os métodos previstos no PRD. A interface 
 
 Conforme as evidências e os resultados informados pelo responsável nas etapas anteriores, existem seis tabelas internas em `app_private`: `churches`, `members`, `church_access`, `access_invitations`, `access_requests` e `audit_entries`. A estrutura foi criada com RLS e privilégios diretos bloqueados para `anon`, `authenticated` e `service_role`. `app_private` permanece fora da Data API; a exposição automática de novas tabelas foi desligada conforme relato do responsável.
 
-A igreja do piloto e o primeiro membro com vínculo administrativo ativo, onboarding concluído e auditoria de inicialização já foram cadastrados. A consulta `public.get_my_church_access()` foi instalada permanentemente após ensaio com `ROLLBACK` e resultado PASS informado pelo responsável.
+A igreja do piloto (Ministério Shalom) e o primeiro membro com vínculo administrativo ativo, onboarding concluído e auditoria de inicialização foram cadastrados historicamente por procedimento manual de manutenção. Esse procedimento piloto fica diferenciado do novo fluxo aprovado de criação de igreja ("Criar minha igreja"), que ainda será implementado. A consulta `public.get_my_church_access()` foi instalada permanentemente após ensaio com `ROLLBACK` e resultado PASS informado pelo responsável.
 
 Neste incremento, foram preparados os scripts `docs/sql/007_preflight_member_management.sql`, `007_validate_member_management.sql`, `007_member_management.sql` e `008_verify_member_management.sql`, criando a tabela de idempotência `app_private.command_receipts` e os endpoints `public.list_church_members`, `public.create_church_member` e `public.get_create_member_receipt`. A aplicação real no banco requer execução manual autorizada no SQL Editor do Supabase.
 
@@ -104,12 +112,18 @@ Esses registros não equivalem a uma nova inspeção do Supabase. A evidência c
 
 ## Gestão de membros e próximos incrementos
 
-O incremento de **cadastro real de membros na web** está preparado: listagem paginada e criação com apenas o nome por administrador autorizado, com validação de entrada, autorização no servidor, auditoria transacional e proteção contra repetição de comandos e respostas perdidas. Nomes não são únicos (homônimos permitidos) e não há CPF.
+O incremento de **cadastro real de membros na web** está preparado: listagem paginada e criação com apenas o nome por administrador autorizado, com validação de entrada, autorização no servidor, auditoria transacional e proteção contra repetição de comandos e respostas perdidas. Nomes não são únicos (homônimos permitidos) e não há CPF. O e-mail do membro não é obrigatório no cadastro básico; o endereço do destinatário será informado no fluxo de emissão do convite. Cadastros de membros sem conta de login continuam permitidos.
 
 **Decisão sobre exclusão lógica:**
-Ficou decidido pelo responsável que remoções de cadastros na aplicação devem ser lógicas e recuperáveis, preservando identificadores, integridade referencial e histórico de auditoria. O fluxo de produto não deve apagar fisicamente membros da base. A representação física (avaliando sua relação com o `status` `'active'`/`'inactive'` já existente para evitar redundâncias), autorização, efeitos sobre vínculos e escalas, e o fluxo administrativo de recuperação ficam para o próximo incremento. Não foram adicionados `deleted_at` ou comandos de exclusão neste momento.
+Ficou decidido pelo responsável que remoções de cadastros na aplicação devem ser lógicas e recuperáveis, preservando identificadores, integridade referencial e histórico de auditoria. O fluxo de produto não deve apagar fisicamente membros da base. A recuperação exige autorização administrativa e registro de auditoria, e restaurar um membro não restaura automaticamente seu acesso revogado. A remoção lógica não pode contornar a proteção do último administrador. A representação física (avaliando sua relação com o `status` `'active'`/`'inactive'` já existente para evitar redundâncias como `deleted_at`), autorização, efeitos sobre vínculos e escalas, e o fluxo administrativo de recuperação ficam para incremento posterior. Não foram adicionados `deleted_at` ou comandos de exclusão neste momento, e a limpeza de fixtures dos ensaios SQL permanece intocada.
 
 Membro, conta Auth e vínculo de acesso são entidades distintas: o cadastro de membro não cria usuário Auth, não concede acesso e não gera convite. Edição de nome, exclusão lógica, convites de acesso, equipes e planejamento do culto permanecem para incrementos próprios.
+
+**Sequência de trabalho aprovada pelo responsável:**
+1. **Documentação:** Consolidação das regras e critérios de aceite (este incremento).
+2. **Criação de igreja e administração:** Fluxo "Criar minha igreja", criação atômica, limite de 1 igreja administrada por conta Auth e continuidade do último administrador.
+3. **Convites e seleção de igreja:** Emissão de convites informando e-mail do destinatário, resgate seguro, seleção explícita de igreja e isolamento estrito de contexto.
+4. **Exclusão lógica e recuperação:** Remoção lógica recuperável, preservação de integridade, restauro auditado e salvaguarda do último administrador.
 
 O `AppContext` e os perfis simulados continuam preservados para avaliação futura, sem montagem no fluxo real. A existência dessas telas não comprova conformidade integral com o PRD nem autoriza reutilizar suas regras de permissão.
 

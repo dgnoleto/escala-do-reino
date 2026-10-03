@@ -49,17 +49,28 @@ As tabelas de `app_private` permanecem fechadas, fora dos esquemas expostos pela
 
 ---
 
-## 2. Decisão do Responsável: Exclusão Lógica e Histórico
+## 2. Decisão do Responsável: Exclusão Lógica, Cadastro e Histórico
 
-Conforme nova decisão explícita do responsável pelo projeto:
-1. **Decidido:**
-   - Exclusões de cadastros da aplicação devem ser lógicas e recuperáveis, preservando identificadores, integridade referencial e histórico.
-   - O fluxo operacional de produto não deve apagar fisicamente um membro para removê-lo da operação.
-2. **Pendente para o próximo incremento:**
-   - Avaliação da relação com o status `active` / `inactive` já existente na tabela `members`, evitando criar dois mecanismos redundantes (como `deleted_at` concorrendo com `status = 'inactive'`).
-   - Definição da representação física definitiva, autorização, efeitos sobre convites, vínculos de acesso e escalas futuras, além do procedimento administrativo de recuperação.
-   - Não foram adicionados neste incremento `deleted_at`, novos estados ou comandos de exclusão/restauração.
-3. **Distinção de entidades:**
+Conforme decisões explícitas do responsável pelo projeto:
+
+1. **Cadastro de Membros sem E-mail Obrigatório:**
+   - O cadastro básico de membro continua exigindo apenas o nome (`display_name`), sem CPF e sem e-mail obrigatório.
+   - Cadastros de membros sem conta de login continuam plenamente permitidos para compor equipes e escalas.
+   - O e-mail do destinatário será informado posteriormente, apenas no fluxo de emissão do convite de acesso.
+
+2. **Exclusão Lógica e Recuperabilidade:**
+   - Remoções de cadastros pela aplicação devem ser lógicas e recuperáveis, preservando identificadores (`member_id`), histórico e integridade referencial com escalas, ministérios e auditoria.
+   - O fluxo operacional de produto não deve apagar fisicamente um registro para removê-lo da operação.
+   - A recuperação de um cadastro logicamente excluído exige autorização administrativa explícita e registro na auditoria.
+   - Restaurar um membro não restaura automaticamente seu vínculo de acesso anterior (`church_access`).
+   - A exclusão lógica de um membro vinculado à administração **não pode contornar a proteção do último administrador**: o último administrador ativo de uma igreja não pode ser excluído ou desativado sem que outro administrador elegível assuma previamente.
+
+3. **Pendente para o próximo incremento:**
+   - Avaliação da relação com o status `active` / `inactive` já existente na tabela `members`, evitando criar mecanismos redundantes (como `deleted_at` concorrendo com `status = 'inactive'`).
+   - A implementação continua em incremento separado.
+   - A limpeza de fixtures dos ensaios e scripts SQL (`007_validate_member_management.sql`) permanece com rollback/remoção transacional das fixtures de teste e não deve ser alterada.
+
+4. **Distinção de entidades:**
    - Membro, conta Auth e vínculo de acesso são entidades distintas. A exclusão lógica de um membro não apaga contas do Supabase Auth nem restaura automaticamente acessos revogados.
    - Esta decisão de integridade de produto não substitui a política separada de retenção do histórico e logs técnicos.
 

@@ -38,4 +38,14 @@ Configurar claims no SQL Editor testa a autorização do banco; não comprova va
 
 Os scripts foram revisados localmente, mas a execução no PostgreSQL do projeto depende da etapa manual acima. Não apresentar o ensaio como já executado nem um PR mesclado como consulta já instalada.
 
+## Evolução aprovada: seleção de contexto de igreja
+
+Com as decisões de produto aprovadas para suporte a múltiplos vínculos por conta:
+
+1. **Vínculos múltiplos:** uma mesma conta Auth poderá ter vínculos autorizados em mais de uma igreja (ex.: administradora na igreja A e membro com acesso básico na igreja B).
+2. **Seleção explícita de contexto:** a aplicação deverá permitir que o usuário escolha ativamente qual igreja está consultando/operando. A consulta de igrejas disponíveis listará apenas aquelas onde o usuário possui vínculo ativo com onboarding concluído.
+3. **Isolamento estrito:** todas as consultas, listagens, permissões e comandos devem ser avaliados exclusivamente no contexto da igreja selecionada. Ser administrador na igreja A não concede nenhum privilégio de administração ou liderança na igreja B.
+4. **Invalidação de consultas e cache:** ao alternar a igreja ativa, a aplicação deve invalidar imediatamente dados em cache, estados e consultas anteriores, impedindo qualquer mistura acidental de informações entre igrejas distintas.
+5. **Estado da implementação:** a função atual `public.get_my_church_access()` reflete o modelo inicial do piloto. A evolução para suportar seleção explícita de contexto (ou parametrização por `church_id` validada contra os acessos ativos da conta) será desenhada e implementada no incremento de convites e seleção de igreja.
+
 Referências: [funções do banco](https://supabase.com/docs/guides/database/functions), [schemas na API](https://supabase.com/docs/guides/api/using-custom-schemas).

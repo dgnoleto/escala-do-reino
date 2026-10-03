@@ -1,8 +1,8 @@
 # Escala do Reino — schema de aprovação de nome e auditoria
 
-Versão 2 · 2 de outubro de 2026
+Versão 3 · 3 de outubro de 2026
 
-**Situação:** segundo incremento aplicado pelo responsável no Supabase em 02/10/2026. Pré-verificação confirmada por captura; sucesso do ensaio e da criação permanente informado pelo responsável. A captura posterior confirma seis tabelas, RLS, privilégios bloqueados e índice; a FK da última coluna foi confirmada por texto. Complementa o [fluxo de acesso](ACESSO-E-AUDITORIA.md) e o [schema inicial](SCHEMA-ACESSO.md). Não repetir o primeiro script de criação no projeto existente.
+**Situação:** segundo incremento aplicado pelo responsável no Supabase em 02/10/2026. Pré-verificação confirmada por captura; sucesso do ensaio e da criação permanente informado pelo responsável. A captura posterior confirma seis tabelas, RLS, privilégios bloqueados e índice; a FK da última coluna foi confirmada por texto. Complementa o [fluxo de acesso](ACESSO-E-AUDITORIA.md), o [schema inicial](SCHEMA-ACESSO.md) e as decisões de produto de 03/10/2026 (criação atômica de igreja, administração única, continuidade do último admin e exclusão lógica recuperável). Não repetir os scripts de criação no projeto existente.
 
 ## 1. Regras e limites
 
@@ -10,9 +10,11 @@ Versão 2 · 2 de outubro de 2026
 - Um convite pendente por membro; emissão de outro cancela o anterior.
 - Nome diferente aguarda aprovação do admin antes de alterar cadastro ou conceder acesso.
 - Proposta e aprovação antes do vencimento original de 72 horas; sem prorrogação.
-- O responsável pelo projeto confirmou ser o primeiro admin. Nome/e-mail indicados foram guardados apenas no arquivo local de preparação; ainda não há autenticação no aplicativo nem concessão registrada.
+- **Auditoria de criação de igreja e administração:** no piloto (Ministério Shalom), a igreja e o primeiro admin foram inicializados por operador de manutenção (`actor_source = 'maintenance'`). No novo fluxo aprovado de produto ("Criar minha igreja"), a criação atômica da igreja, membro do criador e vínculo administrativo (`is_admin = true`) registra auditoria com `actor_source = 'application'`.
+- **Auditoria de governança e continuidade:** a transferência de administração exige assunção prévia de sucessor elegível (respeitando o limite de 1 igreja administrada por conta Auth); tentativas de desativar ou revogar o último admin ativo são bloqueadas.
+- **Auditoria de exclusão lógica e recuperação:** remoção lógica de membros e sua restauração exigem registro transacional em `audit_entries`. Restaurar membro não restaura acessos revogados.
 
-Este incremento cria somente estrutura fechada, índices e restrições. Não implementa emissão/resgate, aprovação, bootstrap ou endpoints. Alterações de nome, acesso e auditoria só serão liberadas por comandos transacionais autorizados.
+Este incremento criou somente estrutura fechada, índices e restrições. Não implementa emissão/resgate, aprovação, criação de igreja ou endpoints de recuperação. Alterações de nome, acesso e auditoria só serão liberadas por comandos transacionais autorizados.
 
 ## 2. Alterações em `access_invitations`
 

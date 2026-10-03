@@ -10,6 +10,8 @@
 
 **Atualização de canais e regras de planejamento:** 2 de outubro de 2026.
 
+**Atualização de regras de produto (criação de igreja, administração única, continuidade, seleção de contexto e exclusão lógica):** 3 de outubro de 2026.
+
 O [documento de arquitetura do banco e das permissões](ARQUITETURA-BANCO.md) complementa este PRD, sem substituí-lo. As propostas técnicas e pendências nele identificadas não criam novos requisitos de produto por si só.
 
 ## 1. Recorte e precedência
@@ -34,13 +36,53 @@ Há um cadastro único de cada membro por igreja. Uma pessoa pode integrar vári
 
 **Decidido:** ministério e equipe representam o mesmo grupo no piloto, com um único cadastro.
 
-### 3.1 Entrada na igreja
+### 3.1 Entrada na igreja e criação de igreja
 
-**Decidido:** login com Google ou e-mail e senha gerenciada pelo Supabase Auth, com acesso à igreja por convite associado a um membro previamente cadastrado. Fazer login, por si só, não libera dados da igreja. A pessoa não escolhe livremente igreja, equipe ou privilégios e não pode consultar dados de outra igreja sem autorização.
+**Decidido — Login e acesso à igreja:** login com Google ou e-mail e senha gerenciada pelo Supabase Auth. Fazer login, por si só, não libera dados de nenhuma igreja. A pessoa não escolhe livremente igreja, equipe ou privilégios e não pode consultar dados de igreja sem autorização.
 
-Uma pessoa convidada pode não ter função habilitada e ainda assim consultar o cronograma geral. Convite de acesso não é convite para participar de uma escala. **Somente admin pode enviar convites de acesso.** O convite vale 72 horas a partir da emissão, é de uso único e pode ser cancelado pelo admin; após o vencimento, exige nova emissão. Exigir que a conta use o mesmo e-mail confirmado do destinatário. Para usar outro endereço, o admin cancela o convite anterior e emite um novo. Manter um convite pendente por membro: nova emissão cancela o anterior. Associação de identidades e revogação de acesso já concedido ainda precisam de detalhamento.
+**Decidido — Criação de uma nova igreja ("Criar minha igreja"):**
+- Uma conta autenticada, com e-mail confirmado e sem administração ativa em nenhuma outra igreja, poderá escolher a opção "Criar minha igreja".
+- A conclusão dessa operação deverá criar atomicamente: 1) o registro da igreja; 2) o cadastro de membro do criador; 3) o vínculo de acesso administrativo (`church_access` com `is_admin = true` e `status = 'active'`); 4) o registro de auditoria correspondente.
+- Criar uma nova igreja não concede acesso a nenhuma igreja existente. O login isolado continua sem liberar dados de outras igrejas.
+- A concessão do primeiro administrador é consequência direta e exclusiva dessa operação controlada no servidor; não há campo público no cliente para autoconcessão de privilégios.
+- Regras já aprovadas continuam preservadas: localização (endereço e link do Google Maps), fuso horário (identificador IANA válido herdado pelos membros) e política padrão de duração (`warn` ou `block`, confirmando `warn` no piloto).
+- **Registro histórico do piloto:** o primeiro administrador e a igreja do piloto (Ministério Shalom) foram inicializados por procedimento manual de manutenção no banco; esse procedimento fica registrado como histórico e expressamente diferenciado do novo fluxo aprovado de criação de igreja pelo produto, que ainda não foi implementado.
 
-**Decidido:** não coletar CPF. Oferecer Google em destaque e e-mail e senha como alternativa; as credenciais são gerenciadas pelo Supabase Auth, sem armazenar senhas nas tabelas da aplicação. No primeiro acesso autenticado, mostrar o nome do membro já cadastrado pelo admin e permitir confirmá-lo ou informar outro nome. Confirmar o nome cadastrado permite concluir o vínculo autorizado; informar outro nome gera uma solicitação sujeita à aprovação de admin antes de liberar acesso à igreja. A proposta não altera o cadastro imediatamente nem cria outro membro. Na aprovação, atualizar o nome do membro existente com registro de quem aprovou; o solicitante não recebe permissão geral de edição. A aprovação também deve ocorrer antes do vencimento original de 72 horas desde a emissão do convite. Enviar a proposta não reinicia nem estende esse prazo. Se vencer sem aprovação, a solicitação expira sem liberar acesso e exige novo convite.
+**Decidido — Administração em uma única igreja por conta:**
+- Uma conta Auth pode possuir administração ativa em no máximo uma igreja por vez.
+- Depois de deixar formalmente essa administração, a conta poderá assumir a administração de outra igreja.
+- Essa restrição deve ser garantida no servidor e no banco de dados, inclusive sob concorrência.
+- Trata-se de uma restrição estrita por conta do Supabase Auth (`user_id`); não se deve afirmar que ela comprova identidade física de uma pessoa entre contas distintas.
+- Uma igreja pode possuir múltiplos administradores simultâneos, desde que cada conta respeite individualmente o limite de no máximo uma igreja administrada.
+- **Não criar papel de "proprietário":** todos os administradores possuem o papel padrão de administrador, sem criação de hierarquia ou perfil de proprietário.
+
+**Decidido — Continuidade administrativa (proteção do último administrador):**
+- O último administrador ativo de uma igreja só poderá deixar a administração depois que outro administrador elegível assumir.
+- O sucessor indicado também precisa respeitar o limite de no máximo uma igreja administrada por conta.
+- Nenhuma operação da aplicação (como renúncia, revogação de privilégios ou desativação de vínculo/membro) poderá contornar essa proteção.
+- O tratamento de situações excepcionais decorrentes de bloqueio ou exclusão externa da conta no Supabase Auth e a eventual recuperação por operador de manutenção permanecem como pendência de especificação, sem inventar um fluxo automático não autorizado.
+
+**Decidido — Convites e reutilização da conta:**
+- A mesma conta Auth poderá ser administradora na igreja A e possuir vínculo de acesso básico à igreja B por convite.
+- O convite de acesso concede exclusivamente acesso básico de membro à igreja que o emitiu; não concede administração ou liderança automaticamente.
+- O convite deve apontar obrigatoriamente para um membro existente previamente cadastrado naquela igreja e exigir o mesmo e-mail confirmado do destinatário.
+- Encontrar um e-mail previamente registrado na base, isoladamente, não autoriza acesso à igreja.
+- Preservar a validade original de 72 horas desde a emissão, uso único, no máximo um convite pendente por membro, cancelamento do anterior na reemissão e aprovação de nome diferente estritamente dentro do prazo original de 72 horas.
+- Não criar outra conta Auth para cada igreja nem outro membro ao concluir o vínculo de acesso.
+- Um vínculo existente não deve ser duplicado, promovido a administrador ou rebaixado silenciosamente.
+
+**Decidido — E-mail e cadastro de membros:**
+- O cadastro básico de membro na igreja continua exigindo apenas o nome (`display_name`), sem CPF e sem e-mail obrigatório.
+- O e-mail do destinatário será informado no momento da emissão do convite de acesso à igreja pelo administrador.
+- Cadastros de membros sem conta de login continuam permitidos na aplicação.
+
+**Decidido — Seleção da igreja e isolamento de contexto:**
+- Uma conta Auth com múltiplos vínculos de acesso autorizados deverá escolher explicitamente a igreja consultada ao acessar o sistema.
+- Dados, permissões, regras e comandos executados devem utilizar estritamente o contexto da igreja selecionada.
+- Ser administrador na igreja A não concede administração, liderança ou visibilidade de bastidores na igreja B.
+- A troca de igreja deve invalidar consultas e dados antigos em cache e impedir qualquer mistura ou vazamento de informações entre contextos.
+
+**Decidido — Credenciais e recuperação:** não coletar CPF. Oferecer Google em destaque e e-mail e senha como alternativa; as credenciais são gerenciadas pelo Supabase Auth, sem armazenar senhas nas tabelas da aplicação. No primeiro acesso autenticado, mostrar o nome do membro já cadastrado pelo admin e permitir confirmá-lo ou informar outro nome. Confirmar o nome cadastrado permite concluir o vínculo autorizado; informar outro nome gera uma solicitação sujeita à aprovação de admin antes de liberar acesso à igreja. A proposta não altera o cadastro imediatamente nem cria outro membro. Na aprovação, atualizar o nome do membro existente com registro de quem aprovou; o solicitante não recebe permissão geral de edição. A aprovação também deve ocorrer antes do vencimento original de 72 horas desde a emissão do convite. Enviar a proposta não reinicia nem estende esse prazo. Se vencer sem aprovação, a solicitação expira sem liberar acesso e exige novo convite.
 
 Admin da igreja não pode definir ou alterar credenciais de outro usuário. Para e-mail e senha, a pessoa pode solicitar recuperação por e-mail; o admin pode solicitar o envio, sem escolher a nova senha ou obter o link de recuperação. A recuperação da conta Google ocorre no próprio provedor. Apple e Microsoft foram descartados pelo responsável nesta etapa em razão dos custos de configuração avaliados, sem compromisso de implementação futura.
 
@@ -50,7 +92,7 @@ Antes do piloto com membros, configurar e testar o envio de confirmação e recu
 
 | Papel | Responsabilidade |
 | --- | --- |
-| Administrador | Permissão independente para administrar a igreja e seus cadastros na web, enviar convites de acesso e designar/trocar lideranças. Não concede automaticamente controle do culto nem cadastros no mobile. |
+| Administrador | Permissão independente para administrar a igreja e seus cadastros na web, enviar convites de acesso e designar/trocar lideranças. Limitado a no máximo uma igreja ativa por conta Auth. Sujeito à proteção de continuidade (o último admin não pode deixar o papel sem sucessor elegível). Não concede automaticamente controle do culto nem cadastros no mobile. Não existe papel de "proprietário". |
 | Líder da liturgia do evento | Define a sequência principal e coordena sua execução. No MVP, é também o único responsável pelo andamento: inicia, avança, devolve para pendente, cancela a atividade em execução, corrige horários e encerra o culto. Acompanha todos os bastidores do evento. |
 | Líder de equipe/atividade | Organiza e escala sua própria equipe e habilita suas aptidões. Pode realocar pessoas enquanto sua atividade ainda não começou. Depois de iniciada, a substituição fica exclusivamente com o líder da liturgia. Consulta e gerencia os bastidores sob sua responsabilidade, sem controlar o andamento principal. |
 | Membro | Consulta o cronograma macro e, quando escalado, os detalhes da própria participação. Não edita programação, música, tom, link ou cadastros, nem responde convites de participação no MVP. |
@@ -61,7 +103,7 @@ O líder da liturgia não monta inicialmente as equipes dos outros líderes. Sua
 
 **Decidido:** somente admin pode designar e trocar lideranças. A permissão admin é independente e pode ser acumulada com liderança de atividade ou liturgia. São válidos os perfis somente admin, somente líder da liturgia, somente líder de atividade e suas combinações autorizadas. Não exigir liderança de liturgia para tornar um líder de atividade admin.
 
-Ser admin não habilita conduzir um evento no qual a pessoa não foi designada líder da liturgia. **Pendente:** procedimento da transferência durante um culto já iniciado, preservando controle inequívoco por evento e evitando ações concorrentes da liderança anterior e da nova.
+Ser admin não habilita conduzir um evento no qual a pessoa não foi designada líder da liturgia. Uma conta pode administrar no máximo uma igreja por vez; a igreja pode ter múltiplos administradores, sem distinção de propriedade. **Pendente:** procedimento da transferência durante um culto já iniciado, preservando controle inequívoco por evento e evitando ações concorrentes da liderança anterior e da nova.
 
 ### 3.3 Localização e fuso da igreja
 
@@ -223,7 +265,9 @@ Mudanças pertinentes aparecem para os usuários autorizados e geram avisos dent
 
 Ao retirar uma atividade futura da programação, oferecer substituir por outra ou retirar sem substituição, recalculando a previsão do término. Não garantir que o culto terminará antes: etapas posteriores podem exceder suas durações. Retirar atividade futura não é cancelar a execução atual.
 
-**Pendente:** detalhar o fluxo por canal de substituição por outra atividade, sem transformar o mobile em cadastro de atividades novas. A exclusão/desativação de membros, funções ou equipes vinculados a eventos é uma questão diferente; a proposta de desativar preservando histórico ainda requer confirmação.
+**Decidido em 03/10/2026 sobre cadastros de membros:** a remoção de cadastros de membros pela aplicação será lógica e recuperável, preservando identificadores, histórico e referências operacionais, sem exclusão física no banco. A recuperação exige autorização administrativa e auditoria. Restaurar um membro não restaura automaticamente seu acesso. A remoção lógica não pode contornar a proteção do último administrador. A implementação física no banco (avaliando a relação com o status `active`/`inactive` já existente antes de decidir novos campos como `deleted_at`) e os efeitos em escalas futuras ficam para incremento separado.
+
+**Pendente:** detalhar o fluxo por canal de substituição por outra atividade, sem transformar o mobile em cadastro de atividades novas.
 
 ## 9. Oportunidades, músicas e sonoplastia
 
@@ -317,7 +361,7 @@ Cópias de segurança e restauração são assunto separado, a definir na arquit
 
 ## 11. Escopo e exclusões
 
-**No MVP:** acesso por convite com Google ou e-mail e senha; modelo de culto simples; cadastros e planejamento web; aptidões/permissões; escala nominal por líderes; conflitos com sugestões de candidatos habilitados; início/fim previstos e política de duração com alerta ou bloqueio opcional da publicação, preservando rascunhos; cronograma macro, detalhes da própria escala e bastidores; checklist simples; controle manual exclusivo do líder da liturgia por evento; cronômetro regressivo por atividade com excesso; cancelamento por motivo cadastrado; retorno para pendente com reinício integral; registro de intervalos; encerramento manual do culto; ausência/substituição manual; ficha musical simples com observação; avisos internos; histórico de um ano; consulta desatualizada e correção posterior; proteção contra ações duplicadas.
+**No MVP:** acesso por convite com Google ou e-mail e senha; criação de nova igreja ("Criar minha igreja") com concessão atômica de igreja, membro, primeiro admin e auditoria; limite de administração ativa em no máximo uma igreja por conta Auth; continuidade administrativa e proteção do último administrador; reutilização de conta entre igrejas com seleção explícita de contexto; cadastro básico de membros por nome (sem CPF e sem e-mail obrigatório; e-mail no fluxo do convite); remoção lógica e recuperável de membros na aplicação (preservando identificadores, histórico e referências); modelo de culto simples; cadastros e planejamento web; aptidões/permissões; escala nominal por líderes; conflitos com sugestões de candidatos habilitados; início/fim previstos e política de duração com alerta ou bloqueio opcional da publicação, preservando rascunhos; cronograma macro, detalhes da própria escala e bastidores; checklist simples; controle manual exclusivo do líder da liturgia por evento; cronômetro regressivo por atividade com excesso; cancelamento por motivo cadastrado; retorno para pendente com reinício integral; registro de intervalos; encerramento manual do culto; ausência/substituição manual; ficha musical simples com observação; avisos internos; histórico de um ano; consulta desatualizada e correção posterior; proteção contra ações duplicadas.
 
 **Fora do MVP:** participação aberta; disponibilidade autodeclarada; convites de participação, prazos, reservas e confirmação/recusa; pedidos de mudança; chamados automatizados; check-in; compartilhamento externo; dashboards; delegação do andamento aos líderes de atividades; operação completa de retiros/turnos; motor amplo de regras/dependências; edição offline.
 
@@ -383,6 +427,16 @@ Critérios de comportamento esperado, não testes de software já executados. Os
 | M52 | Pessoa informa nome diferente do cadastro existente. | Registra solicitação para análise; não altera o nome nem concede acesso antes da aprovação de admin. |
 | M53 | Admin emite novo convite para membro que já possui convite pendente. | Cancela o convite anterior e mantém somente o novo pendente; o antigo não pode liberar acesso. |
 | M54 | Pessoa envia nome diferente perto do vencimento e admin tenta aprovar no instante do vencimento ou depois. | A solicitação está expirada; não altera o nome nem concede acesso. Nova tentativa exige novo convite, sem renovar o prazo da solicitação anterior. |
+| M55 | Conta autenticada com e-mail confirmado e sem administração ativa seleciona "Criar minha igreja". | Cria atomicamente igreja, cadastro de membro do criador, vínculo administrativo (`is_admin = true`) e auditoria; não libera acesso a igrejas existentes. |
+| M56 | Conta com administração ativa em uma igreja tenta criar nova igreja ou assumir administração de outra igreja. | Bloqueado pelo servidor e pelo banco de dados; uma conta Auth pode possuir administração ativa em no máximo uma igreja por vez. |
+| M57 | Administrador deixa formalmente administração ativa de uma igreja (com outro admin remanescente) e depois assume administração de outra. | Permitido; sem administração ativa anterior, a conta torna-se elegível para nova administração. |
+| M58 | Tentativa de revogar, desativar ou remover o último administrador ativo de uma igreja. | Bloqueado pela aplicação e pelo banco; o último administrador não pode deixar a administração sem que outro administrador elegível assuma previamente. |
+| M59 | Administrador tenta transferir administração ou promover membro cuja conta já administra ativamente outra igreja. | Bloqueado; o sucessor precisa respeitar o limite de no máximo uma igreja administrada por conta Auth. |
+| M60 | Mesma conta é administradora na igreja A e recebe convite para membro cadastrado na igreja B. | Resgate autorizado com mesmo e-mail confirmado, criando vínculo de acesso básico na igreja B, sem conceder administração ou liderança em B e sem afetar a administração em A. |
+| M61 | Conta com múltiplos vínculos autorizados alterna entre igrejas autorizadas. | Exige seleção explícita da igreja consultada; consultas anteriores são invalidadas, permissões e dados utilizam estritamente o contexto selecionado, sem vazamento ou mistura de dados. |
+| M62 | Administrador cadastra novo membro na igreja. | Cadastro realizado com apenas o nome (sem CPF e sem exigir e-mail); cadastros sem conta continuam válidos; e-mail é solicitado apenas no fluxo de emissão do convite. |
+| M63 | Remoção de cadastro de membro solicitada pela aplicação. | Exclusão lógica e recuperável, preservando identificadores, histórico de auditoria e integridade referencial; não remove fisicamente do banco nem contorna a proteção do último administrador. |
+| M64 | Restauração de membro excluído logicamente. | Exige autorização administrativa e gera registro de auditoria; restaurar o membro não restaura automaticamente seus vínculos de acesso revogados. |
 
 ## 13. Avaliação do piloto
 
@@ -396,20 +450,22 @@ Recolher feedback após 2–3 meses de uso do piloto é a orientação acordada,
 
 As regras já fechadas não dependem de rediscussão para serem documentadas. Os pontos abaixo permanecem abertos para as etapas que dependem deles.
 
-| Tema | O que falta fechar |
-| --- | --- |
-| Convite de acesso | Mesmo e-mail confirmado; outro endereço exige cancelar/reemitir; um convite pendente por membro; nome diferente aguarda aprovação do admin sem acesso. Aprovação deve ocorrer dentro das 72 horas originais. Detalhar rejeição/cancelamento de solicitações, revogação de acesso, reativação e associação segura entre Google e e-mail/senha. Validade de 72 horas, uso único, ausência de CPF e senha gerenciada pelo Supabase Auth já estão decididos. |
-| Liderança por evento | Designação/troca é exclusiva de admin. Detalhar a transferência durante evento iniciado, sem dois controles concorrentes. |
-| Checklist | Lideranças operam e cada líder de atividade marca apenas seu âmbito; itens conjuntos exigem duas validações. Detalhar validadores, alcance da liturgia, desmarcação, correções e canal; não reintroduzir bloqueio. |
-| Cadastros vinculados e exclusão lógica | Decidido: remoção de cadastros na aplicação deve ser lógica e recuperável, preservando identificadores, histórico e referências operacionais, sem exclusão física no banco. Pendente para o próximo incremento: representação física, autorização, efeitos sobre vínculos/convites/escalas, fluxo de recuperação e avaliação da relação com o status `active`/`inactive` já existente (evitando mecanismos redundantes como `deleted_at`). Membro, conta Auth e vínculo de acesso são entidades distintas (não excluir contas Auth nem restaurar acessos automaticamente). Retirar atividade da programação já tem regra própria. |
-| Mudanças e conflitos | Resolução quando alteração cria conflito já existente, comunicação/negociação entre líderes e cálculo da programação restante após correções de horários. |
-| Política de duração e publicação | Padrão inicial confirmado: alertar e permitir publicar (`warn`). Definir autoridade para alterar política de evento existente e consulta/edição das revisões em rascunho. Alerta ou bloqueio opcional da publicação, rascunhos permitidos e execução sem encerramento automático já estão decididos. |
-| Serviços paralelos | Início/fim acompanham o culto, sem controle individual. Confirmar representação da preparação prévia planejada nos conflitos, sem cronometrá-la ou criar turnos. |
-| Edição em execução | Fluxo de substituição por outra atividade e reordenação por canal, respeitando ausência de cadastros novos no mobile. |
-| Conexão e correções | Detecção de desatualização, primeira carga sem dados e detalhamento da recuperação de resposta perdida. Correção pela liturgia com histórico, recálculo e rejeição de horários impossíveis já está decidida; detalhar casos de sobreposição entre registros corrigidos. |
-| Histórico e privacidade | Detalhes dos registros de acesso/login, campos mínimos, política de expiração de um ano e acesso administrativo aos dados, sem apagar cadastro/evento por inferência. |
-| Segurança operacional | Plano de cópia/restauração e verificação das permissões de igreja/evento; resolver na arquitetura antes da implementação dependente. |
-| Mobile e arquitetura | Tecnologia ainda não escolhida. Flutter é apenas candidato sugerido; avaliar arquitetura, segurança e desenho após regras. |
+| Tema | O que já está decidido | O que falta fechar |
+| --- | --- | --- |
+| Criação de igreja e administração única | Conta autenticada com e-mail confirmado e sem administração ativa cria nova igreja ("Criar minha igreja") com concessão atômica de igreja, membro, admin e auditoria; limite de 1 igreja administrada por conta Auth; proteção de continuidade do último admin (não pode sair sem sucessor elegível ativo); sem papel de "proprietário". | Interface web do fluxo de criação; tratamento excepcional de bloqueio/exclusão externa da conta no Supabase Auth e recuperação por manutenção (sem fluxo automático inventado). |
+| Convite de acesso e reutilização de conta | Mesmo e-mail confirmado; outro endereço exige cancelar/reemitir; um convite pendente por membro; nome diferente aguarda aprovação do admin sem acesso. Aprovação deve ocorrer dentro das 72 horas originais. Validade de 72 horas, uso único, ausência de CPF e senha gerenciada pelo Supabase Auth. Reutilização da mesma conta Auth para vínculos básicos em múltiplas igrejas. Cadastro de membro com apenas o nome (e-mail informado na emissão do convite). | Rejeição/cancelamento de solicitações de nome, revogação de acesso, reativação e associação segura entre Google e e-mail/senha. |
+| Seleção de igreja e contexto | Seleção explícita da igreja consultada para contas com múltiplos vínculos autorizados; dados, permissões e comandos usam estritamente o contexto selecionado; troca de igreja invalida consultas em cache e impede mistura de dados; admin em A não concede privilégios em B. | Interface web de seleção e alternância de igreja; formato da indicação de contexto ativo na navegação. |
+| Cadastros vinculados e exclusão lógica | Remoção de cadastros na aplicação deve ser lógica e recuperável, preservando identificadores, histórico e referências operacionais, sem exclusão física no banco. Recuperação exige autorização e auditoria. Restaurar membro não restaura automaticamente seus acessos revogados. Remoção lógica não contorna a proteção do último administrador. Limpeza de fixtures de ensaios SQL não é alterada. | Representação física definitiva no banco de dados (avaliando a relação com o status `active`/`inactive` já existente na tabela `members`, evitando mecanismos redundantes como `deleted_at`), autorização operacional, efeitos sobre escalas futuras e tela de recuperação. |
+| Liderança por evento | Designação/troca é exclusiva de admin. | Detalhar a transferência durante evento iniciado, sem dois controles concorrentes. |
+| Checklist | Lideranças operam e cada líder de atividade marca apenas seu âmbito; itens conjuntos exigem duas validações. | Detalhar validadores, alcance da liturgia, desmarcação, correções e canal; não reintroduzir bloqueio. |
+| Mudanças e conflitos | Notificar alterações pertinentes e manter histórico de um ano. | Resolução quando alteração cria conflito já existente, comunicação/negociação entre líderes e cálculo da programação restante após correções de horários. |
+| Política de duração e publicação | Padrão inicial confirmado: alertar e permitir publicar (`warn`). Alerta ou bloqueio opcional da publicação, rascunhos permitidos e execução sem encerramento automático já decididos. | Definir autoridade para alterar política de evento existente e consulta/edição das revisões em rascunho. |
+| Serviços paralelos | Início/fim acompanham o culto, sem controle individual. | Confirmar representação da preparação prévia planejada nos conflitos, sem cronometrá-la ou criar turnos. |
+| Edição em execução | Não duplicar ações por toque repetido; histórico preservado. | Fluxo de substituição por outra atividade e reordenação por canal, respeitando ausência de cadastros novos no mobile. |
+| Conexão e correções | Detecção de desatualização, primeira carga sem dados e detalhamento da recuperação de resposta perdida. Correção pela liturgia com histórico, recálculo e rejeição de horários impossíveis já decididos. | Detalhar casos de sobreposição entre registros corrigidos e reconciliação sob alta latência. |
+| Histórico e privacidade | Retenção de um ano para ações e execuções; sem dados sensíveis em auditoria. | Detalhes dos registros de acesso/login, campos mínimos, política de expiração de um ano e acesso administrativo aos dados, sem apagar cadastro/evento por inferência. |
+| Segurança operacional | SQL parametrizado, RLS e permissões mínimas. | Plano de cópia/restauração e verificação das permissões de igreja/evento; resolver na arquitetura antes da implementação dependente. |
+| Mobile e arquitetura | Web é canal prioritário agora; mobile é posterior, sem painel administrativo. | Tecnologia ainda não escolhida. Flutter é apenas candidato sugerido; avaliar arquitetura, segurança e desenho após regras. |
 
 **Retiradas ou substituições de escopo em 30/09:** participação aberta sai do MVP; visibilidade seletiva por atividade foi descartada, sem backlog de público/privado; o responsável separado pelo andamento foi substituído pelo líder da liturgia de cada evento; notificações externas/compartilhamento ficam futuros; retenção anterior de três meses passa a um ano; retorno não retoma cronômetro anterior.
 
@@ -418,5 +474,11 @@ As regras já fechadas não dependem de rediscussão para serem documentadas. Os
 O responsável pelo projeto não programa e quer apoio de IA com crítica fundamentada. Apontar conflitos de requisitos, permissões, segurança, confiabilidade, arquitetura e design; não tratar resposta ambígua como decisão nem transformar sugestão em escopo.
 
 Validar regras primeiro, depois arquitetura, depois desenho da aplicação e só então implementação incremental verificável. Resolver pendências antes de implementar as partes dependentes, sem criar aprovações para rotinas desnecessárias.
+
+**Sequência de trabalho aprovada pelo responsável:**
+1. **Documentação:** Consolidação das regras e critérios de aceite (este incremento).
+2. **Criação de igreja e administração:** Fluxo "Criar minha igreja", criação atômica, limite de 1 igreja administrada por conta Auth e continuidade do último administrador.
+3. **Convites e seleção de igreja:** Emissão de convites informando e-mail do destinatário, resgate seguro, seleção explícita de igreja e isolamento estrito de contexto.
+4. **Exclusão lógica e recuperação:** Remoção lógica recuperável, preservação de integridade, restauro auditado e salvaguarda do último administrador.
 
 Este PRD preserva os requisitos de produto. O desenho técnico está no [documento de arquitetura do banco e das permissões](ARQUITETURA-BANCO.md), com decisões confirmadas, propostas e pendências identificadas. A existência desses documentos não comprova implementação, implantação ou automação de retomada.

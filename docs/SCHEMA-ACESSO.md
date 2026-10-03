@@ -1,20 +1,26 @@
 # Escala do Reino — schema inicial de igreja e acesso
 
-Versão 5 · 2 de outubro de 2026
+Versão 6 · 3 de outubro de 2026
 
-**Situação:** especificação física com [SQL inicial](sql/001_initial_access_structure.sql) ensaiado no projeto Supabase com `ROLLBACK`. A criação permanente e a consulta posterior foram executadas pelo responsável; as capturas de 02/10/2026 confirmam a estrutura e os privilégios verificados. Complementa o [PRD](PRD.md) e a [arquitetura](ARQUITETURA-BANCO.md). Este primeiro incremento cobre igreja, membro, vínculo e convite; equipes, planejamento e execução serão detalhados nos incrementos seguintes.
+**Situação:** especificação física com [SQL inicial](sql/001_initial_access_structure.sql) ensaiado no projeto Supabase com `ROLLBACK`. A criação permanente e a consulta posterior foram executadas pelo responsável; as capturas de 02/10/2026 confirmam a estrutura e os privilégios verificados. Complementa o [PRD](PRD.md) e a [arquitetura](ARQUITETURA-BANCO.md). Este primeiro incremento cobre igreja, membro, vínculo e convite; equipes, planejamento e execução serão detalhados nos incrementos seguintes. O SQL já aplicado no piloto não deve ser alterado; os novos contratos e restrições aprovados serão introduzidos em incrementos próprios.
 
 ## 1. Regras confirmadas e limites
 
 - Login por Google ou e-mail e senha. Contas, senhas e identidades ficam no Supabase Auth. Apple e Microsoft ficam para evolução posterior.
 - Sem CPF e sem credenciais nas tabelas da aplicação. Recuperação de senha por e-mail via Supabase; admin pode solicitar o envio, mas não define a nova senha nem recebe seu link.
+- **Criação de nova igreja ("Criar minha igreja"):** conta autenticada, com e-mail confirmado e sem administração ativa em outra igreja, pode criar uma nova igreja. Operação atômica no servidor cria a igreja, o cadastro de membro do criador, o vínculo de admin (`is_admin = true`, `status = 'active'`) e a auditoria. Não concede acesso a igrejas existentes nem possui campo público de autoconcessão. O procedimento histórico de inicialização manual de manutenção do piloto (Ministério Shalom) fica preservado como registro histórico e diferenciado deste novo fluxo de produto.
+- **Administração em no máximo uma igreja por conta Auth:** uma conta pode ter administração ativa em no máximo uma igreja por vez. Essa regra deve ser garantida no servidor e no banco de dados sob concorrência (ex.: índice parcial único para `user_id` onde `is_admin = true and status = 'active'`). Ao deixar formalmente uma administração, a conta pode assumir outra. Não há criação de papel de "proprietário"; uma igreja pode ter múltiplos administradores simultâneos.
+- **Continuidade administrativa (proteção do último administrador):** o último administrador ativo de uma igreja não pode deixar a administração ou ter seu acesso revogado/desativado sem que outro administrador elegível assuma previamente. O sucessor também precisa respeitar o limite de 1 igreja administrada.
+- **Reutilização da conta Auth e seleção de contexto:** a mesma conta pode ter vínculos autorizados com igrejas distintas (ex.: admin na igreja A e membro básico na igreja B por convite). Uma conta com múltiplos vínculos escolhe explicitamente a igreja consultada; consultas e comandos atuam no contexto selecionado, e a troca de igreja invalida dados em cache e impede mistura entre contextos.
+- **Cadastro de membros e convites:** o cadastro básico de membros exige apenas o nome (`display_name`), sem CPF e sem e-mail obrigatório; o e-mail do destinatário é informado no fluxo de emissão do convite pelo admin. Membros sem conta de login continuam permitidos.
 - Convite associado a membro existente, válido por 72 horas desde a emissão, de uso único e cancelável pelo admin.
-- Exigir o mesmo e-mail confirmado do destinatário do convite; outro endereço exige cancelamento e nova emissão pelo admin.
+- Exigir o mesmo e-mail confirmado do destinatário do convite; outro endereço exige cancelamento e nova emissão pelo admin. Encontrar um e-mail na base, isoladamente, não concede acesso.
 - No primeiro acesso autenticado, confirmar o nome cadastrado ou propor outro. Nome diferente aguarda aprovação de admin antes de atualizar o membro existente e liberar acesso; não cria outro membro.
 - Manter um convite pendente por membro; nova emissão cancela o anterior.
 - Nome proposto e aprovação do admin precisam ocorrer antes do vencimento original de 72 horas. Sem aprovação a tempo, a solicitação expira sem acesso; precisa de novo convite.
 - Login não libera dados da igreja. O acesso depende de vínculo autorizado e ativo.
-- Um vínculo por conta/igreja e por membro/igreja. Uma conta pode ter vínculos autorizados com igrejas distintas.
+- Um vínculo por conta/igreja e por membro/igreja.
+- **Exclusão lógica recuperável:** remoções de cadastros pela aplicação devem ser lógicas e recuperáveis, preservando identificadores, histórico e referências operacionais. Recuperação exige autorização administrativa e auditoria. Restaurar um membro não restaura automaticamente seus acessos revogados. A remoção não contorna a proteção do último administrador. Avaliar relação com `active`/`inactive` antes de definir novos campos como `deleted_at`. A limpeza de fixtures dos ensaios SQL permanece intocada.
 - Fuso da igreja, sem preferência individual. Nomes técnicos em inglês e texto em UTF-8.
 
 A validade de 72 horas é do convite da aplicação, não um ajuste automático de validade dos tokens OAuth ou dos códigos/links do Supabase Auth (configurados com uma hora nesta etapa).
@@ -79,7 +85,10 @@ Unicidade adicional em `(church_id, id)` suporta referências que conferem a igr
 
 Unicidade em `(church_id, user_id)` e `(church_id, member_id)`, inclusive para vínculos revogados. Recuperação/reativação deve operar o vínculo existente, preservando histórico; não apagar a linha para contornar a unicidade. O fluxo final de recuperação permanece pendente.
 
-Não oferecer cadastro público de admin. Um convite resgatado concede acesso básico, sem liderança ou admin automaticamente.
+**Restrição de administração única e proteção de continuidade:**
+- Cada `user_id` só pode ter no máximo uma linha em `church_access` com `is_admin = true` e `status = 'active'` em todo o banco (garantido no servidor e no banco sob concorrência, por exemplo via índice parcial único em `user_id` filtrado por `is_admin = true and status = 'active'`).
+- Proteção do último administrador: nenhuma operação da aplicação pode revogar, desativar ou remover o último administrador ativo de uma igreja sem que outro administrador elegível assuma previamente. O sucessor também precisa respeitar o limite de 1 igreja administrada.
+- Não oferecer cadastro público de admin. Um convite resgatado concede acesso básico de membro, sem liderança ou admin automaticamente.
 
 ### 3.4 `app_private.access_invitations`
 
@@ -112,12 +121,12 @@ Unicidade do token não garante uso único sozinha. Resgate e criação/reativa�
 
 ## 5. Pontos a fechar antes da migração utilizável
 
-1. Validar no servidor o mesmo e-mail confirmado do destinatário; e-mail divergente exige cancelamento/reemissão. Associação Google/e-mail-senha da mesma pessoa e provedores futuros ainda exigem desenho seguro.
+1. Validar no servidor o mesmo e-mail confirmado do destinatário; e-mail divergente exige cancelamento/reemissão. O e-mail é informado na emissão do convite, e o cadastro básico de membro continua com apenas o nome. Reutilização da mesma conta Auth para vínculos em igrejas distintas e seleção explícita de contexto estão decididas; pendente interface de alternância.
 2. Nome diferente exige proposta separada e aprovação de admin antes de liberar acesso. O prazo de análise já está decidido: respeitar as 72 horas originais, sem prorrogação. Fechar rejeição/cancelamento e comportamento quando o cadastro muda enquanto a solicitação está pendente.
 3. Associação e recuperação entre provedores; CPF, nome igual ou admin isoladamente não comprovam controle das credenciais.
 4. Um convite pendente por membro e cancelamento do anterior na reemissão estão confirmados. Fechar efeitos sobre solicitações de nome já abertas, revogação de acesso e reativação.
-5. Desativação de cadastros utilizados, sem tratar a proposta como decisão já confirmada.
-6. Inicialização do primeiro admin e gravação funcional de auditoria; conferir fuso/local reais do piloto. Política padrão confirmada: `warn` (avisar e permitir publicar).
+5. Exclusão lógica: decidida como lógica e recuperável, preservando integridade, referências, histórico e proteção do último administrador; pendente avaliação da relação entre `active`/`inactive` e representação física no banco antes de novos campos como `deleted_at`. Limpeza de fixtures SQL inalterada.
+6. Criação de nova igreja ("Criar minha igreja"): criação atômica, limite de 1 igreja administrada por conta Auth e proteção de continuidade do último admin decididas; pendente interface web e tratamento de bloqueio externo da conta Auth via manutenção. O procedimento histórico de bootstrap do piloto permanece como registro histórico separado. Política padrão confirmada: `warn` (avisar e permitir publicar).
 
 Essas pendências permitem revisar campos e relações agora, mas não autorizam implementar fluxos ambíguos nem liberar acesso. Na implantação, habilitar/configurar Google e Email, mantendo confirmação de e-mail; Apple, Azure/Microsoft e métodos não aprovados ficam desabilitados. SMTP para membros e testes de confirmação/recuperação são pré-requisitos do piloto. Isso é configuração do Auth, não uma garantia fornecida por estas tabelas.
 
