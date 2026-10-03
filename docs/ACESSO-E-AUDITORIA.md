@@ -7,7 +7,7 @@ Versão 4 · 3 de outubro de 2026
 ## 1. Decisões confirmadas
 
 1. Google ou e-mail/senha gerenciados pelo Supabase Auth; sem CPF.
-2. Cadastro de membro continua exigindo apenas o nome; e-mail é opcional no cadastro e informado no fluxo de emissão do convite.
+2. Cadastro básico de membro coleta apenas o nome (`display_name`), sem CPF. Não há campo de e-mail no formulário atual de cadastro. O e-mail do destinatário será informado na emissão do convite.
 3. Convite vinculado a membro existente, válido por 72 horas desde a emissão, de uso único.
 4. Resgate exige o mesmo e-mail confirmado do destinatário. Encontrar um e-mail na base, isoladamente, não autoriza acesso. Outro endereço exige cancelar/reemitir pelo admin.
 5. Um convite pendente por membro. Nova emissão cancela o anterior.
@@ -19,6 +19,8 @@ Versão 4 · 3 de outubro de 2026
 11. **Continuidade administrativa:** o último administrador ativo de uma igreja só pode deixar a administração depois que outro administrador elegível assumir. Operações de revogação, rebaixamento ou desativação não podem contornar essa trava.
 12. **Reutilização de conta e múltiplos vínculos:** a mesma conta Auth pode ser administradora na igreja A e ter acesso básico à igreja B por convite. A conta com múltiplos vínculos deve escolher explicitamente a igreja consultada no aplicativo. A troca de igreja invalida consultas anteriores e impede mistura de dados.
 13. **Exclusão lógica:** remoção de cadastros pela aplicação é lógica e recuperável, preservando identificadores, histórico e referências. Recuperação exige autorização e auditoria, sem restauração automática de acessos e sem contornar a proteção do último administrador.
+
+**Aviso de implementação:** os novos fluxos de criação de igreja, limite de 1 administração ativa por conta, continuidade administrativa, convites com e-mail, seleção de contexto e exclusão lógica aguardam implementação completa. Suas garantias no servidor e banco de dados (RPCs atômicas, restrições e índices condicionais) também são trabalho futuro em seus respectivos incrementos.
 
 ## 2. Identidade e destinatário
 
@@ -88,20 +90,20 @@ Cada contrato limita entrada, saída e tentativas, verifica o vínculo/admin atu
 
 ## 8. Inicialização e concessão de administração
 
-### 8.1 Registro histórico do piloto (bootstrap manual por manutenção)
+### 8.1 Registro histórico do piloto (procedimento privado de manutenção)
 
-Durante o ensaio piloto inicial (`005_insert_first_admin.sql` e `006_update_first_admin_user_id.sql`), a concessão do primeiro administrador da igreja Ministério Shalom foi realizada mediante intervenção direta controlada de manutenção no banco de dados. O responsável pelo projeto forneceu os dados reais de localização, fuso horário e política de duração (`warn`), além de seu identificador Auth obtido após autenticação prévia.
+Durante o ensaio piloto inicial, a concessão do primeiro administrador da igreja Ministério Shalom foi realizada mediante intervenção privada e controlada de manutenção no banco de dados. O responsável pelo projeto forneceu os dados reais de localização (endereço e Google Maps), fuso horário IANA e política de duração (`warn`), além de seu identificador Auth obtido após autenticação prévia.
 
-Esse procedimento foi estritamente manual e pontual para viabilizar o piloto inicial, com autoria registrada e distinção entre operador de manutenção e conta beneficiada. Esse registro é preservado como histórico técnico de testes e validação de infraestrutura.
+Esse procedimento foi estritamente manual e pontual para viabilizar o piloto inicial, com autoria registrada e distinção entre operador de manutenção e conta beneficiada, sem versionamento de scripts com dados privados no repositório. Esse registro é preservado como histórico técnico de testes e validação de infraestrutura.
 
 ### 8.2 Novo fluxo aprovado: criação de nova igreja ("Criar minha igreja")
 
-Como evolução de produto aprovada (ainda pendente de implementação), a criação de uma nova igreja passará a ser um fluxo de autoatendimento controlado no servidor:
+Como evolução de produto aprovada (ainda pendente de implementação no servidor e no banco de dados), a criação de uma nova igreja passará a ser um fluxo de autoatendimento controlado no servidor:
 
 1. **Requisitos prévios:** o usuário deve estar autenticado via Supabase Auth com e-mail confirmado e não pode possuir administração ativa em nenhuma outra igreja do sistema.
 2. **Operação atômica no servidor:** uma função controlada (RPC ou endpoint seguro de backend) executa em transação única:
-   - Cria o registro em `churches` com nome, slug, localização, fuso IANA e política de duração (`warn` ou `block`).
-   - Cria o registro de membro em `members` com o nome do criador.
+   - Cria o registro em `churches` com nome, endereço, link do Google Maps, fuso IANA e política de duração (`warn` ou `block`).
+   - Cria o registro de membro em `members` com o nome do criador (`display_name`).
    - Cria o vínculo em `church_access` com `is_admin = true`, `status = 'active'` e `onboarding_completed_at = now()`.
    - Grava a entrada correspondente em `audit_entries`.
 3. **Segurança:** o primeiro administrador é consequência dessa operação controlada no servidor; não há campo público no cliente para autoconcessão de privilégios. Criar uma nova igreja não concede acesso a nenhuma igreja pré-existente.
