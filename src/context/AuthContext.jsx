@@ -4,6 +4,9 @@ import {
   determineAuthTransition,
   clearAllMemberCommandStorage,
 } from '../utils/memberCommandService';
+import {
+  clearAllChurchCommandStorage,
+} from '../utils/churchCommandService';
 
 const AuthContext = createContext(null);
 
@@ -51,11 +54,12 @@ export function AuthProvider({ children }) {
   churchAccessRef.current   = churchAccess;
 
   /**
-   * Remove comandos pendentes de membros retidos na sessão para evitar vazamento entre contas.
+   * Remove comandos pendentes de membros e igrejas retidos na sessão para evitar vazamento entre contas.
    */
   const clearMemberCommandStorage = useCallback(() => {
     if (typeof window === 'undefined' || !window.sessionStorage) return;
     clearAllMemberCommandStorage(window.sessionStorage);
+    clearAllChurchCommandStorage(window.sessionStorage);
   }, []);
 
   /**
@@ -75,9 +79,9 @@ export function AuthProvider({ children }) {
    * Consulta o vínculo real da conta autenticada chamando public.get_my_church_access().
    *
    * @param {string} expectedUserId - UID da sessão esperada
-   * @param {object} options - { isBackground: boolean } para revalidação silenciosa em foco/reconexão
+   * @param {object} options - { isBackground: boolean, preferredChurchId: string|null }
    */
-  const fetchChurchAccess = useCallback(async (expectedUserId, { isBackground = false } = {}) => {
+  const fetchChurchAccess = useCallback(async (expectedUserId, { isBackground = false, preferredChurchId = null } = {}) => {
     if (!supabase || !expectedUserId) return;
 
     // Registra a geração da sessão e a sequência desta requisição
@@ -120,9 +124,15 @@ export function AuthProvider({ children }) {
         return;
       }
 
-      // Vínculo confirmado
-      setChurchAccess(data[0]);
-      churchAccessRef.current = data[0];
+      // Vínculo confirmado: se preferredChurchId foi informado, seleciona essa igreja
+      let selectedAccess = data[0];
+      if (preferredChurchId) {
+        const found = data.find((ca) => ca.church_id === preferredChurchId);
+        if (found) selectedAccess = found;
+      }
+
+      setChurchAccess(selectedAccess);
+      churchAccessRef.current = selectedAccess;
       setAuthState('access_granted');
 
     } catch (unexpectedErr) {
@@ -283,6 +293,15 @@ export function AuthProvider({ children }) {
   }
 
   /**
+   * Recarrega o vínculo com suporte a seleção de igreja preferencial (ex.: após criar igreja).
+   */
+  const refreshAccess = useCallback((preferredChurchId = null) => {
+    const uid = currentUserIdRef.current;
+    if (!uid) return;
+    fetchChurchAccess(uid, { isBackground: false, preferredChurchId });
+  }, [fetchChurchAccess]);
+
+  /**
    * Inicia o fluxo OAuth com o Google.
    */
   async function signInWithGoogle() {
@@ -350,6 +369,7 @@ export function AuthProvider({ children }) {
         signInWithGoogle,
         signOut,
         retryAccessCheck,
+        refreshAccess,
         isConfigured: isSupabaseConfigured(),
       }}
     >

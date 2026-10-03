@@ -1,6 +1,8 @@
 import React, { useState } from 'react';
 import { useAuth } from '../context/AuthContext';
 import MembersPage from './MembersPage';
+import CreateChurchModal from './CreateChurchModal';
+import { Church, PlusCircle, ShieldAlert } from 'lucide-react';
 
 /**
  * ChurchHomePage — tela inicial para contas com vínculo confirmado.
@@ -12,6 +14,10 @@ import MembersPage from './MembersPage';
  *
  * Se for Administrador:
  *   - Oferece acesso à tela de Gestão de Membros (cadastro e listagem paginada).
+ *   - Explica o impedimento do limite de administração ativa única por conta.
+ *
+ * Se for Membro (acesso básico):
+ *   - Oferece a opção "Criar minha igreja" para iniciar sua própria comunidade.
  *
  * Não exibe UUIDs, tokens, e-mails ou qualquer identificador técnico.
  * Não monta AppProvider nem acessa dados fictícios do protótipo.
@@ -19,8 +25,9 @@ import MembersPage from './MembersPage';
  * Acessibilidade: foco inicial no título, regiões semânticas, rótulos descritivos.
  */
 export default function ChurchHomePage() {
-  const { churchAccess, signOut } = useAuth();
+  const { churchAccess, signOut, refreshAccess } = useAuth();
   const [currentView, setCurrentView] = useState('home');
+  const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
 
   // Campos provêm exclusivamente do retorno da função RPC autenticada.
   const displayName = churchAccess?.display_name ?? '';
@@ -116,6 +123,43 @@ export default function ChurchHomePage() {
           </div>
         )}
 
+        {/* Aviso de limite de administração para Administrador */}
+        {isAdmin && (
+          <div className="church-home-admin-limit-notice" role="note">
+            <ShieldAlert size={16} className="church-home-admin-limit-icon" aria-hidden="true" />
+            <span>
+              Sua conta já administra ativamente esta igreja. Pelas regras de governança, uma conta pode administrar no máximo uma igreja por vez.
+            </span>
+          </div>
+        )}
+
+        {/* Bloco Criar Minha Igreja para contas com apenas acesso básico de membro */}
+        {!isAdmin && (
+          <div className="church-home-create-section">
+            <div className="church-home-create-box">
+              <div className="church-home-create-icon" aria-hidden="true">
+                <Church size={20} />
+              </div>
+              <div className="church-home-create-info">
+                <span className="church-home-create-title">Quer iniciar sua comunidade?</span>
+                <span className="church-home-create-desc">
+                  Cadastre sua própria igreja e torne-se o administrador responsável por ela.
+                </span>
+              </div>
+            </div>
+            <button
+              id="btn-goto-create-church"
+              className="btn btn-secondary church-home-create-btn"
+              onClick={() => setIsCreateModalOpen(true)}
+              type="button"
+              aria-label="Criar minha igreja"
+            >
+              <PlusCircle size={15} />
+              Criar minha igreja
+            </button>
+          </div>
+        )}
+
         {/* Aviso de estado — funcionalidades futuras */}
         <div className="church-home-notice" role="note">
           <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor"
@@ -148,6 +192,18 @@ export default function ChurchHomePage() {
           Sair
         </button>
       </div>
+
+      {/* Modal Criar Minha Igreja */}
+      <CreateChurchModal
+        isOpen={isCreateModalOpen}
+        onClose={() => setIsCreateModalOpen(false)}
+        onSuccess={(createdChurch) => {
+          setIsCreateModalOpen(false);
+          if (createdChurch?.church_id && refreshAccess) {
+            refreshAccess(createdChurch.church_id);
+          }
+        }}
+      />
 
       <style>{`
         .church-home-page {
@@ -337,6 +393,84 @@ export default function ChurchHomePage() {
         .church-home-admin-btn {
           width: 100%;
           justify-content: center;
+          font-weight: 700;
+        }
+
+        /* Aviso de limite de administração para admin */
+        .church-home-admin-limit-notice {
+          display: flex;
+          align-items: flex-start;
+          gap: 10px;
+          padding: 12px 14px;
+          background: var(--status-pending-bg);
+          border: 1px solid var(--status-pending-border);
+          border-radius: var(--radius-md);
+          width: 100%;
+          margin-bottom: 20px;
+          font-size: 12px;
+          color: var(--status-pending-text);
+          line-height: 1.45;
+        }
+
+        .church-home-admin-limit-icon {
+          flex-shrink: 0;
+          margin-top: 1px;
+        }
+
+        /* Bloco de criar igreja para membro com acesso básico */
+        .church-home-create-section {
+          width: 100%;
+          background: var(--bg-surface);
+          border: 1px solid var(--border-subtle);
+          border-radius: var(--radius-lg);
+          padding: 16px;
+          margin-bottom: 20px;
+          display: flex;
+          flex-direction: column;
+          gap: 12px;
+        }
+
+        .church-home-create-box {
+          display: flex;
+          align-items: flex-start;
+          gap: 12px;
+        }
+
+        .church-home-create-icon {
+          width: 36px;
+          height: 36px;
+          border-radius: var(--radius-md);
+          background: var(--primary-surface);
+          border: 1px solid var(--primary-border);
+          color: var(--primary);
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          flex-shrink: 0;
+        }
+
+        .church-home-create-info {
+          display: flex;
+          flex-direction: column;
+          gap: 2px;
+        }
+
+        .church-home-create-title {
+          font-size: 14px;
+          font-weight: 700;
+          color: var(--text-primary);
+        }
+
+        .church-home-create-desc {
+          font-size: 12px;
+          color: var(--text-secondary);
+          line-height: 1.4;
+        }
+
+        .church-home-create-btn {
+          width: 100%;
+          justify-content: center;
+          gap: 6px;
           font-weight: 700;
         }
 
