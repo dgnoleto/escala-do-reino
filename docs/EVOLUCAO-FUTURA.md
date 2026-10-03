@@ -1,8 +1,8 @@
 # Evolução futura — Escala do Reino
 
-**Consolidação:** 30/09/2026. **Todo este documento está fora do MVP.**
+**Consolidação:** 30/09/2026, com atualizações de governança em 03/10/2026.
 
-O [PRD](PRD.md) define o recorte ativo: líderes operam, membros consultam, substituições são combinadas fora do aplicativo. As decisões abaixo preservam a visão e o desenho anterior para avaliação futura; não devem ser reintroduzidas automaticamente na primeira versão.
+As **seções 1 a 9** deste documento descrevem visões e desenhos de produto que estão **fora do escopo do MVP**. O [PRD](PRD.md) define o recorte ativo do MVP: líderes operam, membros consultam, substituições são combinadas fora do aplicativo. As seções 10 a 12 consolidam o descarte definitivo de provedores, a decisão de exclusão lógica recuperável (etapa 4 do MVP) e a sequência oficial de governança acordada com o responsável.
 
 **Decidido para evolução** preserva uma regra já expressa, sem prometer entrega. **Proposto** requer confirmação. **Pendente** requer detalhamento. Não há datas de lançamento ou tecnologia escolhida.
 
@@ -139,13 +139,24 @@ Em cursos online, poderá fazer sentido permitir ao participante escolher um fus
 
 Não há compromisso de entrega, prioridade ou desenho aprovado desses módulos. Pagamentos, integrações, permissões e estrutura de dados serão definidos quando cada módulo for avaliado, sem antecipar sua implementação no MVP.
 
-## 10. Provedores de login (descarte de Apple e Microsoft)
+## 10. Provedores de login (descarte definitivo de Apple e Microsoft)
 
-**Decisão do responsável em 03/10/2026:** Apple e Microsoft foram descartados nesta etapa do projeto e **não** constituem entrega futura comprometida. O MVP mantém previstos Google e e-mail/senha gerenciados pelo Supabase Auth (estando apenas Google ativo na interface neste momento).
+**Decisão do responsável em 03/10/2026:** Apple e Microsoft foram descartados nesta etapa do projeto pelo responsável em razão dos custos de configuração avaliados e **não** constituem entrega futura comprometida, sem qualquer compromisso de implementação posterior. O MVP mantém previstos Google e e-mail/senha gerenciados pelo Supabase Auth (estando apenas Google ativo na interface neste momento).
 
-## 11. Exclusão lógica e recuperação de cadastros
+## 11. Exclusão lógica e recuperação de cadastros (Etapa 4 do MVP)
 
 **Decisão do responsável em 03/10/2026:**
-- **Decidido:** Exclusões de cadastros da aplicação devem ser lógicas e recuperáveis, preservando identificadores, referências e integridade histórica. O fluxo de produto não deve apagar fisicamente registros para removê-los da operação. Membro, conta Auth e vínculo de acesso são entidades distintas; exclusões lógicas de membros não excluem contas Auth nem implicam restauração automática de acesso. Esta decisão não substitui a política separada de retenção de histórico e registros técnicos.
-- **Pendente para o próximo incremento:** Definição da representação física no banco de dados, autorização operacional, efeitos da exclusão em vínculos, convites e escalas, adaptação de consultas e especificação do procedimento de recuperação. Deve-se avaliar no próximo incremento a relação direta com a coluna de status `active`/`inactive` já existente na tabela `app_private.members`, evitando criar dois mecanismos concorrentes ou redundantes (como `deleted_at` ou status adicionais, que não foram introduzidos neste incremento).
+- **Decidido:** Exclusões de cadastros da aplicação devem ser lógicas e recuperáveis, preservando identificadores (`member_id`), referências e integridade histórica (escalas, ministérios, auditoria). O fluxo de produto não deve apagar fisicamente registros para removê-los da operação. Membro, conta Auth e vínculo de acesso são entidades distintas; exclusões lógicas de membros não excluem contas Auth nem implicam restauração automática de acesso. A recuperação de cadastros excluídos logicamente exige autorização explícita e auditoria. A exclusão de um membro vinculado à administração não pode contornar a proteção do último administrador da igreja. Esta decisão não substitui a política separada de retenção de histórico e registros técnicos, nem afeta a limpeza transacional de fixtures dos ensaios SQL.
+- **Pendente para a etapa 4 da sequência de governança:** Definição da representação física no banco de dados, autorização operacional, efeitos da exclusão em vínculos, convites e escalas, adaptação de consultas e especificação do procedimento de recuperação. Deve-se avaliar nessa etapa a relação direta com a coluna de status `active`/`inactive` já existente na tabela `app_private.members`, evitando criar dois mecanismos concorrentes ou redundantes (como `deleted_at` ou status adicionais, que não foram introduzidos neste incremento).
+
+## 12. Sequência de governança e próximos incrementos
+
+A sequência oficial de desenvolvimento aprovada pelo responsável é rigorosamente:
+
+1. **Documentação e alinhamento de requisitos (etapa atual):** consolidação das regras de criação de igreja, administração única por conta, continuidade administrativa, convites, seleção de contexto e exclusão lógica em todos os documentos técnicos e funcionais do projeto.
+2. **Criação de igreja e administração:** implementação do fluxo "Criar minha igreja" controlado no servidor (criação atômica de igreja, membro do criador, vínculo de admin e auditoria), imposição sistêmica de no máximo 1 igreja administrada por conta Auth (no servidor e banco com tratamento de concorrência) e regra de continuidade administrativa (o último administrador não pode deixar o posto sem sucessor elegível ativo).
+3. **Convites e seleção de contexto de igreja:** fluxo de emissão de convite com e-mail informado no momento do envio, resgate e aprovação com mesmo e-mail confirmado, suporte a múltiplos vínculos por conta Auth, seletor de igreja ativa com isolamento estrito de permissões/dados e invalidação automática de cache na troca de contexto.
+4. **Exclusão lógica e recuperação:** avaliação técnica entre `active`/`inactive` e `deleted_at`, implementação de remoção lógica preservando chaves e integridade, fluxo auditado de recuperação e validação de que remoções não contornam a trava do último administrador.
+
+Todos os fluxos das etapas 2, 3 e 4 aguardam implementação em seus respectivos incrementos; suas garantias no servidor e no banco de dados também são trabalho futuro, não se limitando à interface.
 

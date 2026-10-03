@@ -49,48 +49,43 @@ As tabelas de `app_private` permanecem fechadas, fora dos esquemas expostos pela
 
 ---
 
-## 2. Decisão do Responsável: Exclusão Lógica e Histórico
+## 2. Decisão do Responsável: Exclusão Lógica, Cadastro e Histórico
 
-Conforme nova decisão explícita do responsável pelo projeto:
-1. **Decidido:**
-   - Exclusões de cadastros da aplicação devem ser lógicas e recuperáveis, preservando identificadores, integridade referencial e histórico.
-   - O fluxo operacional de produto não deve apagar fisicamente um membro para removê-lo da operação.
-2. **Pendente para o próximo incremento:**
-   - Avaliação da relação com o status `active` / `inactive` já existente na tabela `members`, evitando criar dois mecanismos redundantes (como `deleted_at` concorrendo com `status = 'inactive'`).
-   - Definição da representação física definitiva, autorização, efeitos sobre convites, vínculos de acesso e escalas futuras, além do procedimento administrativo de recuperação.
-   - Não foram adicionados neste incremento `deleted_at`, novos estados ou comandos de exclusão/restauração.
-3. **Distinção de entidades:**
+Conforme decisões explícitas do responsável pelo projeto:
+
+1. **Cadastro de Membros apenas por Nome:**
+   - O cadastro básico de membro coleta **apenas o nome** (`display_name`), sem CPF. O formulário atual de cadastro não possui campo de e-mail (nem obrigatório, nem opcional).
+   - Cadastros de membros sem conta de login continuam plenamente permitidos para compor equipes e escalas.
+   - O e-mail do destinatário será informado posteriormente, apenas no fluxo de emissão do convite de acesso à igreja.
+
+2. **Exclusão Lógica e Recuperabilidade:**
+   - Remoções de cadastros pela aplicação devem ser lógicas e recuperáveis, preservando identificadores (`member_id`), histórico e integridade referencial com escalas, ministérios e auditoria.
+   - O fluxo operacional de produto não deve apagar fisicamente um registro para removê-lo da operação.
+   - A recuperação de um cadastro logicamente excluído exige autorização administrativa explícita e registro na auditoria.
+   - Restaurar um membro não restaura automaticamente seu vínculo de acesso anterior (`church_access`).
+   - A exclusão lógica de um membro vinculado à administração **não pode contornar a proteção do último administrador**: o último administrador ativo de uma igreja não pode ser excluído ou desativado sem que outro administrador elegível assuma previamente.
+
+3. **Pendente para o incremento de exclusão lógica (etapa 4 da governança):**
+   - Avaliação da relação com o status `active` / `inactive` já existente na tabela `members`, evitando criar mecanismos redundantes (como `deleted_at` concorrendo com `status = 'inactive'`).
+   - A implementação continua em incremento separado (etapa 4 oficial, após criação de igreja e convites).
+   - A limpeza de fixtures dos ensaios e scripts SQL (`007_validate_member_management.sql`) permanece com rollback/remoção transacional das fixtures de teste e não deve ser alterada.
+
+4. **Distinção de entidades:**
    - Membro, conta Auth e vínculo de acesso são entidades distintas. A exclusão lógica de um membro não apaga contas do Supabase Auth nem restaura automaticamente acessos revogados.
    - Esta decisão de integridade de produto não substitui a política separada de retenção do histórico e logs técnicos.
 
 ---
 
-## 3. Aplicação Manual dos Scripts SQL
+## 3. Registro da Aplicação dos Scripts SQL (Etapa Concluída)
 
-Os scripts em `docs/sql/` são preparados para execução manual no SQL Editor do projeto Supabase. Merge de código ou commits no Git não aplicam alterações no banco de dados. A execução manual depende de autorização expressa do responsável.
+Conforme informado pelo responsável pelo projeto, a aplicação dos scripts em `docs/sql/` para gestão de membros foi realizada e concluída no SQL Editor do projeto Supabase:
 
-### Sequência única de validação manual:
+1. **Pré-verificação somente leitura (`007_preflight_member_management.sql`):** concluída com todas as colunas retornando `true`.
+2. **Ensaio transacional com ROLLBACK (`007_validate_member_management.sql`):** concluído com resultado `PASS: ensaio concluído; nenhuma alteração persistida.`, validando atomicidade, bloqueio de contas inelegíveis, preservação de replay e limite técnico de taxa.
+3. **Criação permanente com COMMIT (`007_member_management.sql`):** instalação autorizada e executada com sucesso, criando a tabela `app_private.command_receipts`, as funções RPC em `public` (`list_church_members`, `create_church_member`, `get_create_member_receipt`), permissões de execução e notificação ao PostgREST.
+4. **Verificação posterior somente leitura (`008_verify_member_management.sql`):** concluída com todas as asserções retornando `true` (incluindo `statement_timeout = 5s`).
 
-1. **Pré-verificação somente leitura:**
-   - Executar inteiro `docs/sql/007_preflight_member_management.sql`.
-   - Exigir que todas as colunas retornem `true`. Se alguma for `false`, parar e revisar.
-
-2. **Ensaio transacional com ROLLBACK:**
-   - Executar inteiro `docs/sql/007_validate_member_management.sql`.
-   - O script cria fixtures temporárias sob papel de manutenção, executa chamadas RPC como `authenticated` com JWT claims simuladas, valida atomicidade (inclusive falha intencional de auditoria revertendo membro e recibo), valida bloqueio de contas inelegíveis, valida limite técnico de taxa com replay preservado, e encerra com `ROLLBACK`.
-   - **Instrução obrigatória de conferência:** Conferir ausência de qualquer erro nas asserções durante o bloco e exigir a linha final: `PASS: ensaio concluído; nenhuma alteração persistida.`
-   - O encerramento confere a ausência dos objetos temporários e das fixtures de ensaio (`Igreja Ensaio A`, `Igreja Ensaio B`), sem exigir ausência de membros ou igrejas preexistentes no banco.
-
-3. **Criação permanente com COMMIT:**
-   - Somente após o ensaio anterior retornar `PASS` e mediante autorização explícita do responsável, executar inteiro `docs/sql/007_member_management.sql`.
-   - O script cria a tabela `app_private.command_receipts`, as funções RPC em `public`, configura permissões e notifica o PostgREST para recarregar o schema.
-
-4. **Verificação posterior somente leitura:**
-   - Executar inteiro `docs/sql/008_verify_member_management.sql`.
-   - Exigir que todas as colunas retornem `true` (incluindo a configuração `statement_timeout=5s`).
-
-5. **Testes no aplicativo web:**
-   - Conferir listagem paginada (sem busca) e cadastro de membros na interface, validação de nomes acentuados, preservação de comando pendente em recarga/oscilação e reconciliação.
+**Estado atual informado:** o banco contempla **sete tabelas internas** em `app_private` e **quatro funções RPC** em `public` acessíveis pela Data API com o papel `authenticated`. Não repetir os scripts de instalação já concluídos (001 a 008). Esses resultados são registrados como evidências informadas pelo responsável, sem constituir nova inspeção direta do Supabase neste incremento.
 
 ---
 
@@ -103,30 +98,16 @@ Os scripts em `docs/sql/` são preparados para execução manual no SQL Editor d
   - Executam diretamente as funções compartilhadas de produção importadas de `src/utils/memberCommandService.js` (utilizadas por `MembersPage.jsx` e `AuthContext.jsx`):
     - `validateAndNormalizeMemberName`: validação e normalização Unicode NFC (acentos, apóstrofos, limites de 1-120 caracteres, rejeição de vazios).
     - `savePendingMemberCommand`, `loadPendingMemberCommand`, `removePendingMemberCommand`: isolamento por usuário e igreja no `sessionStorage`.
-    - `dispatchMemberCreation`: ciclo completo de despacho, comprovação de que a persistência do comando no storage é verificada antes do envio (cancelando a RPC se falhar) e validação direta de 6 cenários com respostas controladas da RPC:
-      1. *Sucesso:* o comando está salvo antes da chamada e é removido somente após confirmação válida.
-      2. *Falha de transporte retornada em error:* o comando permanece com o mesmo identificador e parâmetros.
-      3. *Exceção durante a chamada:* a identidade também permanece preservada.
-      4. *Resposta vazia ou inválida:* não apresenta sucesso nem libera uma nova identidade.
-      5. *Rejeição definitiva da criação:* encerra o comando conforme o contrato.
-      6. *Nova execução do comando incerto:* envia exatamente o mesmo `commandId`, igreja e nome normalizado.
-    - `determineAuthTransition`: diferenciação entre restauração inicial da mesma conta (preservando o comando salvo) e “troca efetiva de conta” / logout (limpando o storage com `clearAllMemberCommandStorage`). A “troca efetiva de conta” é uma classificação interna do aplicativo para isolamento de dados no cliente.
+    - `dispatchMemberCreation`: ciclo completo de despacho, comprovação de que a persistência do comando no storage é verificada antes do envio (cancelando a RPC se falhar) e validação direta de 6 cenários com respostas controladas da RPC.
+    - `determineAuthTransition`: diferenciação entre restauração inicial da mesma conta (preservando o comando salvo) e “troca efetiva de conta” / logout (limpando o storage com `clearAllMemberCommandStorage`).
     - `isDefinitiveServerError` e `isUncertainResponse`: classificação de erros definitivos vs incertos (transporte, timeouts, 5xx, payloads inválidos).
     - `classifyReceiptCheckResult`: garantia de que consultas vazias ou falhas de rede/servidor na checagem de recibo não descartam o comando pendente, preservando-o para reexecução com a mesma chave.
-    - `applyMemberListTransition`, `getMemberListViewState`, `formatListErrorMessage`, `createListRequestCoordinator`: coordenação dos estados de listagem e proteção contra concorrência via sequência estritamente monotônica sem reutilização de identificadores após `reset()` (garantindo que respostas iniciadas antes de reset jamais voltem a ser atuais, mesmo após novas consultas).
-  - Resultado: **33 testes automatizados** distribuídos em **6 suítes**, executados e aprovados com 100% de sucesso via Node.js nativo (`npm test`).
-  - Cobertura real medida no módulo `memberCommandService.js`: **94,40% de linhas**, **79,75% de ramificações** e **100% de funções**. As ramificações não cobertas correspondem a salvaguardas defensivas de parâmetros e fallbacks de ambiente (como detecção de `window.crypto` e tratamento de erros inesperados de chaveamento). Não foi buscada cobertura de 100% de forma artificial nem adicionada biblioteca externa.
-  - Compilação de produção Vite (`npm run build`) concluída com sucesso (0 erros, 0 avisos).
+    - `applyMemberListTransition`, `getMemberListViewState`, `formatListErrorMessage`, `createListRequestCoordinator`: coordenação dos estados de listagem e proteção contra concorrência via sequência estritamente monotônica sem reutilização de identificadores após `reset()`.
+  - Resultado: **33 testes automatizados** distribuídos em **6 suítes**, executados e aprovados com 100% de sucesso via Node.js nativo (`npm.cmd test`). Constituem evidência dos testes automatizados existentes para o ciclo de cliente, sem alegar cobertura integral do aplicativo ou prova de concorrência massiva no banco.
 
-- **Analisado estaticamente:**
-  - Correção da sintaxe `pg_catalog.normalize(p_display_name, 'NFC')`.
-  - Configuração de `statement_timeout = '5s'` em `pg_proc.proconfig`.
-  - Isolamento de papéis e simulação de revogação válida em `007_validate_member_management.sql`.
-  - Não alegar execução em PostgreSQL quando houver apenas análise estática.
-
-- **Evidências no navegador e validações pendentes:**
-  - **Teste manual realizado no navegador:** confirmou a recuperação da listagem de membros após restabelecimento da conexão (os 4 registros foram exibidos com sucesso após a reconexão e atualização da tela).
-  - **Limitação / Pendência de ensaio no navegador:** o estado de resposta incerta da criação de membro (interrupção física durante a chamada RPC `create_church_member` com retenção do comando pendente no `sessionStorage` e acionamento manual da reconciliação de recibo) ainda não foi exercitado no navegador real.
-  - Execução manual autorizada dos scripts SQL no Supabase SQL Editor (`007_preflight`, `007_validate`, `007_member_management`, `008_verify`).
-  - Comprovação operacional de cancelamento por timeout de 5 segundos via API HTTP sob transações lentas.
-  - Concorrência massiva real com conexões simultâneas disputando o advisory lock transacional `pg_advisory_xact_lock`.
+- **Evidências confirmadas pelo responsável no navegador e validações pendentes:**
+  - **Evidências confirmadas:** o responsável confirmou no navegador o funcionamento do cadastro e da listagem de membros, a preservação dos quatro membros na tela durante interrupção de conexão e a retirada do aviso após o restabelecimento da rede.
+  - **Validações pendentes:**
+    - O estado de resposta incerta durante a criação no navegador (interrupção física durante a chamada RPC `create_church_member` com retenção do comando pendente no `sessionStorage` e acionamento da reconciliação de recibo) ainda não foi exercitado no navegador real.
+    - Comprovação operacional de cancelamento por timeout de 5 segundos via API HTTP sob transações lentas.
+    - Concorrência massiva real entre múltiplas conexões simultâneas disputando o bloqueio consultivo transacional `pg_advisory_xact_lock`.
