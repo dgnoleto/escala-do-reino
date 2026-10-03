@@ -16,6 +16,18 @@ import {
   STORAGE_KEY_PREFIX,
 } from '../src/utils/churchCommandService.js';
 
+function createMockStorage() {
+  const map = new Map();
+  return {
+    getItem(k) { return map.get(k) || null; },
+    setItem(k, v) { map.set(k, String(v)); },
+    removeItem(k) { map.delete(k); },
+    clear() { map.clear(); },
+    get length() { return map.size; },
+    key(i) { return Array.from(map.keys())[i] || null; },
+  };
+}
+
 describe('1. Validação de Entrada e Normalização Unicode NFC no Cliente', () => {
   it('normaliza caracteres decompostos (NFD) para a forma canônica pré-composta (NFC)', () => {
     // Letra 'e' + combining acute accent (U+0301) decomposta
@@ -178,18 +190,6 @@ describe('2. Classificação de Erros: Rejeições Definitivas vs Respostas Ince
 });
 
 describe('3. Ciclo de Comando, Idempotência e Retenção no Storage de Sessão', () => {
-  function createMockStorage() {
-    const map = new Map();
-    return {
-      getItem(k) { return map.get(k) || null; },
-      setItem(k, v) { map.set(k, String(v)); },
-      removeItem(k) { map.delete(k); },
-      clear() { map.clear(); },
-      get length() { return map.size; },
-      key(i) { return Array.from(map.keys())[i] || null; },
-    };
-  }
-
   it('salva e recupera comando pendente no storage de sessão com isolamento por usuário', () => {
     const storage = createMockStorage();
     const userId1 = 'user-111';
@@ -444,3 +444,206 @@ describe('5. Ciclo de Envio com dispatchChurchCreation e Recuperação de Recibo
     assert.equal(resultError.shouldRetainCommand, true);
   });
 });
+
+describe('6. Testes de Regressão — Casos Reproduzidos pelo Codex e Contratos de Produção', () => {
+  it('Regressão Codex 1: resposta data=[{}] NÃO é classificada como SUCCESS, retorna UNCERTAIN e retém comando', async () => {
+    const storage = createMockStorage();
+    const userId = 'user-codex-1';
+
+    const mockSupabase = {
+      schema() {
+        return {
+          rpc() {
+            // Reprodução: RPC retorna status 200 / data=[{}] sem os campos essenciais
+            return Promise.resolve({
+              data: [{}],
+              error: null,
+            });
+          },
+        };
+      },
+    };
+
+    const res = await dispatchChurchCreation({
+      supabaseClient: mockSupabase,
+      storage,
+      userId,
+      churchData: {
+        name: 'Igreja Codex 1',
+        creatorName: 'Pastor Teste',
+        timezone: 'America/Sao_Paulo',
+      },
+    });
+
+    assert.notEqual(res.status, 'SUCCESS');
+    assert.equal(res.status, 'UNCERTAIN');
+    // O comando NÃO pode ter sido apagado do storage
+    const retained = loadPendingChurchCommand(storage, userId);
+    assert.ok(retained);
+    assert.equal(retained.commandId, res.commandId);
+  });
+
+  it('Regressão Codex 2: retentativa de envio usa integralmente os parâmetros persistidos, NÃO o formulário editado', async () => {
+    const storage = createMockStorage();
+    const userId = 'user-codex-2';
+    const persistedCommandId = 'cmd-persisted-xyz-123';
+
+    // Salva comando pendente original no storage
+    savePendingChurchCommand(storage, userId, {
+      commandId: persistedCommandId,
+      userId,
+      churchData: {
+        name: 'Igreja Batista Fonte de Vida Original',
+        creatorName: 'Pastor Marcos Original',
+        timezone: 'America/Sao_Paulo',
+        address: 'Rua Original, 100',
+        defaultDurationPolicy: 'warn',
+      },
+      createdAt: new Date().toISOString(),
+    });
+
+    let sentRpcArgs = null;
+    const mockSupabase = {
+      schema() {
+        return {
+          rpc(name, args) {
+            sentRpcArgs = args;
+            return Promise.resolve({
+              data: [{
+                church_id: 'church-123',
+                church_name: args.p_name,
+                member_id: 'member-456',
+                display_name: args.p_creator_name,
+                timezone: args.p_timezone,
+                default_duration_policy: args.p_default_duration_policy,
+                is_admin: true,
+                already_existed: false,
+              }],
+              error: null,
+            });
+          },
+        };
+      },
+    };
+
+    // Usuário tenta enviar passando dados editados no formulário
+    const res = await dispatchChurchCreation({
+      supabaseClient: mockSupabase,
+      storage,
+      userId,
+      churchData: {
+        name: 'Nome Alterado Pelo Formulario',
+        creatorName: 'Nome Criador Alterado',
+        timezone: 'America/Fortaleza',
+        address: 'Outra Rua',
+        defaultDurationPolicy: 'block',
+      },
+    });
+
+    assert.equal(res.status, 'SUCCESS');
+    // Deve ter enviado os parâmetros PERSISTIDOS, garantindo integridade e idempotência do comando
+    assert.equal(sentRpcArgs.p_command_id, persistedCommandId);
+    assert.equal(sentRpcArgs.p_name, 'Igreja Batista Fonte de Vida Original');
+    assert.equal(sentRpcArgs.p_creator_name, 'Pastor Marcos Original');
+    assert.equal(sentRpcArgs.p_timezone, 'America/Sao_Paulo');
+    assert.equal(sentRpcArgs.p_address, 'Rua Original, 100');
+    assert.equal(sentRpcArgs.p_default_duration_policy, 'warn');
+  });
+
+  it('Regressão Codex 3: recibo com apenas church_id NÃO é confirmação suficiente (classifica RECEIPT_INCOMPLETE e retém)', () => {
+    // Recibo contendo apenas church_id
+    const incompleteReceipt1 = [{ church_id: 'church-codex-3' }];
+    const result1 = classifyReceiptCheckResult(incompleteReceipt1, null);
+    assert.notEqual(result1.status, 'RECEIPT_FOUND');
+    assert.equal(result1.status, 'RECEIPT_INCOMPLETE');
+    assert.equal(result1.shouldRetainCommand, true);
+
+    // Recibo com church_id e member_id mas is_admin !== true
+    const incompleteReceipt2 = [{
+      church_id: 'church-codex-3',
+      member_id: 'mem-123',
+      is_admin: false,
+    }];
+    const result2 = classifyReceiptCheckResult(incompleteReceipt2, null);
+    assert.equal(result2.status, 'RECEIPT_INCOMPLETE');
+    assert.equal(result2.shouldRetainCommand, true);
+
+    // Recibo completo e válido com is_admin: true
+    const completeReceipt = [{
+      church_id: 'church-codex-3',
+      church_name: 'Igreja Válida',
+      member_id: 'mem-123',
+      display_name: 'Pastor Válido',
+      is_admin: true,
+      timezone: 'America/Sao_Paulo',
+      default_duration_policy: 'warn',
+    }];
+    const result3 = classifyReceiptCheckResult(completeReceipt, null);
+    assert.equal(result3.status, 'RECEIPT_FOUND');
+    assert.equal(result3.shouldRetainCommand, false);
+  });
+
+  it('validação estrita de URL do Google Maps: aceita domínios permitidos e rejeita URLs arbitrárias', () => {
+    // URLs válidas do Google Maps
+    const validUrls = [
+      'https://maps.app.goo.gl/abC123XYZ',
+      'https://goo.gl/maps/xyz789ABC',
+      'https://maps.google.com/?q=Igreja+Central',
+      'https://www.google.com/maps/place/Igreja/@-23.5,-46.6,15z',
+      'https://google.com/maps/@-23.5,-46.6,15z',
+    ];
+
+    for (const url of validUrls) {
+      const res = validateAndNormalizeChurchInput({
+        name: 'Igreja Teste',
+        creatorName: 'Pastor Teste',
+        timezone: 'America/Sao_Paulo',
+        googleMapsUrl: url,
+      });
+      assert.equal(res.isValid, true, `Deveria aceitar: ${url}`);
+      assert.equal(res.normalizedData.googleMapsUrl, url);
+    }
+
+    // URLs arbitrárias ou maliciosas
+    const invalidUrls = [
+      'https://evil.com/maps',
+      'https://facebook.com',
+      'http://maps.google.com/insecure', // não-HTTPS
+      'https://google.com.malicious.site/maps',
+      'javascript:alert(1)',
+      'https://example.com/google.com/maps',
+    ];
+
+    for (const url of invalidUrls) {
+      const res = validateAndNormalizeChurchInput({
+        name: 'Igreja Teste',
+        creatorName: 'Pastor Teste',
+        timezone: 'America/Sao_Paulo',
+        googleMapsUrl: url,
+      });
+      assert.equal(res.isValid, false, `Deveria rejeitar: ${url}`);
+      assert.ok(res.errors.googleMapsUrl);
+    }
+  });
+
+  it('imutabilidade: impede que savePendingChurchCommand substitua silenciosamente um comando pendente por outro ID', () => {
+    const storage = createMockStorage();
+    const userId = 'user-immutable';
+
+    const cmd1 = { commandId: 'cmd-alpha', churchData: { name: 'Igreja Alpha' } };
+    const cmd2 = { commandId: 'cmd-beta', churchData: { name: 'Igreja Beta' } };
+
+    const saved1 = savePendingChurchCommand(storage, userId, cmd1);
+    assert.equal(saved1, true);
+
+    // Tentativa de salvar outro commandId enquanto o anterior está pendente
+    const saved2 = savePendingChurchCommand(storage, userId, cmd2);
+    assert.equal(saved2, false);
+
+    // Comando original permanece inalterado
+    const current = loadPendingChurchCommand(storage, userId);
+    assert.equal(current.commandId, 'cmd-alpha');
+    assert.equal(current.churchData.name, 'Igreja Alpha');
+  });
+});
+

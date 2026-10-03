@@ -12,7 +12,7 @@ import {
   WifiOff,
   LogOut
 } from 'lucide-react';
-import { checkChurchCreationEligibility } from '../utils/churchCommandService';
+import { checkChurchCreationEligibility, loadPendingChurchCommand } from '../utils/churchCommandService';
 import CreateChurchModal from './CreateChurchModal';
 
 /**
@@ -24,6 +24,7 @@ import CreateChurchModal from './CreateChurchModal';
  * - Se elegível: oferece ação destacada "Criar minha igreja", abrindo o formulário controlado.
  * - Se já administra outra igreja: explica com clareza o impedimento e a regra de administração única.
  * - Se e-mail não confirmado ou bloqueio: apresenta a explicação correspondente.
+ * - Suporta reconciliação de comando pendente mesmo quando o servidor retornar already_admin.
  * - Preserva estados de carregamento, erro, tentativa novamente e falta de conexão.
  * - Conclusão com sucesso redireciona com segurança para a igreja criada via refreshAccess.
  */
@@ -41,6 +42,13 @@ export default function AccessPendingPage() {
   const [eligibilityError, setEligibilityError] = useState(null);
   const [isOnline, setIsOnline] = useState(typeof navigator !== 'undefined' ? navigator.onLine : true);
 
+  // Comando pendente na sessão
+  const [pendingCommand, setPendingCommand] = useState(null);
+
+  // Destino confirmado após criação e erro de recarga
+  const [confirmedChurch, setConfirmedChurch] = useState(null);
+  const [accessReloadError, setAccessReloadError] = useState(null);
+
   // Controle do modal de criação
   const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
 
@@ -57,6 +65,14 @@ export default function AccessPendingPage() {
       window.removeEventListener('offline', handleOffline);
     };
   }, []);
+
+  // Monitora comando pendente no storage
+  useEffect(() => {
+    if (typeof window !== 'undefined' && window.sessionStorage && user?.id) {
+      const cmd = loadPendingChurchCommand(window.sessionStorage, user.id);
+      setPendingCommand(cmd);
+    }
+  }, [user?.id, eligibilityState, isCreateModalOpen]);
 
   // Consulta elegibilidade no servidor
   const loadEligibility = useCallback(async () => {
@@ -80,10 +96,27 @@ export default function AccessPendingPage() {
   }, [loadEligibility]);
 
   // Transição segura para a igreja criada
-  function handleChurchCreated(createdChurch) {
+  async function handleChurchCreated(createdChurch) {
     setIsCreateModalOpen(false);
+    setConfirmedChurch(createdChurch);
+    setAccessReloadError(null);
     if (createdChurch?.church_id && refreshAccess) {
-      refreshAccess(createdChurch.church_id);
+      try {
+        await refreshAccess({ preferredChurchId: createdChurch.church_id });
+      } catch (err) {
+        setAccessReloadError('A igreja foi criada, mas ocorreu uma falha ao atualizar o acesso.');
+      }
+    }
+  }
+
+  async function handleRetryAccessReload() {
+    if (confirmedChurch?.church_id && refreshAccess) {
+      setAccessReloadError(null);
+      try {
+        await refreshAccess({ preferredChurchId: confirmedChurch.church_id });
+      } catch (err) {
+        setAccessReloadError('Falha ao recarregar acesso. Tente novamente.');
+      }
     }
   }
 
@@ -159,6 +192,46 @@ export default function AccessPendingPage() {
                 </button>
               </div>
             </div>
+          ) : accessReloadError ? (
+            <div className="status-notice status-notice--error" role="alert">
+              <AlertCircle size={18} className="status-notice-icon" />
+              <div className="status-notice-text">
+                <span>{accessReloadError}</span>
+                <button
+                  type="button"
+                  className="btn btn-secondary btn-sm retry-btn"
+                  onClick={handleRetryAccessReload}
+                  id="btn-retry-access-reload"
+                >
+                  <RefreshCw size={12} />
+                  Tentar carregar acesso novamente
+                </button>
+              </div>
+            </div>
+          ) : pendingCommand ? (
+            <div className="create-church-card" style={{ borderColor: 'var(--primary)' }}>
+              <div className="create-church-header">
+                <div className="create-church-icon" aria-hidden="true">
+                  <RefreshCw size={20} className="spin" />
+                </div>
+                <div className="create-church-info">
+                  <span className="create-church-title">Envio de igreja pendente de confirmação</span>
+                  <span className="create-church-desc">
+                    Existe um comando de criação não confirmado para a igreja{' '}
+                    <strong>{pendingCommand.churchData?.name || 'solicitada'}</strong>.
+                  </span>
+                </div>
+              </div>
+              <button
+                type="button"
+                className="btn btn-primary create-church-btn"
+                onClick={() => setIsCreateModalOpen(true)}
+                id="btn-recover-pending-church"
+              >
+                <RefreshCw size={16} />
+                Verificar resultado / Recuperar
+              </button>
+            </div>
           ) : eligibilityData?.eligible ? (
             <div className="create-church-card">
               <div className="create-church-header">
@@ -168,7 +241,7 @@ export default function AccessPendingPage() {
                 <div className="create-church-info">
                   <span className="create-church-title">Quer iniciar sua comunidade?</span>
                   <span className="create-church-desc">
-                    Cadastre sua igreja e torne-se o administrador principal das equipes e cultos.
+                    Cadastre sua igreja e torne-se o primeiro administrador das equipes e cultos.
                   </span>
                 </div>
               </div>

@@ -7,30 +7,40 @@ with procs as (
     to_regprocedure('public.get_create_church_receipt(uuid)') as receipt_proc
 )
 select
-  -- 1. Verificação do índice de administração única
+  -- 1. Verificação detalhada do índice de administração única (unicidade, validade e predicado)
   exists (
     select 1
-    from pg_catalog.pg_indexes
-    where schemaname = 'app_private'
-      and tablename = 'church_access'
-      and indexname = 'church_access_single_active_admin_idx'
-  ) as single_admin_index_exists,
+    from pg_catalog.pg_index ix
+    join pg_catalog.pg_class c on c.oid = ix.indexrelid
+    join pg_catalog.pg_class t on t.oid = ix.indrelid
+    join pg_catalog.pg_namespace n on n.oid = t.relnamespace
+    where n.nspname = 'app_private'
+      and t.relname = 'church_access'
+      and c.relname = 'church_access_single_active_admin_idx'
+      and ix.indisunique = true
+      and ix.indisvalid = true
+      and pg_get_expr(ix.indpred, ix.indrelid) ~* 'is_admin.*true.*status.*active'
+  ) as single_admin_index_verified,
 
-  -- 2. Verificação dos gatilhos de proteção do último administrador
+  -- 2. Verificação dos gatilhos de proteção do último administrador (habilitação, função vinculada e tabela)
   (
     exists (
-      select 1 from pg_catalog.pg_trigger
-      where tgname = 'church_access_protect_last_admin'
-        and tgrelid = 'app_private.church_access'::regclass
+      select 1 from pg_catalog.pg_trigger tr
+      where tr.tgname = 'church_access_protect_last_admin'
+        and tr.tgrelid = 'app_private.church_access'::regclass
+        and tr.tgfoid = 'app_private.protect_last_active_admin'::regproc
+        and tr.tgenabled = 'O'
     )
     and exists (
-      select 1 from pg_catalog.pg_trigger
-      where tgname = 'members_protect_last_admin'
-        and tgrelid = 'app_private.members'::regclass
+      select 1 from pg_catalog.pg_trigger tr
+      where tr.tgname = 'members_protect_last_admin'
+        and tr.tgrelid = 'app_private.members'::regclass
+        and tr.tgfoid = 'app_private.protect_last_active_admin_member'::regproc
+        and tr.tgenabled = 'O'
     )
-  ) as protect_last_admin_triggers_exist,
+  ) as protect_last_admin_triggers_verified,
 
-  -- 3. Verificação do endpoint check_church_creation_eligibility
+  -- 3. Verificação de segurança da RPC check_church_creation_eligibility
   p.elig_proc is not null
     and (select prosecdef from pg_catalog.pg_proc where oid = p.elig_proc)
     and (select proconfig @> array['search_path=""'] or proconfig @> array['search_path='] from pg_catalog.pg_proc where oid = p.elig_proc)
@@ -43,7 +53,7 @@ select
       where pr.oid = p.elig_proc and a.grantee = 0 and a.privilege_type = 'EXECUTE'
     ) as check_eligibility_rpc_secure,
 
-  -- 4. Verificação do endpoint create_my_church
+  -- 4. Verificação de segurança da RPC create_my_church
   p.create_proc is not null
     and (select prosecdef from pg_catalog.pg_proc where oid = p.create_proc)
     and (select proconfig @> array['search_path=""'] or proconfig @> array['search_path='] from pg_catalog.pg_proc where oid = p.create_proc)
@@ -56,7 +66,7 @@ select
       where pr.oid = p.create_proc and a.grantee = 0 and a.privilege_type = 'EXECUTE'
     ) as create_church_rpc_secure,
 
-  -- 5. Verificação do endpoint get_create_church_receipt
+  -- 5. Verificação de segurança da RPC get_create_church_receipt
   p.receipt_proc is not null
     and (select prosecdef from pg_catalog.pg_proc where oid = p.receipt_proc)
     and (select proconfig @> array['search_path=""'] or proconfig @> array['search_path='] from pg_catalog.pg_proc where oid = p.receipt_proc)
@@ -69,7 +79,7 @@ select
       where pr.oid = p.receipt_proc and a.grantee = 0 and a.privilege_type = 'EXECUTE'
     ) as get_create_church_receipt_secure,
 
-  -- 6. Todas as 7 tabelas de app_private continuam com RLS
+  -- 6. Todas as 7 tabelas de app_private continuam com RLS ativo
   (
     select count(*) = 7 and bool_and(c.relrowsecurity)
     from pg_catalog.pg_class c
@@ -81,7 +91,7 @@ select
       )
   ) as all_seven_private_tables_have_rls,
 
-  -- 7. Schema app_private continua inacessível para clientes
+  -- 7. Schema app_private continua inacessível diretamente para clientes
   not exists (
     select 1
     from unnest(array['anon', 'authenticated', 'service_role']) r(role_name)

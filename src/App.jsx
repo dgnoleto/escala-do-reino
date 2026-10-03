@@ -15,6 +15,7 @@ import InitializingPage from './components/InitializingPage';
 import CheckingAccessPage from './components/CheckingAccessPage';
 import AccessErrorPage from './components/AccessErrorPage';
 import ChurchHomePage from './components/ChurchHomePage';
+import SelectChurchPage from './components/SelectChurchPage';
 import { Info, Sparkles, CheckCircle2, ChevronDown, ChevronUp } from 'lucide-react';
 
 function AppContent() {
@@ -308,6 +309,9 @@ function AuthGate() {
 
     case 'access_error':
       return <AccessErrorPage />;
+
+    case 'select_church':
+      return <SelectChurchPage />;
 
     default:
       // Estado desconhecido — não exibir dados, retornar ao login.

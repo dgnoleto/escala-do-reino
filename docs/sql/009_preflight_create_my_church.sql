@@ -19,6 +19,26 @@ select
     and to_regprocedure('public.create_church_member(uuid, uuid, text)') is not null
     and to_regprocedure('public.get_create_member_receipt(uuid, uuid)') is not null
   ) as previous_four_rpcs_present,
+  -- Conferência das colunas específicas de que o incremento depende
+  (
+    exists (select 1 from information_schema.columns where table_schema = 'auth' and table_name = 'users' and column_name = 'email_confirmed_at')
+    and exists (select 1 from information_schema.columns where table_schema = 'auth' and table_name = 'users' and column_name = 'deleted_at')
+    and exists (select 1 from information_schema.columns where table_schema = 'auth' and table_name = 'users' and column_name = 'banned_until')
+    and exists (select 1 from information_schema.columns where table_schema = 'app_private' and table_name = 'churches' and column_name = 'timezone')
+    and exists (select 1 from information_schema.columns where table_schema = 'app_private' and table_name = 'churches' and column_name = 'google_maps_url')
+    and exists (select 1 from information_schema.columns where table_schema = 'app_private' and table_name = 'churches' and column_name = 'default_duration_policy')
+    and exists (select 1 from information_schema.columns where table_schema = 'app_private' and table_name = 'church_access' and column_name = 'is_admin')
+    and exists (select 1 from information_schema.columns where table_schema = 'app_private' and table_name = 'church_access' and column_name = 'onboarding_completed_at')
+    and exists (select 1 from information_schema.columns where table_schema = 'app_private' and table_name = 'command_receipts' and column_name = 'action')
+  ) as required_columns_present,
+  -- Diagnóstico prévio: nenhuma conta pode possuir administrações ativas duplicadas antes do índice
+  not exists (
+    select ca.user_id
+    from app_private.church_access ca
+    where ca.is_admin = true and ca.status = 'active'
+    group by ca.user_id
+    having count(*) > 1
+  ) as no_duplicate_active_administrations,
   (
     select count(*) = 0
     from pg_catalog.pg_indexes

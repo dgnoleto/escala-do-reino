@@ -31,11 +31,14 @@ const AuthContext = createContext(null);
  * - Erros no logout são tratados sem deixar a aplicação em estado inconsistente.
  * - Revalidação automática ao recuperar foco/conexão com limpeza imediata em caso de perda de acesso.
  */
+export const STORAGE_KEY_SELECTED_CHURCH_PREFIX = 'selected_church_';
+
 export function AuthProvider({ children }) {
-  const [session, setSession]           = useState(undefined);
-  const [authState, setAuthState]       = useState('initializing');
-  const [authError, setAuthError]       = useState(null);
-  const [churchAccess, setChurchAccess] = useState(null);
+  const [session, setSession]                     = useState(undefined);
+  const [authState, setAuthState]                 = useState('initializing');
+  const [authError, setAuthError]                 = useState(null);
+  const [churchAccess, setChurchAccess]           = useState(null);
+  const [availableAccesses, setAvailableAccesses] = useState([]);
 
   // Rastreia o UID da sessão ativa
   const currentUserIdRef    = useRef(null);
@@ -111,6 +114,7 @@ export function AuthProvider({ children }) {
           // Em revalidação de fundo, se o erro indicar perda de permissão, atualizar estado
           if (error.code === '42501' || error.message?.includes('permission')) {
             clearAccessContext();
+            setAvailableAccesses([]);
             setAuthState('access_pending');
           }
         }
@@ -120,20 +124,71 @@ export function AuthProvider({ children }) {
       if (!data || data.length === 0) {
         // Conta válida, mas sem vínculo elegível
         clearAccessContext();
+        setAvailableAccesses([]);
+        if (typeof window !== 'undefined') {
+          window.sessionStorage?.removeItem(STORAGE_KEY_SELECTED_CHURCH_PREFIX + expectedUserId);
+        }
         setAuthState('access_pending');
         return;
       }
 
-      // Vínculo confirmado: se preferredChurchId foi informado, seleciona essa igreja
-      let selectedAccess = data[0];
-      if (preferredChurchId) {
-        const found = data.find((ca) => ca.church_id === preferredChurchId);
-        if (found) selectedAccess = found;
+      setAvailableAccesses(data);
+
+      if (data.length === 1) {
+        const singleAccess = data[0];
+        // Se um destino específico foi solicitado e ele não existe mais:
+        if (preferredChurchId && preferredChurchId !== singleAccess.church_id) {
+          clearAccessContext();
+          if (typeof window !== 'undefined') {
+            window.sessionStorage?.removeItem(STORAGE_KEY_SELECTED_CHURCH_PREFIX + expectedUserId);
+          }
+          setAuthError('A igreja selecionada não está mais disponível para esta conta.');
+          setAuthState('access_error');
+          return;
+        }
+
+        // Vínculo único válido: preserva e seleciona
+        if (typeof window !== 'undefined') {
+          window.sessionStorage?.setItem(STORAGE_KEY_SELECTED_CHURCH_PREFIX + expectedUserId, singleAccess.church_id);
+        }
+        setChurchAccess(singleAccess);
+        churchAccessRef.current = singleAccess;
+        setAuthState('access_granted');
+        return;
       }
 
-      setChurchAccess(selectedAccess);
-      churchAccessRef.current = selectedAccess;
-      setAuthState('access_granted');
+      // Múltiplos vínculos autorizados (> 1):
+      // Determina igreja alvo: 1) preferredChurchId explícito; 2) seleção estável salva no sessionStorage; 3) contexto atual ativo
+      const savedChurchId = typeof window !== 'undefined' ? window.sessionStorage?.getItem(STORAGE_KEY_SELECTED_CHURCH_PREFIX + expectedUserId) : null;
+      const targetChurchId = preferredChurchId || savedChurchId || churchAccessRef.current?.church_id || null;
+
+      if (targetChurchId) {
+        const found = data.find((ca) => ca.church_id === targetChurchId);
+        if (found) {
+          // Destino encontrado e revalidado contra os vínculos autorizados
+          if (typeof window !== 'undefined') {
+            window.sessionStorage?.setItem(STORAGE_KEY_SELECTED_CHURCH_PREFIX + expectedUserId, found.church_id);
+          }
+          setChurchAccess(found);
+          churchAccessRef.current = found;
+          setAuthState('access_granted');
+          return;
+        } else {
+          // Destino esperado não encontrado entre os múltiplos vínculos:
+          // Não usar data[0] como fallback silencioso! Exigir escolha explícita.
+          console.warn(`[AuthContext] Igreja ${targetChurchId} não encontrada entre os ${data.length} vínculos autorizados.`);
+          clearAccessContext();
+          if (typeof window !== 'undefined') {
+            window.sessionStorage?.removeItem(STORAGE_KEY_SELECTED_CHURCH_PREFIX + expectedUserId);
+          }
+          setAuthState('select_church');
+          return;
+        }
+      }
+
+      // Múltiplos acessos e nenhuma escolha salva: solicitar seleção explícita
+      clearAccessContext();
+      setAuthState('select_church');
 
     } catch (unexpectedErr) {
       if (sessionIdRef.current !== thisSessionId || requestSeqRef.current !== thisSeq) {
@@ -217,8 +272,12 @@ export function AuthProvider({ children }) {
         // Troca efetiva de conta (usuário A -> usuário B).
         // Limpa o storage para garantir isolamento e evitar vazamento de dados.
         sessionIdRef.current += 1;
+        if (previousUserId && typeof window !== 'undefined') {
+          window.sessionStorage?.removeItem(STORAGE_KEY_SELECTED_CHURCH_PREFIX + previousUserId);
+        }
         currentUserIdRef.current = newUserId;
         clearAccessContext();
+        setAvailableAccesses([]);
         clearMemberCommandStorage();
 
         if (scheduledTimerRef.current) {
@@ -281,7 +340,7 @@ export function AuthProvider({ children }) {
         scheduledTimerRef.current = null;
       }
     };
-  }, [fetchChurchAccess, clearAccessContext]);
+  }, [fetchChurchAccess, clearAccessContext, clearMemberCommandStorage]);
 
   /**
    * Revalida o vínculo manualmente (botão "Tentar novamente").
@@ -291,6 +350,28 @@ export function AuthProvider({ children }) {
     if (!uid) return;
     fetchChurchAccess(uid);
   }
+
+  /**
+   * Seleciona explicitamente uma igreja para consulta e invalida o estado anterior (M61 / PRD).
+   *
+   * @param {string|null} churchId - ID da igreja desejada ou null para exibir a seleção
+   */
+  const selectChurch = useCallback((churchId) => {
+    const uid = currentUserIdRef.current;
+    if (!uid) return;
+    clearAccessContext();
+    if (churchId) {
+      if (typeof window !== 'undefined') {
+        window.sessionStorage?.setItem(STORAGE_KEY_SELECTED_CHURCH_PREFIX + uid, churchId);
+      }
+      fetchChurchAccess(uid, { isBackground: false, preferredChurchId: churchId });
+    } else {
+      if (typeof window !== 'undefined') {
+        window.sessionStorage?.removeItem(STORAGE_KEY_SELECTED_CHURCH_PREFIX + uid);
+      }
+      setAuthState('select_church');
+    }
+  }, [clearAccessContext, fetchChurchAccess]);
 
   /**
    * Recarrega o vínculo com suporte a seleção de igreja preferencial (ex.: após criar igreja).
@@ -338,9 +419,14 @@ export function AuthProvider({ children }) {
     // Invalida sessões e gerações imediatamente para descartar qualquer resposta em voo
     authGenerationRef.current += 1;
     sessionIdRef.current += 1;
+    const uid = currentUserIdRef.current;
     currentUserIdRef.current = null;
     clearAccessContext();
+    setAvailableAccesses([]);
     clearMemberCommandStorage();
+    if (uid && typeof window !== 'undefined') {
+      window.sessionStorage?.removeItem(STORAGE_KEY_SELECTED_CHURCH_PREFIX + uid);
+    }
     setAuthError(null);
 
     try {
@@ -366,6 +452,8 @@ export function AuthProvider({ children }) {
         authError,
         setAuthError,
         churchAccess,
+        availableAccesses,
+        selectChurch,
         signInWithGoogle,
         signOut,
         retryAccessCheck,

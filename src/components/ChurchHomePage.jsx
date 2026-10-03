@@ -1,8 +1,10 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useAuth } from '../context/AuthContext';
+import { supabase } from '../lib/supabaseClient';
 import MembersPage from './MembersPage';
 import CreateChurchModal from './CreateChurchModal';
-import { Church, PlusCircle, ShieldAlert } from 'lucide-react';
+import { Church, PlusCircle, ShieldAlert, Loader2, AlertCircle, Mail } from 'lucide-react';
+import { checkChurchCreationEligibility } from '../utils/churchCommandService';
 
 /**
  * ChurchHomePage — tela inicial para contas com vínculo confirmado.
@@ -25,14 +27,36 @@ import { Church, PlusCircle, ShieldAlert } from 'lucide-react';
  * Acessibilidade: foco inicial no título, regiões semânticas, rótulos descritivos.
  */
 export default function ChurchHomePage() {
-  const { churchAccess, signOut, refreshAccess } = useAuth();
+  const { churchAccess, availableAccesses, selectChurch, signOut, refreshAccess } = useAuth();
   const [currentView, setCurrentView] = useState('home');
   const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
+
+  // Consulta de elegibilidade global para membros básicos
+  const [eligibilityData, setEligibilityData] = useState(null);
+  const [eligibilityLoading, setEligibilityLoading] = useState(false);
 
   // Campos provêm exclusivamente do retorno da função RPC autenticada.
   const displayName = churchAccess?.display_name ?? '';
   const churchName  = churchAccess?.church_name  ?? '';
   const isAdmin     = churchAccess?.is_admin     ?? false;
+
+  useEffect(() => {
+    let isMounted = true;
+    if (!isAdmin && supabase) {
+      setEligibilityLoading(true);
+      checkChurchCreationEligibility(supabase)
+        .then((res) => {
+          if (isMounted) {
+            setEligibilityData(res);
+            setEligibilityLoading(false);
+          }
+        })
+        .catch(() => {
+          if (isMounted) setEligibilityLoading(false);
+        });
+    }
+    return () => { isMounted = false; };
+  }, [isAdmin]);
 
   const profileLabel = isAdmin ? 'Administrador' : 'Membro';
 
@@ -61,6 +85,20 @@ export default function ChurchHomePage() {
             <p className="church-home-app-label">Escala do Reino</p>
           </div>
         </div>
+
+        {availableAccesses && availableAccesses.length > 1 && (
+          <div className="church-home-switch-bar" style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: '8px' }}>
+            <button
+              className="btn btn-secondary"
+              onClick={() => selectChurch(null)}
+              type="button"
+              aria-label="Alternar igreja consultada"
+              style={{ fontSize: '0.78rem', padding: '4px 10px', height: 'auto', borderRadius: '8px' }}
+            >
+              Trocar de comunidade ({availableAccesses.length})
+            </button>
+          </div>
+        )}
 
         {/* Saudação do membro */}
         <section className="church-home-welcome" aria-label="Bem-vindo">
@@ -134,7 +172,7 @@ export default function ChurchHomePage() {
         )}
 
         {/* Bloco Criar Minha Igreja para contas com apenas acesso básico de membro */}
-        {!isAdmin && (
+        {!isAdmin && eligibilityData?.eligible && (
           <div className="church-home-create-section">
             <div className="church-home-create-box">
               <div className="church-home-create-icon" aria-hidden="true">
@@ -157,6 +195,16 @@ export default function ChurchHomePage() {
               <PlusCircle size={15} />
               Criar minha igreja
             </button>
+          </div>
+        )}
+
+        {/* Notificação se o membro já é administrador ativo em outra igreja */}
+        {!isAdmin && eligibilityData && !eligibilityData.eligible && eligibilityData.reason === 'already_admin' && (
+          <div className="church-home-admin-limit-notice" role="note">
+            <ShieldAlert size={16} className="church-home-admin-limit-icon" aria-hidden="true" />
+            <span>
+              Sua conta já administra ativamente outra igreja{eligibilityData.activeAdminChurchName ? ` (${eligibilityData.activeAdminChurchName})` : ''}. Pelas regras de governança, uma conta pode administrar no máximo uma igreja por vez.
+            </span>
           </div>
         )}
 

@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { supabase } from '../lib/supabaseClient';
 import {
@@ -19,6 +19,7 @@ import {
   dispatchChurchCreation,
   checkChurchReceipt,
   loadPendingChurchCommand,
+  removePendingChurchCommand,
 } from '../utils/churchCommandService';
 
 const TIMEZONE_OPTIONS = [
@@ -102,15 +103,56 @@ export default function CreateChurchModal({ isOpen, onClose, onSuccess }) {
     }
   }, [isOpen, userId]);
 
-  // Tecla Escape fecha o modal se não estiver enviando
+  const modalRef = useRef(null);
+
+  // Acessibilidade: foco contido, foco inicial e controle de Escape
   useEffect(() => {
+    if (!isOpen) return;
+
+    // Foco inicial no primeiro input após montagem
+    const timer = setTimeout(() => {
+      const firstInput = modalRef.current?.querySelector('input#church-name');
+      if (firstInput) {
+        firstInput.focus();
+      }
+    }, 50);
+
     function handleKeyDown(e) {
-      if (e.key === 'Escape' && isOpen && !isSubmitting && !isRecovering) {
-        onClose();
+      if (e.key === 'Escape') {
+        if (!isSubmitting && !isRecovering) {
+          onClose();
+        }
+        return;
+      }
+
+      if (e.key === 'Tab' && modalRef.current) {
+        const focusableElements = modalRef.current.querySelectorAll(
+          'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'
+        );
+        if (focusableElements.length === 0) return;
+
+        const firstElement = focusableElements[0];
+        const lastElement = focusableElements[focusableElements.length - 1];
+
+        if (e.shiftKey) {
+          if (document.activeElement === firstElement) {
+            lastElement.focus();
+            e.preventDefault();
+          }
+        } else {
+          if (document.activeElement === lastElement) {
+            firstElement.focus();
+            e.preventDefault();
+          }
+        }
       }
     }
+
     window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
+    return () => {
+      clearTimeout(timer);
+      window.removeEventListener('keydown', handleKeyDown);
+    };
   }, [isOpen, isSubmitting, isRecovering, onClose]);
 
   if (!isOpen) return null;
@@ -128,7 +170,7 @@ export default function CreateChurchModal({ isOpen, onClose, onSuccess }) {
 
       if (result.status === 'RECEIPT_FOUND') {
         if (typeof window !== 'undefined' && window.sessionStorage) {
-          window.sessionStorage.removeItem(`escala_pending_church_cmd_${userId}`);
+          removePendingChurchCommand(window.sessionStorage, userId);
         }
         setUncertainCommandId(null);
         if (onSuccess) onSuccess(result.record);
@@ -141,7 +183,7 @@ export default function CreateChurchModal({ isOpen, onClose, onSuccess }) {
         );
       } else {
         setSubmitError(
-          'Falha ao verificar recibo anterior. Verifique sua conexão e tente novamente.'
+          result.error?.message || result.error || 'Falha ao verificar recibo anterior. Verifique sua conexão e tente novamente.'
         );
       }
     } catch (err) {
@@ -208,9 +250,21 @@ export default function CreateChurchModal({ isOpen, onClose, onSuccess }) {
     }
   }
 
+  const handleBackdropClick = (e) => {
+    if (e.target === e.currentTarget && !isSubmitting && !isRecovering) {
+      onClose();
+    }
+  };
+
   return (
-    <div className="modal-backdrop" role="dialog" aria-modal="true" aria-labelledby="create-church-modal-title">
-      <div className="modal-container">
+    <div
+      className="modal-backdrop"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="create-church-modal-title"
+      onClick={handleBackdropClick}
+    >
+      <div className="modal-container" ref={modalRef}>
         {/* Cabeçalho */}
         <div className="modal-header">
           <div className="modal-header-icon" aria-hidden="true">
@@ -218,7 +272,7 @@ export default function CreateChurchModal({ isOpen, onClose, onSuccess }) {
           </div>
           <div className="modal-header-text">
             <h2 id="create-church-modal-title" className="modal-title">Criar minha igreja</h2>
-            <p className="modal-subtitle">Cadastre sua igreja e torne-se o administrador principal</p>
+            <p className="modal-subtitle">Cadastre sua igreja e torne-se o primeiro administrador</p>
           </div>
           <button
             type="button"

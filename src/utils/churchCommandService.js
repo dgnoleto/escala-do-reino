@@ -1,102 +1,83 @@
 /**
- * churchCommandService.js — Lógica de comando, validação, idempotência e elegibilidade
- * para o fluxo "Criar minha igreja".
+ * Escala do Reino — churchCommandService.js
  *
- * Princípios de segurança e confiabilidade:
- * - Validação e normalização canônica Unicode (NFC) no cliente antes do envio.
- * - Idempotência protegida por UUID (command_id) persistido no sessionStorage antes da RPC.
- * - Classificação estrita entre erros definitivos (rejeições de regras) e respostas incertas (rede/timeout).
- * - Reconciliação transparente de recibos para recuperação de conexões perdidas.
- * - Consulta e revalidação de elegibilidade no servidor (não assume permissão em caso de falha).
+ * Módulo de cliente para o ciclo de comandos de criação de igreja ("Criar minha igreja").
+ * Garante idempotência, retenção de comando em voo, normalização NFC e classificação estrita
+ * de respostas entre confirmações válidas, rejeições definitivas e respostas incertas.
  */
 
-export const STORAGE_KEY_PREFIX = 'escala_pending_church_cmd_';
+export const STORAGE_KEY_PREFIX = 'church_creation_cmd_';
+const GOOGLE_MAPS_REGEX = /^https:\/\/(maps\.app\.goo\.gl\/|goo\.gl\/maps\/|(www\.)?google\.(com(\.[a-z]{2})?|[a-z]{2})\/maps|maps\.google\.(com(\.[a-z]{2})?|[a-z]{2})\/).*$/i;
 
 /**
- * Valida e normaliza as entradas do formulário de criação de igreja.
+ * Normaliza um texto para a forma canônica pré-composta Unicode NFC e remove espaços extras nas pontas.
+ */
+export function normalizeNfcText(value) {
+  if (typeof value !== 'string') return '';
+  return value.normalize('NFC').trim();
+}
+
+/**
+ * Valida e normaliza os dados de criação de uma igreja antes do envio.
  *
  * @param {object} input
  * @param {string} input.name - Nome da igreja (1 a 160 caracteres)
  * @param {string} input.creatorName - Nome do criador como membro (1 a 120 caracteres)
- * @param {string} input.timezone - Fuso horário IANA (obrigatório)
- * @param {string} [input.address] - Endereço (opcional, até 500 caracteres)
- * @param {string} [input.googleMapsUrl] - Link do Maps (opcional)
+ * @param {string} input.timezone - Fuso horário IANA válido
+ * @param {string} [input.address] - Endereço físico (máx. 500 caracteres)
+ * @param {string} [input.googleMapsUrl] - Link do Google Maps (opcional)
  * @param {string} [input.defaultDurationPolicy] - 'warn' ou 'block' (padrão 'warn')
  * @returns {{ isValid: boolean, errors: Record<string, string>, normalizedData: object }}
  */
 export function validateAndNormalizeChurchInput(input = {}) {
   const errors = {};
-  const rawName = input.name ?? '';
-  const rawCreatorName = input.creatorName ?? '';
-  const rawTimezone = input.timezone ?? '';
-  const rawAddress = input.address ?? '';
-  const rawMapsUrl = input.googleMapsUrl ?? '';
-  const rawPolicy = input.defaultDurationPolicy ?? 'warn';
 
-  // 1. Nome da igreja: normalização em NFC e limites 1-160
-  const normalizedName = typeof rawName === 'string'
-    ? rawName.normalize('NFC').trim()
-    : '';
-
-  if (!normalizedName) {
-    errors.name = 'O nome da igreja é obrigatório.';
-  } else if (normalizedName.length > 160) {
-    errors.name = 'O nome da igreja deve ter no máximo 160 caracteres.';
+  const cleanName = normalizeNfcText(input.name || '');
+  if (!cleanName) {
+    errors.name = 'Nome da igreja é obrigatório.';
+  } else if (cleanName.length > 160) {
+    errors.name = 'Nome da igreja não pode exceder 160 caracteres.';
   }
 
-  // 2. Nome do criador como membro: normalização em NFC e limites 1-120
-  const normalizedCreatorName = typeof rawCreatorName === 'string'
-    ? rawCreatorName.normalize('NFC').trim()
-    : '';
-
-  if (!normalizedCreatorName) {
-    errors.creatorName = 'Seu nome como membro é obrigatório.';
-  } else if (normalizedCreatorName.length > 120) {
-    errors.creatorName = 'Seu nome deve ter no máximo 120 caracteres.';
+  const cleanCreatorName = normalizeNfcText(input.creatorName || '');
+  if (!cleanCreatorName) {
+    errors.creatorName = 'Nome do criador é obrigatório.';
+  } else if (cleanCreatorName.length > 120) {
+    errors.creatorName = 'Nome do criador não pode exceder 120 caracteres.';
   }
 
-  // 3. Fuso horário IANA: obrigatório
-  const normalizedTimezone = typeof rawTimezone === 'string'
-    ? rawTimezone.trim()
-    : '';
-
-  if (!normalizedTimezone) {
-    errors.timezone = 'O fuso horário é obrigatório.';
+  const cleanTimezone = (input.timezone || '').trim();
+  if (!cleanTimezone) {
+    errors.timezone = 'Fuso horário é obrigatório.';
   }
 
-  // 4. Endereço: opcional, máximo 500 caracteres
-  let normalizedAddress = null;
-  if (typeof rawAddress === 'string') {
-    const trimmed = rawAddress.normalize('NFC').trim();
-    if (trimmed.length > 500) {
-      errors.address = 'O endereço deve ter no máximo 500 caracteres.';
-    } else if (trimmed.length > 0) {
-      normalizedAddress = trimmed;
-    }
-  }
-
-  // 5. Link Google Maps: opcional
-  let normalizedMapsUrl = null;
-  if (typeof rawMapsUrl === 'string') {
-    const trimmed = rawMapsUrl.trim();
-    if (trimmed.length > 0) {
-      // Validação básica se começar com protocolo válido quando informado
-      if (!/^https?:\/\//i.test(trimmed)) {
-        errors.googleMapsUrl = 'O link do Google Maps deve começar com http:// ou https://';
+  let cleanAddress = null;
+  if (input.address && typeof input.address === 'string') {
+    const trimmedAddress = input.address.trim();
+    if (trimmedAddress.length > 0) {
+      if (trimmedAddress.length > 500) {
+        errors.address = 'Endereço não pode exceder 500 caracteres.';
       } else {
-        normalizedMapsUrl = trimmed;
+        cleanAddress = trimmedAddress;
       }
     }
   }
 
-  // 6. Política padrão de duração: 'warn' ou 'block'
-  let normalizedPolicy = 'warn';
-  if (rawPolicy === 'block') {
-    normalizedPolicy = 'block';
-  } else if (rawPolicy === 'warn') {
-    normalizedPolicy = 'warn';
-  } else {
-    errors.defaultDurationPolicy = 'A política de duração deve ser "warn" (alerta) ou "block" (bloqueio).';
+  let cleanMapsUrl = null;
+  if (input.googleMapsUrl && typeof input.googleMapsUrl === 'string') {
+    const trimmedUrl = input.googleMapsUrl.trim();
+    if (trimmedUrl.length > 0) {
+      if (!GOOGLE_MAPS_REGEX.test(trimmedUrl)) {
+        errors.googleMapsUrl = 'Link do Google Maps deve ser uma URL válida de compartilhamento do Google Maps.';
+      } else {
+        cleanMapsUrl = trimmedUrl;
+      }
+    }
+  }
+
+  const policy = (input.defaultDurationPolicy || 'warn').trim();
+  if (policy !== 'warn' && policy !== 'block') {
+    errors.defaultDurationPolicy = 'Política de duração deve ser "warn" ou "block".';
   }
 
   const isValid = Object.keys(errors).length === 0;
@@ -105,18 +86,18 @@ export function validateAndNormalizeChurchInput(input = {}) {
     isValid,
     errors,
     normalizedData: {
-      name: normalizedName,
-      creatorName: normalizedCreatorName,
-      timezone: normalizedTimezone,
-      address: normalizedAddress,
-      googleMapsUrl: normalizedMapsUrl,
-      defaultDurationPolicy: normalizedPolicy,
+      name: cleanName,
+      creatorName: cleanCreatorName,
+      timezone: cleanTimezone,
+      address: cleanAddress,
+      googleMapsUrl: cleanMapsUrl,
+      defaultDurationPolicy: policy,
     },
   };
 }
 
 /**
- * Obtém a chave de armazenamento de comando de igreja no sessionStorage.
+ * Obtém a chave de armazenamento de sessão para um usuário.
  */
 export function getChurchCommandStorageKey(userId) {
   if (!userId) return null;
@@ -124,12 +105,18 @@ export function getChurchCommandStorageKey(userId) {
 }
 
 /**
- * Salva um comando pendente de criação de igreja no storage de sessão.
+ * Salva um comando pendente no storage de sessão com isolamento por usuário.
+ * Impede que um comando pendente seja silenciosamente substituído por outro commandId.
  */
 export function savePendingChurchCommand(storage, userId, command) {
   if (!storage || !userId || !command) return false;
   try {
     const key = getChurchCommandStorageKey(userId);
+    const existing = loadPendingChurchCommand(storage, userId);
+    if (existing && existing.commandId && existing.commandId !== command.commandId) {
+      console.warn('[churchCommandService] Tentativa de sobrescrever comando pendente bloqueada.');
+      return false;
+    }
     storage.setItem(key, JSON.stringify(command));
     return true;
   } catch (err) {
@@ -139,7 +126,7 @@ export function savePendingChurchCommand(storage, userId, command) {
 }
 
 /**
- * Carrega comando pendente do usuário.
+ * Carrega o comando pendente de criação de igreja para o usuário informado.
  */
 export function loadPendingChurchCommand(storage, userId) {
   if (!storage || !userId) return null;
@@ -220,11 +207,14 @@ export function isDefinitiveServerError(error) {
 }
 
 /**
- * Classifica se a resposta de uma chamada é incerta (ex.: queda de conexão ou timeout).
+ * Classifica se a resposta de uma chamada é incerta (ex.: queda de conexão, 5xx ou resposta vazia/incompleta).
  */
 export function isUncertainResponse(error, data) {
   if (!error) {
     if (!data || (Array.isArray(data) && data.length === 0)) {
+      return true;
+    }
+    if (Array.isArray(data) && !isValidChurchCreationResponse(data[0])) {
       return true;
     }
     return false;
@@ -255,10 +245,40 @@ export function isUncertainResponse(error, data) {
 }
 
 /**
+ * Valida se um objeto retornado por create_my_church possui todos os identificadores e privilégios essenciais.
+ */
+export function isValidChurchCreationResponse(row) {
+  if (!row || typeof row !== 'object') return false;
+  if (!row.church_id || typeof row.church_id !== 'string') return false;
+  if (!row.member_id || typeof row.member_id !== 'string') return false;
+  if (row.is_admin !== true) return false;
+  return true;
+}
+
+/**
+ * Valida se um registro retornado por get_create_church_receipt possui identificadores e autorização ativos.
+ */
+export function isValidChurchReceiptRecord(record) {
+  if (!record || typeof record !== 'object') return false;
+  if (!record.church_id || typeof record.church_id !== 'string') return false;
+  if (!record.member_id || typeof record.member_id !== 'string') return false;
+  if (record.is_admin !== true) return false;
+  return true;
+}
+
+/**
  * Classifica o resultado da checagem de recibo.
+ * Não descarta o comando pendente se o recibo estiver incompleto ou se houver erro de consulta.
  */
 export function classifyReceiptCheckResult(receiptData, receiptError) {
   if (receiptError) {
+    if (isDefinitiveServerError(receiptError)) {
+      return {
+        status: 'RECEIPT_DEFINITIVE_ERROR',
+        shouldRetainCommand: false,
+        error: receiptError,
+      };
+    }
     return {
       status: 'RECEIPT_ERROR',
       shouldRetainCommand: true,
@@ -266,11 +286,21 @@ export function classifyReceiptCheckResult(receiptData, receiptError) {
     };
   }
 
-  if (Array.isArray(receiptData) && receiptData.length > 0 && receiptData[0]?.church_id) {
+  if (Array.isArray(receiptData) && receiptData.length > 0) {
+    const row = receiptData[0];
+    if (isValidChurchReceiptRecord(row)) {
+      return {
+        status: 'RECEIPT_FOUND',
+        shouldRetainCommand: false,
+        record: row,
+      };
+    }
+    // Recibo retornado com dados insuficientes (ex.: apenas church_id sem member_id ou sem is_admin)
     return {
-      status: 'RECEIPT_FOUND',
-      shouldRetainCommand: false,
-      record: receiptData[0],
+      status: 'RECEIPT_INCOMPLETE',
+      shouldRetainCommand: true,
+      record: null,
+      error: 'Recibo retornado pelo servidor está incompleto ou sem privilégio administrativo ativo.',
     };
   }
 
@@ -286,7 +316,7 @@ export function classifyReceiptCheckResult(receiptData, receiptError) {
  * Consulta a elegibilidade da conta autenticada para criar uma igreja.
  *
  * @param {object} supabaseClient
- * @returns {Promise<{ success: boolean, eligible: boolean, reason: string, activeAdminChurchName: string|null, error?: string }>}
+ * @returns {Promise<{ success: boolean, eligible: boolean, reason: string, activeAdminChurchName: string|null, activeAdminChurchId: string|null, error?: string }>}
  */
 export async function checkChurchCreationEligibility(supabaseClient) {
   if (!supabaseClient) {
@@ -295,6 +325,7 @@ export async function checkChurchCreationEligibility(supabaseClient) {
       eligible: false,
       reason: 'client_not_configured',
       activeAdminChurchName: null,
+      activeAdminChurchId: null,
       error: 'Supabase não configurado.',
     };
   }
@@ -311,6 +342,7 @@ export async function checkChurchCreationEligibility(supabaseClient) {
         eligible: false,
         reason: 'rpc_error',
         activeAdminChurchName: null,
+        activeAdminChurchId: null,
         error: error.message || 'Falha ao consultar elegibilidade no servidor.',
       };
     }
@@ -321,6 +353,7 @@ export async function checkChurchCreationEligibility(supabaseClient) {
         eligible: false,
         reason: 'empty_response',
         activeAdminChurchName: null,
+        activeAdminChurchId: null,
         error: 'Resposta vazia do servidor.',
       };
     }
@@ -331,6 +364,7 @@ export async function checkChurchCreationEligibility(supabaseClient) {
       eligible: Boolean(row.eligible),
       reason: row.reason || '',
       activeAdminChurchName: row.active_admin_church_name || null,
+      activeAdminChurchId: row.active_admin_church_id || null,
     };
   } catch (unexpected) {
     console.error('[churchCommandService] Erro inesperado ao consultar elegibilidade:', unexpected);
@@ -339,6 +373,7 @@ export async function checkChurchCreationEligibility(supabaseClient) {
       eligible: false,
       reason: 'unexpected_error',
       activeAdminChurchName: null,
+      activeAdminChurchId: null,
       error: unexpected.message || 'Erro inesperado ao consultar elegibilidade.',
     };
   }
@@ -392,10 +427,15 @@ export async function dispatchChurchCreation({
   }
 
   // 1. Identifica se já existe comando pendente em voo para o usuário ou gera novo
-  let pendingCmd = loadPendingChurchCommand(storage, userId);
+  const pendingCmd = loadPendingChurchCommand(storage, userId);
   let commandId = pendingCmd?.commandId;
+  let dataToSend = normalizedData;
 
-  if (!commandId) {
+  if (pendingCmd?.commandId && pendingCmd?.churchData) {
+    commandId = pendingCmd.commandId;
+    // Uma retentativa deve usar integralmente os parâmetros persistidos no storage
+    dataToSend = pendingCmd.churchData;
+  } else {
     commandId = (typeof crypto !== 'undefined' && crypto.randomUUID)
       ? crypto.randomUUID()
       : 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
@@ -415,6 +455,7 @@ export async function dispatchChurchCreation({
         error: 'Não foi possível salvar o comando na sessão. Operação cancelada por segurança.',
       };
     }
+    dataToSend = normalizedData;
   }
 
   // 2. Executa a chamada RPC no servidor
@@ -423,12 +464,12 @@ export async function dispatchChurchCreation({
       .schema('public')
       .rpc('create_my_church', {
         p_command_id: commandId,
-        p_name: normalizedData.name,
-        p_creator_name: normalizedData.creatorName,
-        p_timezone: normalizedData.timezone,
-        p_address: normalizedData.address,
-        p_google_maps_url: normalizedData.googleMapsUrl,
-        p_default_duration_policy: normalizedData.defaultDurationPolicy,
+        p_name: dataToSend.name,
+        p_creator_name: dataToSend.creatorName,
+        p_timezone: dataToSend.timezone,
+        p_address: dataToSend.address,
+        p_google_maps_url: dataToSend.googleMapsUrl,
+        p_default_duration_policy: dataToSend.defaultDurationPolicy,
       });
 
     if (error) {
@@ -457,11 +498,21 @@ export async function dispatchChurchCreation({
       };
     }
 
-    // Sucesso confirmado
+    const row = data[0];
+    if (!isValidChurchCreationResponse(row)) {
+      // Resposta com payload incompleto ou inesperado (ex.: data = [{}])
+      return {
+        status: 'UNCERTAIN',
+        error: 'Resposta incompleta ou sem identificadores válidos do servidor.',
+        commandId,
+      };
+    }
+
+    // Sucesso confirmado com dados íntegros
     removePendingChurchCommand(storage, userId);
     return {
       status: 'SUCCESS',
-      data: data[0],
+      data: row,
       commandId,
     };
   } catch (unexpected) {

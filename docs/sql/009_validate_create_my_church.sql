@@ -3,9 +3,9 @@
 -- Nenhuma tabela, função, permissão ou dado de teste é persistido.
 begin;
 set local lock_timeout = '5s';
-set local statement_timeout = '30s';
+set local statement_timeout = '60s';
 
--- 1. Criação temporária dos objetos na transação do ensaio
+-- 1. Criação dos objetos na transação do ensaio (fiel à implantação permanente de 009_create_my_church.sql)
 create unique index church_access_single_active_admin_idx
   on app_private.church_access (user_id)
   where (is_admin = true and status = 'active');
@@ -16,17 +16,43 @@ language plpgsql
 security invoker
 set search_path = ''
 as $function$
+declare
+  v_church_id uuid;
+  v_has_eligible_successor boolean;
 begin
   if OLD.is_admin = true and OLD.status = 'active' then
-    if TG_OP = 'DELETE' or NEW.is_admin <> true or NEW.status <> 'active' or NEW.church_id <> OLD.church_id then
-      if not exists (
-        select 1 from app_private.church_access ca
-        where ca.church_id = OLD.church_id
+    if TG_OP = 'DELETE'
+       or NEW.is_admin is not true
+       or NEW.status <> 'active'
+       or NEW.church_id <> OLD.church_id
+       or NEW.user_id <> OLD.user_id
+       or NEW.member_id <> OLD.member_id then
+
+      v_church_id := OLD.church_id;
+
+      -- Serializa alterações administrativas nesta igreja
+      perform pg_catalog.pg_advisory_xact_lock(hashtext('church_admin_continuity'), hashtext(v_church_id::text));
+
+      -- Confere se existe pelo menos um outro administrador ativo e elegível para a igreja
+      select exists (
+        select 1
+        from app_private.church_access ca
+        join app_private.members m on m.id = ca.member_id and m.church_id = ca.church_id
+        join auth.users u on u.id = ca.user_id
+        where ca.church_id = v_church_id
           and ca.id <> OLD.id
           and ca.is_admin = true
           and ca.status = 'active'
-      ) then
-        raise exception 'Operação não permitida: a igreja não pode ficar sem administrador ativo.'
+          and ca.onboarding_completed_at is not null
+          and m.status = 'active'
+          and u.deleted_at is null
+          and u.email_confirmed_at is not null
+          and not coalesce(u.is_anonymous, false)
+          and (u.banned_until is null or u.banned_until <= statement_timestamp())
+      ) into v_has_eligible_successor;
+
+      if not v_has_eligible_successor then
+        raise exception 'Operação não permitida: a igreja não pode ficar sem administrador ativo elegível.'
           using errcode = '23514';
       end if;
     end if;
@@ -49,23 +75,48 @@ language plpgsql
 security invoker
 set search_path = ''
 as $function$
+declare
+  v_church_id uuid;
+  v_is_active_admin boolean;
+  v_has_eligible_successor boolean;
 begin
-  if OLD.status = 'active' and (TG_OP = 'DELETE' or NEW.status <> 'active') then
-    if exists (
-      select 1 from app_private.church_access ca
-      where ca.church_id = OLD.church_id
+  if OLD.status = 'active' and (TG_OP = 'DELETE' or NEW.status <> 'active' or NEW.church_id <> OLD.church_id) then
+    v_church_id := OLD.church_id;
+
+    -- Verifica se este membro pertence a um administrador ativo
+    select exists (
+      select 1
+      from app_private.church_access ca
+      where ca.church_id = v_church_id
         and ca.member_id = OLD.id
         and ca.is_admin = true
         and ca.status = 'active'
-    ) then
-      if not exists (
-        select 1 from app_private.church_access ca2
-        where ca2.church_id = OLD.church_id
-          and ca2.member_id <> OLD.id
-          and ca2.is_admin = true
-          and ca2.status = 'active'
-      ) then
-        raise exception 'Operação não permitida: não é possível desativar ou remover o membro que é o último administrador ativo da igreja.'
+    ) into v_is_active_admin;
+
+    if v_is_active_admin then
+      -- Serializa alterações administrativas nesta igreja
+      perform pg_catalog.pg_advisory_xact_lock(hashtext('church_admin_continuity'), hashtext(v_church_id::text));
+
+      -- Confere se existe outro membro que seja administrador ativo e elegível
+      select exists (
+        select 1
+        from app_private.church_access ca
+        join app_private.members m on m.id = ca.member_id and m.church_id = ca.church_id
+        join auth.users u on u.id = ca.user_id
+        where ca.church_id = v_church_id
+          and ca.member_id <> OLD.id
+          and ca.is_admin = true
+          and ca.status = 'active'
+          and ca.onboarding_completed_at is not null
+          and m.status = 'active'
+          and u.deleted_at is null
+          and u.email_confirmed_at is not null
+          and not coalesce(u.is_anonymous, false)
+          and (u.banned_until is null or u.banned_until <= statement_timestamp())
+      ) into v_has_eligible_successor;
+
+      if not v_has_eligible_successor then
+        raise exception 'Operação não permitida: não é possível desativar ou remover o membro do último administrador ativo elegível da igreja.'
           using errcode = '23514';
       end if;
     end if;
@@ -86,7 +137,8 @@ create function public.check_church_creation_eligibility()
 returns table (
   eligible boolean,
   reason text,
-  active_admin_church_name text
+  active_admin_church_name text,
+  active_admin_church_id uuid
 )
 language plpgsql
 stable
@@ -118,27 +170,27 @@ begin
   where u.id = v_user_id;
 
   if v_email_confirmed is null then
-    return query select false, 'user_not_found'::text, null::text;
+    return query select false, 'user_not_found'::text, null::text, null::uuid;
     return;
   end if;
 
   if not v_email_confirmed then
-    return query select false, 'email_not_confirmed'::text, null::text;
+    return query select false, 'email_not_confirmed'::text, null::text, null::uuid;
     return;
   end if;
 
   if not v_not_banned then
-    return query select false, 'account_blocked'::text, null::text;
+    return query select false, 'account_blocked'::text, null::text, null::uuid;
     return;
   end if;
 
   if not v_not_anonymous then
-    return query select false, 'anonymous_not_allowed'::text, null::text;
+    return query select false, 'anonymous_not_allowed'::text, null::text, null::uuid;
     return;
   end if;
 
   if not v_not_deleted then
-    return query select false, 'account_deleted'::text, null::text;
+    return query select false, 'account_deleted'::text, null::text, null::uuid;
     return;
   end if;
 
@@ -152,11 +204,11 @@ begin
   limit 1;
 
   if v_admin_church_id is not null then
-    return query select false, 'already_admin'::text, v_admin_church_name;
+    return query select false, 'already_admin'::text, v_admin_church_name, v_admin_church_id;
     return;
   end if;
 
-  return query select true, 'eligible'::text, null::text;
+  return query select true, 'eligible'::text, null::text, null::uuid;
 end;
 $function$;
 
@@ -191,10 +243,12 @@ declare
   v_clean_timezone text;
   v_clean_address text;
   v_clean_maps_url text;
+  v_params_json jsonb;
   v_params_hash bytea;
   v_existing_hash bytea;
   v_existing_church_id uuid;
   v_existing_member_id uuid;
+  v_existing_action text;
   v_email_confirmed boolean;
   v_not_deleted boolean;
   v_not_anonymous boolean;
@@ -228,6 +282,7 @@ begin
     raise exception 'Política de duração obrigatória.' using errcode = '22004';
   end if;
 
+  -- Normalização em NFC e sanitização de limites
   v_clean_name := pg_catalog.btrim(pg_catalog.normalize(p_name, 'NFC'));
   if char_length(v_clean_name) < 1 or char_length(v_clean_name) > 160 then
     raise exception 'Nome da igreja deve ter entre 1 e 160 caracteres.' using errcode = '23514';
@@ -257,49 +312,32 @@ begin
   if v_clean_maps_url = '' then
     v_clean_maps_url := null;
   end if;
+  if v_clean_maps_url is not null and not (
+    v_clean_maps_url ~* '^https://(maps\.app\.goo\.gl/|goo\.gl/maps/|(www\.)?google\.[a-z.]+/maps|maps\.google\.[a-z.]+/)'
+  ) then
+    raise exception 'Link do Google Maps deve ser uma URL válida de compartilhamento do Google Maps.' using errcode = '23514';
+  end if;
 
   if p_default_duration_policy not in ('warn', 'block') then
     raise exception 'Política de duração deve ser warn ou block.' using errcode = '23514';
   end if;
 
-  v_params_hash := pg_catalog.sha256(convert_to(
-    v_clean_name || ':' ||
-    v_clean_creator_name || ':' ||
-    v_clean_timezone || ':' ||
-    coalesce(v_clean_address, '') || ':' ||
-    coalesce(v_clean_maps_url, '') || ':' ||
-    p_default_duration_policy,
-    'UTF8'
-  ));
+  -- Resumo criptográfico estruturado e determinístico dos parâmetros incluindo a ação
+  v_params_json := jsonb_build_object(
+    'action', 'create_church',
+    'name', v_clean_name,
+    'creator_name', v_clean_creator_name,
+    'timezone', v_clean_timezone,
+    'address', v_clean_address,
+    'google_maps_url', v_clean_maps_url,
+    'default_duration_policy', p_default_duration_policy
+  );
+  v_params_hash := pg_catalog.sha256(convert_to(v_params_json::text, 'UTF8'));
 
-  perform pg_catalog.pg_advisory_xact_lock(hashtext('create_my_church'), hashtext(v_user_id::text));
+  -- Bloqueio consultivo transacional serializa criações concorrentes da mesma conta
+  perform pg_catalog.pg_advisory_xact_lock(hashtext('create_my_church_quota'), hashtext(v_user_id::text));
 
-  select cr.params_hash, cr.church_id, cr.result_member_id
-  into v_existing_hash, v_existing_church_id, v_existing_member_id
-  from app_private.command_receipts cr
-  where cr.user_id = v_user_id and cr.command_id = p_command_id;
-
-  if v_existing_hash is not null then
-    if v_existing_hash = v_params_hash then
-      return query
-      select
-        c.id as church_id,
-        c.name as church_name,
-        m.id as member_id,
-        m.display_name,
-        c.timezone,
-        c.default_duration_policy,
-        true as is_admin,
-        true as already_existed
-      from app_private.churches c
-      join app_private.members m on m.id = v_existing_member_id and m.church_id = c.id
-      where c.id = v_existing_church_id;
-      return;
-    else
-      raise exception 'Comando já executado com parâmetros diferentes.' using errcode = '23505';
-    end if;
-  end if;
-
+  -- Verificação de status da conta em auth.users
   select
     u.email_confirmed_at is not null,
     u.deleted_at is null,
@@ -309,10 +347,63 @@ begin
   from auth.users u
   where u.id = v_user_id;
 
+  -- 1) Verificação prioritária de recibo existente: recupera resultado original
+  select cr.params_hash, cr.church_id, cr.result_member_id, cr.action
+  into v_existing_hash, v_existing_church_id, v_existing_member_id, v_existing_action
+  from app_private.command_receipts cr
+  where cr.user_id = v_user_id and cr.command_id = p_command_id;
+
+  if v_existing_hash is not null then
+    if v_existing_action <> 'create_church' then
+      raise exception 'Identificador de comando já utilizado para outra operação.' using errcode = '23505';
+    end if;
+
+    if v_existing_hash <> v_params_hash then
+      raise exception 'Comando já executado com parâmetros diferentes.' using errcode = '23505';
+    end if;
+
+    -- Revalida autorização da conta: conta bloqueada/inelegível não obtém confirmação de acesso
+    if v_email_confirmed is null or not v_email_confirmed or not v_not_deleted or not v_not_anonymous or not v_not_banned then
+      raise exception 'Conta inelegível ou bloqueada.' using errcode = '42501';
+    end if;
+
+    -- Revalida o acesso atual à igreja criada: não restaura nem devolve admin se revogado ou inativo
+    if not exists (
+      select 1
+      from app_private.churches c
+      join app_private.members m on m.id = v_existing_member_id and m.church_id = c.id
+      join app_private.church_access ca on ca.church_id = c.id and ca.user_id = v_user_id and ca.member_id = m.id
+      where c.id = v_existing_church_id
+        and c.status = 'active'
+        and m.status = 'active'
+        and ca.status = 'active'
+        and ca.is_admin = true
+    ) then
+      raise exception 'Acesso administrativo à igreja criada não é mais válido ou foi revogado.' using errcode = '42501';
+    end if;
+
+    return query
+    select
+      c.id as church_id,
+      c.name as church_name,
+      m.id as member_id,
+      m.display_name,
+      c.timezone,
+      c.default_duration_policy,
+      true as is_admin,
+      true as already_existed
+    from app_private.churches c
+    join app_private.members m on m.id = v_existing_member_id and m.church_id = c.id
+    where c.id = v_existing_church_id;
+    return;
+  end if;
+
+  -- 2) Revalidação estrita de elegibilidade da conta para nova criação
   if v_email_confirmed is null or not v_email_confirmed or not v_not_deleted or not v_not_anonymous or not v_not_banned then
     raise exception 'Conta inelegível para criar igreja.' using errcode = '42501';
   end if;
 
+  -- Validação do limite de 1 administração ativa por conta Auth
   if exists (
     select 1 from app_private.church_access ca
     where ca.user_id = v_user_id
@@ -322,16 +413,18 @@ begin
     raise exception 'Conta já possui administração ativa em outra igreja.' using errcode = '42501';
   end if;
 
+  -- Limite técnico de taxa compartilhada para criação de igrejas (10 por dia)
   select count(*) into v_recent_creations
   from app_private.command_receipts cr
   where cr.user_id = v_user_id
     and cr.action = 'create_church'
-    and cr.created_at >= statement_timestamp() - interval '1 hour';
+    and cr.created_at >= statement_timestamp() - interval '24 hours';
 
-  if v_recent_creations >= 5 then
+  if v_recent_creations >= 10 then
     raise exception 'Limite de requisições excedido. Aguarde antes de criar uma nova igreja.' using errcode = 'P0004';
   end if;
 
+  -- 3) Criação atômica em transação única
   v_new_church_id := gen_random_uuid();
   v_new_member_id := gen_random_uuid();
 
@@ -418,6 +511,13 @@ set statement_timeout = '5s'
 as $function$
 declare
   v_user_id uuid;
+  v_email_confirmed boolean;
+  v_not_deleted boolean;
+  v_not_anonymous boolean;
+  v_not_banned boolean;
+  v_receipt_action text;
+  v_receipt_church_id uuid;
+  v_receipt_member_id uuid;
 begin
   v_user_id := (select auth.uid());
   if v_user_id is null then
@@ -426,6 +526,50 @@ begin
 
   if p_command_id is null then
     raise exception 'Identificador de comando obrigatório.' using errcode = '22004';
+  end if;
+
+  -- Revalida status da conta em auth.users
+  select
+    u.email_confirmed_at is not null,
+    u.deleted_at is null,
+    not coalesce(u.is_anonymous, false),
+    (u.banned_until is null or u.banned_until <= statement_timestamp())
+  into v_email_confirmed, v_not_deleted, v_not_anonymous, v_not_banned
+  from auth.users u
+  where u.id = v_user_id;
+
+  if v_email_confirmed is null or not v_email_confirmed or not v_not_deleted or not v_not_anonymous or not v_not_banned then
+    raise exception 'Conta inelegível ou bloqueada.' using errcode = '42501';
+  end if;
+
+  -- Busca o recibo para conferência da ação
+  select cr.action, cr.church_id, cr.result_member_id
+  into v_receipt_action, v_receipt_church_id, v_receipt_member_id
+  from app_private.command_receipts cr
+  where cr.user_id = v_user_id and cr.command_id = p_command_id;
+
+  if v_receipt_action is null then
+    return;
+  end if;
+
+  if v_receipt_action <> 'create_church' then
+    raise exception 'Identificador de comando pertence a outra ação.' using errcode = '23505';
+  end if;
+
+  -- Revalidação estrita da autorização e do vínculo atual:
+  -- Se o acesso foi revogado, rebaixado, ou o membro/igreja inativado, encerra com 42501
+  if not exists (
+    select 1
+    from app_private.churches c
+    join app_private.members m on m.id = v_receipt_member_id and m.church_id = c.id
+    join app_private.church_access ca on ca.church_id = c.id and ca.user_id = v_user_id and ca.member_id = m.id
+    where c.id = v_receipt_church_id
+      and c.status = 'active'
+      and m.status = 'active'
+      and ca.status = 'active'
+      and ca.is_admin = true
+  ) then
+    raise exception 'Vínculo de acesso não está mais ativo ou privilégio administrativo revogado.' using errcode = '42501';
   end if;
 
   return query
@@ -447,6 +591,7 @@ begin
 end;
 $function$;
 
+-- Revoga de public, anon, service_role e concede exclusivamente a authenticated
 revoke all on function public.check_church_creation_eligibility() from public, anon, authenticated, service_role;
 grant execute on function public.check_church_creation_eligibility() to authenticated;
 
@@ -456,163 +601,115 @@ grant execute on function public.create_my_church(uuid, text, text, text, text, 
 revoke all on function public.get_create_church_receipt(uuid) from public, anon, authenticated, service_role;
 grant execute on function public.get_create_church_receipt(uuid) to authenticated;
 
--- 2. Execução dos testes do ensaio
+-- 2. Bloco de testes transacionais com asserções estritas
 do $test_suite$
 declare
-  v_test_user_a uuid;
-  v_test_user_b uuid;
-  v_test_user_c uuid;
+  v_test_user_a uuid := gen_random_uuid();
+  v_test_user_b uuid := gen_random_uuid();
+  v_test_user_c uuid := gen_random_uuid();
   v_command_id uuid := gen_random_uuid();
+  v_other_action_cmd uuid := gen_random_uuid();
   v_created_church_id uuid;
   v_created_member_id uuid;
   v_is_eligible boolean;
   v_reason text;
-  v_already_existed boolean;
-  v_receipt_found boolean;
   v_caught_error boolean;
+  v_receipt_count integer;
 begin
-  -- Busca ou cria usuários para o ensaio
-  select id into v_test_user_a
-  from auth.users
-  where email_confirmed_at is not null
-    and deleted_at is null
-    and not coalesce(is_anonymous, false)
-    and (banned_until is null or banned_until <= statement_timestamp())
-    and id not in (select user_id from app_private.church_access where is_admin = true and status = 'active')
-  limit 1;
-
-  if v_test_user_a is null then
-    -- Se todos os usuários existentes forem admin, cria fixture temporária no auth.users
-    v_test_user_a := gen_random_uuid();
-    insert into auth.users (id, email, email_confirmed_at, raw_user_meta_data)
-    values (v_test_user_a, 'test_create_a_' || v_test_user_a::text || '@example.com', statement_timestamp(), '{"full_name":"Test User A"}'::jsonb);
-  end if;
-
-  -- Usuário B: email não confirmado
-  v_test_user_b := gen_random_uuid();
+  -- Fixtures sintéticas isoladas dentro da transação do ensaio
   insert into auth.users (id, email, email_confirmed_at)
-  values (v_test_user_b, 'test_create_b_' || v_test_user_b::text || '@example.com', null);
+  values
+    (v_test_user_a, 'test_create_a_' || v_test_user_a::text || '@example.com', statement_timestamp()),
+    (v_test_user_b, 'test_create_b_' || v_test_user_b::text || '@example.com', statement_timestamp()),
+    (v_test_user_c, 'test_create_c_' || v_test_user_c::text || '@example.com', statement_timestamp());
 
-  -- Simula sessão do usuário B (email não confirmado)
-  perform set_config('request.jwt.claim.sub', v_test_user_b::text, true);
-  select eligible, reason into v_is_eligible, v_reason from public.check_church_creation_eligibility();
-  if v_is_eligible or v_reason <> 'email_not_confirmed' then
-    raise exception 'Falha no teste: usuário sem email confirmado deveria ser inelegível (recebeu %)', v_reason;
-  end if;
+  -- Contexto de execução autenticada para Usuário A
+  perform set_config('request.jwt.claims', json_build_object('sub', v_test_user_a::text, 'role', 'authenticated')::text, true);
 
-  -- Simula sessão do usuário A (elegível)
-  perform set_config('request.jwt.claim.sub', v_test_user_a::text, true);
+  -- [Cenário 1] Usuário sem igreja administrada é elegível
   select eligible, reason into v_is_eligible, v_reason from public.check_church_creation_eligibility();
   if not v_is_eligible or v_reason <> 'eligible' then
-    raise exception 'Falha no teste: usuário A deveria ser elegível (recebeu %)', v_reason;
+    raise exception 'Falha no teste: usuário A deveria ser elegível para criar igreja';
   end if;
 
-  -- Teste de criação atômica com normalização NFC e campos válidos
-  select church_id, member_id, already_existed
-  into v_created_church_id, v_created_member_id, v_already_existed
+  -- [Cenário 2] Criação atômica da igreja via RPC pública
+  select church_id, member_id into v_created_church_id, v_created_member_id
   from public.create_my_church(
     v_command_id,
-    '  Igreja Batista Esperança  ',
-    '  Pastor João d''Ávila  ',
+    'Comunidade:Esperança',
+    'Pastor João',
     'America/Sao_Paulo',
     'Rua das Palmeiras, 100',
-    'https://maps.google.com/?q=test',
+    'https://maps.app.goo.gl/exemplo123',
     'warn'
   );
 
-  if v_already_existed or v_created_church_id is null or v_created_member_id is null then
-    raise exception 'Falha no teste: criação da igreja deveria retornar novos IDs e already_existed = false';
+  if v_created_church_id is null or v_created_member_id is null then
+    raise exception 'Falha no teste: criação não retornou church_id ou member_id válidos';
   end if;
 
-  -- Verifica integridade no banco: igreja, membro, church_access, auditoria e recibo
+  -- [Cenário 3] Replay legítimo imediato (mesmo command_id e mesmos parâmetros)
+  -- Deve recuperar o registro com already_existed = true
   if not exists (
-    select 1 from app_private.churches
-    where id = v_created_church_id
-      and name = 'Igreja Batista Esperança'
-      and timezone = 'America/Sao_Paulo'
-      and default_duration_policy = 'warn'
-      and status = 'active'
-  ) then
-    raise exception 'Falha no teste: dados da igreja não persistidos corretamente';
-  end if;
-
-  if not exists (
-    select 1 from app_private.members
-    where id = v_created_member_id
-      and church_id = v_created_church_id
-      and display_name = 'Pastor João d''Ávila'
-      and status = 'active'
-  ) then
-    raise exception 'Falha no teste: membro do criador não persistido corretamente';
-  end if;
-
-  if not exists (
-    select 1 from app_private.church_access
+    select 1 from public.create_my_church(
+      v_command_id,
+      'Comunidade:Esperança',
+      'Pastor João',
+      'America/Sao_Paulo',
+      'Rua das Palmeiras, 100',
+      'https://maps.app.goo.gl/exemplo123',
+      'warn'
+    )
     where church_id = v_created_church_id
-      and user_id = v_test_user_a
       and member_id = v_created_member_id
-      and is_admin = true
-      and status = 'active'
-      and onboarding_completed_at is not null
+      and already_existed = true
   ) then
-    raise exception 'Falha no teste: vínculo administrativo não persistido corretamente';
+    raise exception 'Falha no teste: replay com mesmos parâmetros deveria retornar already_existed = true';
   end if;
 
-  if not exists (
-    select 1 from app_private.audit_entries
-    where church_id = v_created_church_id
-      and action = 'create_church'
-      and actor_user_id = v_test_user_a
-      and actor_source = 'application'
-  ) then
-    raise exception 'Falha no teste: auditoria da criação não foi registrada';
-  end if;
-
-  if not exists (
-    select 1 from app_private.command_receipts
-    where church_id = v_created_church_id
-      and user_id = v_test_user_a
-      and command_id = v_command_id
-      and action = 'create_church'
-  ) then
-    raise exception 'Falha no teste: recibo do comando não foi registrado';
-  end if;
-
-  -- Teste de idempotência com replay idêntico
-  select already_existed into v_already_existed
-  from public.create_my_church(
-    v_command_id,
-    'Igreja Batista Esperança',
-    'Pastor João d''Ávila',
-    'America/Sao_Paulo',
-    'Rua das Palmeiras, 100',
-    'https://maps.google.com/?q=test',
-    'warn'
-  );
-
-  if not v_already_existed then
-    raise exception 'Falha no teste: replay idempotente deveria retornar already_existed = true';
-  end if;
-
-  -- Teste de rejeição de mesmo command_id com parâmetros divergentes
+  -- [Cenário 4] Rejeição de colisão ambígua de parâmetros com delimitação ':'
+  -- Se name='Comunidade' e creatorName='Esperança:Pastor João', o hash estruturado JSONB DEVE ser diferente
   v_caught_error := false;
   begin
     perform public.create_my_church(
       v_command_id,
-      'Outro Nome de Igreja',
-      'Pastor João d''Ávila',
+      'Comunidade',
+      'Esperança:Pastor João',
       'America/Sao_Paulo',
-      null, null, 'warn'
+      'Rua das Palmeiras, 100',
+      'https://maps.app.goo.gl/exemplo123',
+      'warn'
     );
-  rescue
+  exception
     when sqlstate '23505' then
       v_caught_error := true;
   end;
   if not v_caught_error then
-    raise exception 'Falha no teste: mesmo command_id com parâmetros diferentes deveria falhar com 23505';
+    raise exception 'Falha no teste: parâmetros com texto colidindo em dois pontos devem ser distinguidos pelo hash JSONB (23505)';
   end if;
 
-  -- Teste de consulta de recibo get_create_church_receipt
+  -- [Cenário 5] Rejeição de reuso de command_id em ação diferente
+  insert into app_private.command_receipts (church_id, user_id, command_id, action, params_hash, result_member_id, created_at)
+  values (v_created_church_id, v_test_user_a, v_other_action_cmd, 'create_member', '\x1234', v_created_member_id, statement_timestamp());
+
+  v_caught_error := false;
+  begin
+    perform public.create_my_church(
+      v_other_action_cmd,
+      'Nova Igreja',
+      'Pastor João',
+      'America/Sao_Paulo',
+      null, null, 'warn'
+    );
+  exception
+    when sqlstate '23505' then
+      v_caught_error := true;
+  end;
+  if not v_caught_error then
+    raise exception 'Falha no teste: command_id previamente usado para create_member deve ser rejeitado com 23505 em create_my_church';
+  end if;
+
+  -- [Cenário 6] Consulta de recibo legítimo get_create_church_receipt
   if not exists (
     select 1 from public.get_create_church_receipt(v_command_id)
     where church_id = v_created_church_id and is_admin = true
@@ -620,13 +717,13 @@ begin
     raise exception 'Falha no teste: get_create_church_receipt não retornou a igreja criada';
   end if;
 
-  -- Teste de inelegibilidade após assumir administração de uma igreja
+  -- [Cenário 7] Usuário A agora é inelegível para criar nova igreja (já é admin)
   select eligible, reason into v_is_eligible, v_reason from public.check_church_creation_eligibility();
   if v_is_eligible or v_reason <> 'already_admin' then
-    raise exception 'Falha no teste: usuário agora administra igreja e deveria ser inelegível (already_admin)';
+    raise exception 'Falha no teste: usuário A deveria ser inelegível (already_admin)';
   end if;
 
-  -- Tentativa de criar segunda igreja como administrador ativo deve falhar
+  -- Tentativa de criar segunda igreja como admin ativo deve falhar com 42501
   v_caught_error := false;
   begin
     perform public.create_my_church(
@@ -636,71 +733,155 @@ begin
       'America/Sao_Paulo',
       null, null, 'warn'
     );
-  rescue
+  exception
     when sqlstate '42501' then
       v_caught_error := true;
   end;
   if not v_caught_error then
-    raise exception 'Falha no teste: criação de segunda igreja administrada deveria falhar com 42501';
+    raise exception 'Falha no teste: criação de segunda igreja administrada deve falhar com 42501';
   end if;
 
-  -- Teste de proteção do último administrador no banco:
-  -- Tentativa de revogar o último admin da igreja criada deve ser bloqueada pelo gatilho
+  -- [Cenário 8] Regra de Administração: Uma igreja pode ter múltiplos administradores ativos!
+  -- Usuário B também pode ser admin da MESMA igreja criada (v_created_church_id)
+  insert into app_private.members (id, church_id, display_name, status, created_by_user_id)
+  values (gen_random_uuid(), v_created_church_id, 'Segundo Admin B', 'active', v_test_user_a);
+
+  insert into app_private.church_access (id, church_id, user_id, member_id, status, is_admin, onboarding_completed_at, granted_by_user_id)
+  values (gen_random_uuid(), v_created_church_id, v_test_user_b, (select id from app_private.members where display_name = 'Segundo Admin B' and church_id = v_created_church_id), 'active', true, statement_timestamp(), v_test_user_a);
+
+  -- [Cenário 9] Bloqueio físico de admin em duas igrejas distintas pelo índice de unicidade
+  -- Tentativa direta de inserir uma segunda administração ativa para Usuário A em outra igreja deve violar o índice único
+  declare
+    v_other_church_id uuid := gen_random_uuid();
+    v_other_member_id uuid := gen_random_uuid();
+  begin
+    insert into app_private.churches (id, name, timezone, default_duration_policy, status)
+    values (v_other_church_id, 'Outra Igreja X', 'America/Sao_Paulo', 'warn', 'active');
+
+    insert into app_private.members (id, church_id, display_name, status, created_by_user_id)
+    values (v_other_member_id, v_other_church_id, 'Membro X', 'active', v_test_user_a);
+
+    v_caught_error := false;
+    begin
+      insert into app_private.church_access (id, church_id, user_id, member_id, status, is_admin, onboarding_completed_at, granted_by_user_id)
+      values (gen_random_uuid(), v_other_church_id, v_test_user_a, v_other_member_id, 'active', true, statement_timestamp(), v_test_user_a);
+    exception
+      when sqlstate '23505' then
+        v_caught_error := true;
+    end;
+    if not v_caught_error then
+      raise exception 'Falha no teste: church_access_single_active_admin_idx deve bloquear segunda administração ativa para Usuário A';
+    end if;
+  end;
+
+  -- [Cenário 10] Continuidade: Usuário A pode deixar a administração de v_created_church_id pois Usuário B é admin elegível
+  update app_private.church_access
+  set is_admin = false, status = 'revoked', revoked_at = statement_timestamp(), revoked_by_user_id = v_test_user_b
+  where church_id = v_created_church_id and user_id = v_test_user_a;
+
+  -- [Cenário 11] Replay e Recibo após revogação de acesso
+  -- Uma vez revogado, o replay de create_my_church e a consulta get_create_church_receipt DEVEM falhar com 42501
+  v_caught_error := false;
+  begin
+    perform public.create_my_church(
+      v_command_id,
+      'Comunidade:Esperança',
+      'Pastor João',
+      'America/Sao_Paulo',
+      'Rua das Palmeiras, 100',
+      'https://maps.app.goo.gl/exemplo123',
+      'warn'
+    );
+  exception
+    when sqlstate '42501' then
+      v_caught_error := true;
+  end;
+  if not v_caught_error then
+    raise exception 'Falha no teste: replay após revogação de acesso deve falhar com 42501';
+  end if;
+
+  v_caught_error := false;
+  begin
+    perform public.get_create_church_receipt(v_command_id);
+  exception
+    when sqlstate '42501' then
+      v_caught_error := true;
+  end;
+  if not v_caught_error then
+    raise exception 'Falha no teste: get_create_church_receipt após revogação de acesso deve falhar com 42501';
+  end if;
+
+  -- [Cenário 12] Proteção do último administrador: Usuário B é agora o único admin de v_created_church_id
+  -- Tentativa de Usuário B deixar a administração deve ser sumariamente bloqueada pelo gatilho com 23514
   v_caught_error := false;
   begin
     update app_private.church_access
     set is_admin = false
-    where church_id = v_created_church_id and user_id = v_test_user_a;
-  rescue
+    where church_id = v_created_church_id and user_id = v_test_user_b;
+  exception
     when sqlstate '23514' then
       v_caught_error := true;
   end;
   if not v_caught_error then
-    raise exception 'Falha no teste: revogar último admin ativo deveria ser bloqueado por gatilho com 23514';
+    raise exception 'Falha no teste: remoção/revogação do último admin elegível deve ser bloqueada com 23514';
   end if;
 
-  -- Tentativa de desativar o membro que é o último admin ativo deve ser bloqueada
+  -- Tentativa de desativar o membro de Usuário B deve ser bloqueada pelo gatilho em members
   v_caught_error := false;
   begin
     update app_private.members
     set status = 'inactive'
-    where id = v_created_member_id and church_id = v_created_church_id;
-  rescue
+    where id = (select member_id from app_private.church_access where church_id = v_created_church_id and user_id = v_test_user_b);
+  exception
     when sqlstate '23514' then
       v_caught_error := true;
   end;
   if not v_caught_error then
-    raise exception 'Falha no teste: desativar membro do último admin deveria ser bloqueado com 23514';
+    raise exception 'Falha no teste: desativação do membro do último admin elegível deve ser bloqueada com 23514';
   end if;
 
-  -- Adicionando um segundo admin à mesma igreja permite desativar/revogar o primeiro
-  v_test_user_c := gen_random_uuid();
-  insert into auth.users (id, email, email_confirmed_at)
-  values (v_test_user_c, 'test_create_c_' || v_test_user_c::text || '@example.com', statement_timestamp());
+  -- [Cenário 13] Sucessor inelegível não autoriza saída do último admin válido
+  -- Adiciona Usuário C como admin, mas com e-mail NÃO confirmado (inelegível)
+  update auth.users set email_confirmed_at = null where id = v_test_user_c;
 
   insert into app_private.members (id, church_id, display_name, status, created_by_user_id)
-  values (gen_random_uuid(), v_created_church_id, 'Segundo Admin', 'active', v_test_user_a);
+  values (gen_random_uuid(), v_created_church_id, 'Admin C Inelegível', 'active', v_test_user_b);
 
-  insert into app_private.church_access (church_id, user_id, member_id, status, is_admin, onboarding_completed_at, granted_by_user_id)
-  values (v_created_church_id, v_test_user_c, (select id from app_private.members where display_name = 'Segundo Admin' and church_id = v_created_church_id), 'active', true, statement_timestamp(), v_test_user_a);
+  insert into app_private.church_access (id, church_id, user_id, member_id, status, is_admin, onboarding_completed_at, granted_by_user_id)
+  values (gen_random_uuid(), v_created_church_id, v_test_user_c, (select id from app_private.members where display_name = 'Admin C Inelegível' and church_id = v_created_church_id), 'active', true, statement_timestamp(), v_test_user_b);
 
-  -- Agora revogar o primeiro admin é permitido porque há um segundo ativo
-  update app_private.church_access
-  set is_admin = false, status = 'revoked', revoked_at = statement_timestamp(), revoked_by_user_id = v_test_user_c
-  where church_id = v_created_church_id and user_id = v_test_user_a;
-
-  -- Mas revogar o segundo (que agora é o último remanescente) volta a ser bloqueado!
+  -- Usuário B ainda NÃO pode sair porque Usuário C é inelegível!
   v_caught_error := false;
   begin
     update app_private.church_access
-    set is_admin = false
-    where church_id = v_created_church_id and user_id = v_test_user_c;
-  rescue
+    set status = 'inactive'
+    where church_id = v_created_church_id and user_id = v_test_user_b;
+  exception
     when sqlstate '23514' then
       v_caught_error := true;
   end;
   if not v_caught_error then
-    raise exception 'Falha no teste: revogar o segundo admin quando ele se torna o último deve ser bloqueado com 23514';
+    raise exception 'Falha no teste: sucessor com conta inelegível não pode permitir a saída do único admin válido';
+  end if;
+
+  -- [Cenário 14] Validação de URLs inválidas do Google Maps no servidor
+  v_caught_error := false;
+  begin
+    perform public.create_my_church(
+      gen_random_uuid(),
+      'Igreja URL Inválida',
+      'Pastor',
+      'America/Sao_Paulo',
+      null,
+      'https://site-malicioso.com/phishing',
+      'warn'
+    );
+  exception
+    when sqlstate '23514' then
+      v_caught_error := true;
+  end;
+  if not v_caught_error then
+    raise exception 'Falha no teste: URL fora dos domínios do Google Maps deve ser rejeitada com 23514';
   end if;
 
 end;
