@@ -12,26 +12,56 @@ import { useAuth } from '../context/AuthContext';
  *   - Botão "Sair" para retornar ao login.
  */
 export default function AccessErrorPage() {
-  const { retryAccessCheck, signOut } = useAuth();
+  const { retryAccessCheck, signOut, creationConfirmation, session, getAuthSnapshot } = useAuth();
+
+  const authSnapshot = getAuthSnapshot?.() || {};
+  const currentUserId = authSnapshot.userId || session?.user?.id;
+  const currentSessionId = authSnapshot.sessionId;
+
+  // Confirmação válida pertence à identidade e geração da sessão ativas
+  const isCreationConfirmed = Boolean(
+    creationConfirmation?.churchId &&
+    creationConfirmation?.userId === currentUserId &&
+    (!currentSessionId || creationConfirmation?.sessionId === currentSessionId)
+  );
 
   return (
     <div className="access-error-page" role="main">
-      <div className="access-error-card" aria-label="Falha ao verificar o acesso">
+      <div
+        className="access-error-card"
+        aria-label={isCreationConfirmed ? "Igreja criada, falha ao carregar acesso" : "Falha ao verificar o acesso"}
+      >
 
-        {/* Ícone de erro */}
-        <div className="access-error-icon" aria-hidden="true">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75"
-               strokeLinecap="round" strokeLinejoin="round">
-            <circle cx="12" cy="12" r="10" />
-            <line x1="12" y1="8" x2="12" y2="12" />
-            <line x1="12" y1="16" x2="12.01" y2="16" />
-          </svg>
+        {/* Ícone */}
+        <div className={`access-error-icon ${isCreationConfirmed ? 'access-error-icon--success' : ''}`} aria-hidden="true">
+          {isCreationConfirmed ? (
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"
+                 strokeLinecap="round" strokeLinejoin="round">
+              <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14" />
+              <polyline points="22 4 12 14.01 9 11.01" />
+            </svg>
+          ) : (
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75"
+                 strokeLinecap="round" strokeLinejoin="round">
+              <circle cx="12" cy="12" r="10" />
+              <line x1="12" y1="8" x2="12" y2="12" />
+              <line x1="12" y1="16" x2="12.01" y2="16" />
+            </svg>
+          )}
         </div>
 
-        <h1 className="access-error-title">Não foi possível verificar o acesso</h1>
+        <h1 className="access-error-title">
+          {isCreationConfirmed ? 'Sua igreja foi criada' : 'Não foi possível verificar o acesso'}
+        </h1>
         <p className="access-error-description">
-          Houve um problema ao consultar suas permissões. Isso pode ser uma
-          falha temporária de conexão. Tente novamente ou saia e entre de volta.
+          {isCreationConfirmed ? (
+            <>
+              Sua igreja{creationConfirmation.churchName ? <strong> {creationConfirmation.churchName}</strong> : ''} foi criada. Não foi possível carregar o acesso agora.
+              Tente novamente para entrar diretamente na igreja criada.
+            </>
+          ) : (
+            'Houve um problema ao consultar suas permissões. Isso pode ser uma falha temporária de conexão. Tente novamente ou saia e entre de volta.'
+          )}
         </p>
 
         <div className="access-error-actions">
@@ -40,14 +70,14 @@ export default function AccessErrorPage() {
             className="btn btn-primary access-error-retry-btn"
             onClick={retryAccessCheck}
             type="button"
-            aria-label="Tentar verificar o acesso novamente"
+            aria-label={isCreationConfirmed ? "Tentar carregar o acesso da igreja criada" : "Tentar verificar o acesso novamente"}
           >
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor"
                  strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
               <polyline points="1 4 1 10 7 10" />
               <path d="M3.51 15a9 9 0 1 0 .49-3.01" />
             </svg>
-            Tentar novamente
+            {isCreationConfirmed ? 'Tentar carregar acesso' : 'Tentar novamente'}
           </button>
 
           <button
@@ -120,6 +150,12 @@ export default function AccessErrorPage() {
         .access-error-icon svg {
           width: 32px;
           height: 32px;
+        }
+
+        .access-error-icon--success {
+          background: var(--status-success-bg, rgba(34, 197, 94, 0.1));
+          border-color: var(--status-success-border, rgba(34, 197, 94, 0.3));
+          color: var(--status-success-text, #16a34a);
         }
 
         .access-error-title {

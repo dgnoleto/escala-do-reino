@@ -1130,7 +1130,7 @@ describe('7. Proteção contra Respostas Antigas, Isolamento de Sessão e Recupe
     assert.equal(result.status, 'STALE_SESSION');
   });
 
-  it('ligação real do modal à fonte viva do AuthContext: logout durante envio descarta callback, bloqueia onSuccess e preserva storage', async () => {
+  it('simulação lógica de coordenação do modal: logout durante envio descarta callback, bloqueia onSuccess e preserva storage (cobertura com React Test Renderer em church-components-real.test.js)', async () => {
     const storage = createMockStorage();
     let authSnapshot = {
       userId: 'user-modal-living',
@@ -1220,7 +1220,7 @@ describe('7. Proteção contra Respostas Antigas, Isolamento de Sessão e Recupe
     assert.equal(isSubmittingState, true, 'isSubmitting não deve ser alterado após invalidação da sessão');
   });
 
-  it('contrato de entrada na igreja criada a partir de AccessPendingPage: refreshAccess recebe church_id direto, destino é a igreja criada e falha de recarga não re-executa criação', async () => {
+  it('simulação lógica de parâmetros e retentativa em AccessPendingPage: refreshAccess recebe church_id direto, destino é a igreja criada e falha de recarga não re-executa criação', async () => {
     const receivedPreferredChurchIds = [];
     let refreshShouldFail = true;
 

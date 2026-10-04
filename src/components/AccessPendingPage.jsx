@@ -29,7 +29,7 @@ import CreateChurchModal from './CreateChurchModal';
  * - Conclusão com sucesso redireciona com segurança para a igreja criada via refreshAccess.
  */
 export default function AccessPendingPage() {
-  const { session, signOut, refreshAccess } = useAuth();
+  const { session, signOut, refreshAccess, recordCreationConfirmation } = useAuth();
 
   const user = session?.user;
   const displayName = user?.user_metadata?.full_name || user?.user_metadata?.name || null;
@@ -100,6 +100,9 @@ export default function AccessPendingPage() {
     setIsCreateModalOpen(false);
     setConfirmedChurch(createdChurch);
     setAccessReloadError(null);
+    if (createdChurch?.church_id && recordCreationConfirmation) {
+      recordCreationConfirmation(createdChurch);
+    }
     if (createdChurch?.church_id && refreshAccess) {
       try {
         const res = await refreshAccess(createdChurch.church_id);
@@ -115,6 +118,9 @@ export default function AccessPendingPage() {
   async function handleRetryAccessReload() {
     if (confirmedChurch?.church_id && refreshAccess) {
       setAccessReloadError(null);
+      if (recordCreationConfirmation) {
+        recordCreationConfirmation(confirmedChurch);
+      }
       try {
         const res = await refreshAccess(confirmedChurch.church_id);
         if (res && res.success === false && res.error) {

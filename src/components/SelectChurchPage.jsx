@@ -11,7 +11,7 @@ import { loadPendingChurchCommand } from '../utils/churchCommandService';
  * Garante que nenhuma igreja seja selecionada silenciosamente como fallback.
  */
 export default function SelectChurchPage() {
-  const { availableAccesses, selectChurch, signOut, session } = useAuth();
+  const { availableAccesses, selectChurch, signOut, session, recordCreationConfirmation } = useAuth();
   const userEmail = session?.user?.email ?? '';
   const userId = session?.user?.id;
 
@@ -130,6 +130,9 @@ export default function SelectChurchPage() {
         onSuccess={(createdChurch) => {
           setIsCreateModalOpen(false);
           setPendingCommand(null);
+          if (createdChurch?.church_id && recordCreationConfirmation) {
+            recordCreationConfirmation(createdChurch);
+          }
           if (createdChurch?.church_id && selectChurch) {
             selectChurch(createdChurch.church_id);
           }

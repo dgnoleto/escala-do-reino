@@ -27,7 +27,7 @@ import { checkChurchCreationEligibility, loadPendingChurchCommand } from '../uti
  * Acessibilidade: foco inicial no título, regiões semânticas, rótulos descritivos.
  */
 export default function ChurchHomePage() {
-  const { session, churchAccess, availableAccesses, selectChurch, signOut, refreshAccess } = useAuth();
+  const { session, churchAccess, availableAccesses, selectChurch, signOut, refreshAccess, recordCreationConfirmation } = useAuth();
   const [currentView, setCurrentView] = useState('home');
   const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
 
@@ -301,6 +301,9 @@ export default function ChurchHomePage() {
         onSuccess={(createdChurch) => {
           setIsCreateModalOpen(false);
           setPendingCommand(null);
+          if (createdChurch?.church_id && recordCreationConfirmation) {
+            recordCreationConfirmation(createdChurch);
+          }
           if (createdChurch?.church_id && refreshAccess) {
             refreshAccess(createdChurch.church_id);
           }
