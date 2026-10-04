@@ -56,8 +56,16 @@ function getBrowserSuggestedTimezone() {
 }
 
 export default function CreateChurchModal({ isOpen, onClose, onSuccess }) {
-  const { session } = useAuth();
+  const { session, sessionId } = useAuth();
   const userId = session?.user?.id;
+
+  const isMountedRef = useRef(true);
+  useEffect(() => {
+    isMountedRef.current = true;
+    return () => {
+      isMountedRef.current = false;
+    };
+  }, []);
 
   // Sugestão de nome a partir dos metadados de login (permanece visível e editável)
   const suggestedCreatorName =
@@ -77,6 +85,16 @@ export default function CreateChurchModal({ isOpen, onClose, onSuccess }) {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isRecovering, setIsRecovering] = useState(false);
   const [uncertainCommandId, setUncertainCommandId] = useState(null);
+
+  // Fecha o modal e limpa estados se a sessão for encerrada ou trocada
+  useEffect(() => {
+    if (!userId && isOpen && onClose) {
+      setIsSubmitting(false);
+      setIsRecovering(false);
+      setUncertainCommandId(null);
+      onClose();
+    }
+  }, [userId, isOpen, onClose]);
 
   // Inicializa o nome sugerido se mudar a sessão
   useEffect(() => {
@@ -159,18 +177,32 @@ export default function CreateChurchModal({ isOpen, onClose, onSuccess }) {
 
   async function handleRecoverUncertainCommand() {
     if (!uncertainCommandId || !userId || !supabase) return;
+    const recoveringCommandId = uncertainCommandId;
+    const currentSessionId = sessionId;
+    const currentUserId = userId;
     setIsRecovering(true);
     setSubmitError(null);
 
     try {
       const result = await checkChurchReceipt({
         supabaseClient: supabase,
-        commandId: uncertainCommandId,
+        commandId: recoveringCommandId,
+        sessionGeneration: currentSessionId,
+        isSessionValid: () => isMountedRef.current && session?.user?.id === currentUserId && sessionId === currentSessionId,
       });
+
+      // Descartar se o componente foi desmontado ou a sessão/usuário mudou
+      if (!isMountedRef.current || session?.user?.id !== currentUserId || sessionId !== currentSessionId) {
+        return;
+      }
+
+      if (result.status === 'STALE_SESSION') {
+        return;
+      }
 
       if (result.status === 'RECEIPT_FOUND') {
         if (typeof window !== 'undefined' && window.sessionStorage) {
-          removePendingChurchCommand(window.sessionStorage, userId);
+          removePendingChurchCommand(window.sessionStorage, currentUserId, recoveringCommandId);
         }
         setUncertainCommandId(null);
         if (onSuccess) onSuccess(result.record);
@@ -187,9 +219,14 @@ export default function CreateChurchModal({ isOpen, onClose, onSuccess }) {
         );
       }
     } catch (err) {
+      if (!isMountedRef.current || session?.user?.id !== currentUserId || sessionId !== currentSessionId) {
+        return;
+      }
       setSubmitError('Erro ao consultar recibo de recuperação.');
     } finally {
-      setIsRecovering(false);
+      if (isMountedRef.current && session?.user?.id === currentUserId && sessionId === currentSessionId) {
+        setIsRecovering(false);
+      }
     }
   }
 
@@ -212,15 +249,27 @@ export default function CreateChurchModal({ isOpen, onClose, onSuccess }) {
     }
 
     setFieldErrors({});
+    const currentSessionId = sessionId;
+    const currentUserId = userId;
     setIsSubmitting(true);
 
     try {
       const result = await dispatchChurchCreation({
         supabaseClient: supabase,
         storage: typeof window !== 'undefined' ? window.sessionStorage : null,
-        userId,
+        userId: currentUserId,
         churchData: validation.normalizedData,
+        sessionGeneration: currentSessionId,
+        isSessionValid: () => isMountedRef.current && session?.user?.id === currentUserId && sessionId === currentSessionId,
       });
+
+      if (!isMountedRef.current || session?.user?.id !== currentUserId || sessionId !== currentSessionId) {
+        return;
+      }
+
+      if (result.status === 'STALE_SESSION') {
+        return;
+      }
 
       if (result.status === 'SUCCESS') {
         setUncertainCommandId(null);
@@ -244,9 +293,14 @@ export default function CreateChurchModal({ isOpen, onClose, onSuccess }) {
       // Rejeição definitiva
       setSubmitError(result.error || 'Não foi possível criar a igreja.');
     } catch (err) {
+      if (!isMountedRef.current || session?.user?.id !== currentUserId || sessionId !== currentSessionId) {
+        return;
+      }
       setSubmitError('Erro inesperado ao processar criação da igreja.');
     } finally {
-      setIsSubmitting(false);
+      if (isMountedRef.current && session?.user?.id === currentUserId && sessionId === currentSessionId) {
+        setIsSubmitting(false);
+      }
     }
   }
 

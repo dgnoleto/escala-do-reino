@@ -390,7 +390,7 @@ begin
     v_clean_maps_url := null;
   end if;
   if v_clean_maps_url is not null and not (
-    v_clean_maps_url ~* '^https://(maps\.app\.goo\.gl/|goo\.gl/maps/|(www\.)?google\.[a-z.]+/maps|maps\.google\.[a-z.]+/)'
+    v_clean_maps_url ~* '^https://(maps\.app\.goo\.gl/|goo\.gl/maps/|(www\.)?google\.(com(\.[a-z]{2})?|[a-z]{2})/maps|maps\.google\.(com(\.[a-z]{2})?|[a-z]{2})/)'
   ) then
     raise exception 'Link do Google Maps deve ser uma URL válida de compartilhamento do Google Maps.' using errcode = '23514';
   end if;

@@ -1,6 +1,8 @@
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import { useAuth } from '../context/AuthContext';
-import { Church, ShieldCheck, User, LogOut } from 'lucide-react';
+import { Church, ShieldCheck, User, LogOut, RefreshCw } from 'lucide-react';
+import CreateChurchModal from './CreateChurchModal';
+import { loadPendingChurchCommand } from '../utils/churchCommandService';
 
 /**
  * SelectChurchPage — exibida quando a conta autenticada possui múltiplos
@@ -11,6 +13,17 @@ import { Church, ShieldCheck, User, LogOut } from 'lucide-react';
 export default function SelectChurchPage() {
   const { availableAccesses, selectChurch, signOut, session } = useAuth();
   const userEmail = session?.user?.email ?? '';
+  const userId = session?.user?.id;
+
+  const [pendingCommand, setPendingCommand] = useState(null);
+  const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
+
+  useEffect(() => {
+    if (typeof window !== 'undefined' && window.sessionStorage && userId) {
+      const cmd = loadPendingChurchCommand(window.sessionStorage, userId);
+      setPendingCommand(cmd);
+    }
+  }, [userId, isCreateModalOpen]);
 
   return (
     <div className="select-church-page" role="main" aria-label="Seleção de Igreja">
@@ -29,6 +42,49 @@ export default function SelectChurchPage() {
             </p>
           )}
         </div>
+
+        {/* Card de Recuperação Acessível: comando pendente retido no storage para esta conta */}
+        {pendingCommand && (
+          <div
+            className="select-church-recovery-card"
+            style={{
+              background: 'var(--primary-surface, #eff6ff)',
+              border: '1.5px solid var(--primary, #2563eb)',
+              borderRadius: '12px',
+              padding: '16px',
+              marginBottom: '20px',
+              display: 'flex',
+              flexDirection: 'column',
+              gap: '10px',
+              textAlign: 'left',
+            }}
+            role="region"
+            aria-label="Comando de criação de igreja pendente de confirmação"
+          >
+            <div style={{ display: 'flex', alignItems: 'flex-start', gap: '12px' }}>
+              <RefreshCw size={20} className="spin" color="var(--primary, #2563eb)" style={{ flexShrink: 0, marginTop: '2px' }} />
+              <div>
+                <strong style={{ fontSize: '0.9rem', color: 'var(--text-primary)' }}>
+                  Envio de igreja pendente de confirmação
+                </strong>
+                <p style={{ margin: '4px 0 0', fontSize: '0.8rem', color: 'var(--text-secondary)', lineHeight: 1.4 }}>
+                  Existe um comando de criação não confirmado para a igreja{' '}
+                  <strong>{pendingCommand.churchData?.name || 'solicitada'}</strong>.
+                </p>
+              </div>
+            </div>
+            <button
+              type="button"
+              className="btn btn-primary"
+              onClick={() => setIsCreateModalOpen(true)}
+              id="btn-recover-pending-church-select"
+              style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: '8px', fontSize: '0.85rem' }}
+            >
+              <RefreshCw size={14} />
+              Verificar resultado / Recuperar
+            </button>
+          </div>
+        )}
 
         <div className="select-church-list" role="region" aria-label="Igrejas disponíveis">
           {availableAccesses && availableAccesses.map((acc) => (
@@ -66,6 +122,19 @@ export default function SelectChurchPage() {
           </button>
         </div>
       </div>
+
+      {/* Modal Criar Minha Igreja / Recuperação */}
+      <CreateChurchModal
+        isOpen={isCreateModalOpen}
+        onClose={() => setIsCreateModalOpen(false)}
+        onSuccess={(createdChurch) => {
+          setIsCreateModalOpen(false);
+          setPendingCommand(null);
+          if (createdChurch?.church_id && selectChurch) {
+            selectChurch(createdChurch.church_id);
+          }
+        }}
+      />
 
       <style>{`
         .select-church-page {

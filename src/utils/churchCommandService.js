@@ -96,6 +96,23 @@ export function validateAndNormalizeChurchInput(input = {}) {
   };
 }
 
+let churchSessionGeneration = 0;
+
+/**
+ * Incrementa e invalida a geração de sessão para comandos de igreja.
+ */
+export function invalidateChurchCommandSession() {
+  churchSessionGeneration += 1;
+  return churchSessionGeneration;
+}
+
+/**
+ * Retorna o identificador de geração de sessão atual para comandos de igreja.
+ */
+export function getChurchCommandSessionGeneration() {
+  return churchSessionGeneration;
+}
+
 /**
  * Obtém a chave de armazenamento de sessão para um usuário.
  */
@@ -143,21 +160,32 @@ export function loadPendingChurchCommand(storage, userId) {
 
 /**
  * Remove comando pendente do usuário.
+ * Se expectedCommandId for informado, apenas remove se o comando atual coincidir exatamente.
  */
-export function removePendingChurchCommand(storage, userId) {
-  if (!storage || !userId) return;
+export function removePendingChurchCommand(storage, userId, expectedCommandId = null) {
+  if (!storage || !userId) return false;
   try {
     const key = getChurchCommandStorageKey(userId);
+    if (expectedCommandId) {
+      const existing = loadPendingChurchCommand(storage, userId);
+      if (existing && existing.commandId && existing.commandId !== expectedCommandId) {
+        console.warn(`[churchCommandService] Tentativa de remover comando divergente bloqueada. Esperado: ${expectedCommandId}, Encontrado: ${existing.commandId}`);
+        return false;
+      }
+    }
     storage.removeItem(key);
+    return true;
   } catch (err) {
     console.error('[churchCommandService] Falha ao remover comando pendente:', err);
+    return false;
   }
 }
 
 /**
- * Limpa todos os comandos pendentes de igreja de qualquer conta.
+ * Limpa todos os comandos pendentes de igreja de qualquer conta e invalida a geração de sessão.
  */
 export function clearAllChurchCommandStorage(storage) {
+  invalidateChurchCommandSession();
   if (!storage) return;
   try {
     const keysToRemove = [];
@@ -382,10 +410,19 @@ export async function checkChurchCreationEligibility(supabaseClient) {
 /**
  * Consulta recibo de comando de criação de igreja para recuperação.
  */
-export async function checkChurchReceipt({ supabaseClient, commandId }) {
+export async function checkChurchReceipt({
+  supabaseClient,
+  commandId,
+  sessionGeneration = null,
+  isSessionValid = null,
+}) {
   if (!supabaseClient || !commandId) {
     return classifyReceiptCheckResult(null, new Error('Parâmetros inválidos para recibo.'));
   }
+
+  const initialGen = sessionGeneration !== null && sessionGeneration !== undefined
+    ? sessionGeneration
+    : getChurchCommandSessionGeneration();
 
   try {
     const { data, error } = await supabaseClient
@@ -394,8 +431,33 @@ export async function checkChurchReceipt({ supabaseClient, commandId }) {
         p_command_id: commandId,
       });
 
+    const currentGen = sessionGeneration !== null && sessionGeneration !== undefined
+      ? sessionGeneration
+      : getChurchCommandSessionGeneration();
+    const sessionStillValid = currentGen === initialGen && (!isSessionValid || isSessionValid());
+
+    if (!sessionStillValid) {
+      return {
+        status: 'STALE_SESSION',
+        shouldRetainCommand: true,
+        error: 'Sessão alterada ou encerrada durante a verificação de recibo.',
+      };
+    }
+
     return classifyReceiptCheckResult(data, error);
   } catch (err) {
+    const currentGen = sessionGeneration !== null && sessionGeneration !== undefined
+      ? sessionGeneration
+      : getChurchCommandSessionGeneration();
+    const sessionStillValid = currentGen === initialGen && (!isSessionValid || isSessionValid());
+
+    if (!sessionStillValid) {
+      return {
+        status: 'STALE_SESSION',
+        shouldRetainCommand: true,
+        error: 'Sessão alterada ou encerrada durante a verificação de recibo.',
+      };
+    }
     return classifyReceiptCheckResult(null, err);
   }
 }
@@ -408,13 +470,18 @@ export async function checkChurchReceipt({ supabaseClient, commandId }) {
  * @param {Storage} params.storage
  * @param {string} params.userId
  * @param {object} params.churchData
- * @returns {Promise<{ status: 'SUCCESS'|'UNCERTAIN'|'DEFINITIVE_ERROR'|'STORAGE_ERROR', data?: object, error?: string, commandId?: string }>}
+ * @param {number|null} [params.sessionGeneration]
+ * @param {(() => boolean)|null} [params.isSessionValid]
+ * @returns {Promise<{ status: 'SUCCESS'|'UNCERTAIN'|'DEFINITIVE_ERROR'|'STORAGE_ERROR'|'STALE_SESSION', data?: object, error?: string, commandId?: string }>}
  */
 export async function dispatchChurchCreation({
   supabaseClient,
   storage,
   userId,
   churchData,
+  commandId: customCommandId = null,
+  sessionGeneration = null,
+  isSessionValid = null,
 }) {
   if (!userId) {
     return { status: 'DEFINITIVE_ERROR', error: 'Usuário não autenticado.' };
@@ -436,12 +503,12 @@ export async function dispatchChurchCreation({
     // Uma retentativa deve usar integralmente os parâmetros persistidos no storage
     dataToSend = pendingCmd.churchData;
   } else {
-    commandId = (typeof crypto !== 'undefined' && crypto.randomUUID)
+    commandId = customCommandId || ((typeof crypto !== 'undefined' && crypto.randomUUID)
       ? crypto.randomUUID()
       : 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
           const r = (Math.random() * 16) | 0;
           return (c === 'x' ? r : (r & 0x3) | 0x8).toString(16);
-        });
+        }));
 
     const saved = savePendingChurchCommand(storage, userId, {
       commandId,
@@ -458,6 +525,10 @@ export async function dispatchChurchCreation({
     dataToSend = normalizedData;
   }
 
+  const initialGen = sessionGeneration !== null && sessionGeneration !== undefined
+    ? sessionGeneration
+    : getChurchCommandSessionGeneration();
+
   // 2. Executa a chamada RPC no servidor
   try {
     const { data, error } = await supabaseClient
@@ -472,9 +543,24 @@ export async function dispatchChurchCreation({
         p_default_duration_policy: dataToSend.defaultDurationPolicy,
       });
 
+    const currentGen = sessionGeneration !== null && sessionGeneration !== undefined
+      ? sessionGeneration
+      : getChurchCommandSessionGeneration();
+    const sessionStillValid = currentGen === initialGen && (!isSessionValid || isSessionValid());
+
+    if (!sessionStillValid) {
+      // Sessão mudou ou foi encerrada durante o voo da requisição.
+      // NÃO remover nada do storage e NÃO tratar como sucesso da sessão atual.
+      return {
+        status: 'STALE_SESSION',
+        error: 'A sessão foi encerrada ou alterada antes da conclusão da operação.',
+        commandId,
+      };
+    }
+
     if (error) {
       if (isDefinitiveServerError(error)) {
-        removePendingChurchCommand(storage, userId);
+        removePendingChurchCommand(storage, userId, commandId);
         return {
           status: 'DEFINITIVE_ERROR',
           error: error.message || 'Erro definitivo ao criar igreja.',
@@ -508,16 +594,29 @@ export async function dispatchChurchCreation({
       };
     }
 
-    // Sucesso confirmado com dados íntegros
-    removePendingChurchCommand(storage, userId);
+    // Sucesso confirmado com dados íntegros: encerra estritamente o comando correspondente
+    removePendingChurchCommand(storage, userId, commandId);
     return {
       status: 'SUCCESS',
       data: row,
       commandId,
     };
   } catch (unexpected) {
+    const currentGen = sessionGeneration !== null && sessionGeneration !== undefined
+      ? sessionGeneration
+      : getChurchCommandSessionGeneration();
+    const sessionStillValid = currentGen === initialGen && (!isSessionValid || isSessionValid());
+
+    if (!sessionStillValid) {
+      return {
+        status: 'STALE_SESSION',
+        error: 'A sessão foi encerrada ou alterada antes da conclusão da operação.',
+        commandId,
+      };
+    }
+
     if (isDefinitiveServerError(unexpected)) {
-      removePendingChurchCommand(storage, userId);
+      removePendingChurchCommand(storage, userId, commandId);
       return {
         status: 'DEFINITIVE_ERROR',
         error: unexpected.message || 'Erro ao processar criação.',

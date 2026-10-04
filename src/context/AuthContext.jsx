@@ -6,6 +6,7 @@ import {
 } from '../utils/memberCommandService';
 import {
   clearAllChurchCommandStorage,
+  invalidateChurchCommandSession,
 } from '../utils/churchCommandService';
 
 const AuthContext = createContext(null);
@@ -419,6 +420,7 @@ export function AuthProvider({ children }) {
     // Invalida sessões e gerações imediatamente para descartar qualquer resposta em voo
     authGenerationRef.current += 1;
     sessionIdRef.current += 1;
+    invalidateChurchCommandSession();
     const uid = currentUserIdRef.current;
     currentUserIdRef.current = null;
     clearAccessContext();
@@ -448,6 +450,7 @@ export function AuthProvider({ children }) {
     <AuthContext.Provider
       value={{
         session,
+        sessionId: sessionIdRef.current,
         authState,
         authError,
         setAuthError,

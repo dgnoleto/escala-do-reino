@@ -3,8 +3,8 @@ import { useAuth } from '../context/AuthContext';
 import { supabase } from '../lib/supabaseClient';
 import MembersPage from './MembersPage';
 import CreateChurchModal from './CreateChurchModal';
-import { Church, PlusCircle, ShieldAlert, Loader2, AlertCircle, Mail } from 'lucide-react';
-import { checkChurchCreationEligibility } from '../utils/churchCommandService';
+import { Church, PlusCircle, ShieldAlert, Loader2, AlertCircle, Mail, RefreshCw } from 'lucide-react';
+import { checkChurchCreationEligibility, loadPendingChurchCommand } from '../utils/churchCommandService';
 
 /**
  * ChurchHomePage — tela inicial para contas com vínculo confirmado.
@@ -27,7 +27,7 @@ import { checkChurchCreationEligibility } from '../utils/churchCommandService';
  * Acessibilidade: foco inicial no título, regiões semânticas, rótulos descritivos.
  */
 export default function ChurchHomePage() {
-  const { churchAccess, availableAccesses, selectChurch, signOut, refreshAccess } = useAuth();
+  const { session, churchAccess, availableAccesses, selectChurch, signOut, refreshAccess } = useAuth();
   const [currentView, setCurrentView] = useState('home');
   const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
 
@@ -35,10 +35,21 @@ export default function ChurchHomePage() {
   const [eligibilityData, setEligibilityData] = useState(null);
   const [eligibilityLoading, setEligibilityLoading] = useState(false);
 
+  // Comando pendente de criação retido na sessão
+  const [pendingCommand, setPendingCommand] = useState(null);
+
   // Campos provêm exclusivamente do retorno da função RPC autenticada.
   const displayName = churchAccess?.display_name ?? '';
   const churchName  = churchAccess?.church_name  ?? '';
   const isAdmin     = churchAccess?.is_admin     ?? false;
+  const userId      = session?.user?.id;
+
+  useEffect(() => {
+    if (typeof window !== 'undefined' && window.sessionStorage && userId) {
+      const cmd = loadPendingChurchCommand(window.sessionStorage, userId);
+      setPendingCommand(cmd);
+    }
+  }, [userId, isCreateModalOpen]);
 
   useEffect(() => {
     let isMounted = true;
@@ -129,6 +140,48 @@ export default function ChurchHomePage() {
           <span>{profileLabel}</span>
         </div>
 
+        {/* Card de Recuperação Acessível: existe comando de criação pendente nesta conta */}
+        {pendingCommand && (
+          <div
+            className="church-home-recovery-card"
+            style={{
+              background: 'var(--primary-surface, #eff6ff)',
+              border: '1.5px solid var(--primary, #2563eb)',
+              borderRadius: '12px',
+              padding: '16px',
+              margin: '12px 0 16px',
+              display: 'flex',
+              flexDirection: 'column',
+              gap: '10px',
+            }}
+            role="region"
+            aria-label="Comando de criação de igreja pendente de confirmação"
+          >
+            <div style={{ display: 'flex', alignItems: 'flex-start', gap: '12px' }}>
+              <RefreshCw size={20} className="spin" color="var(--primary, #2563eb)" style={{ flexShrink: 0, marginTop: '2px' }} />
+              <div>
+                <strong style={{ fontSize: '0.9rem', color: 'var(--text-primary)' }}>
+                  Envio de igreja pendente de confirmação
+                </strong>
+                <p style={{ margin: '4px 0 0', fontSize: '0.8rem', color: 'var(--text-secondary)', lineHeight: 1.4 }}>
+                  Existe um comando de criação não confirmado para a igreja{' '}
+                  <strong>{pendingCommand.churchData?.name || 'solicitada'}</strong>.
+                </p>
+              </div>
+            </div>
+            <button
+              type="button"
+              className="btn btn-primary"
+              onClick={() => setIsCreateModalOpen(true)}
+              id="btn-recover-pending-church-home"
+              style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: '8px', fontSize: '0.85rem' }}
+            >
+              <RefreshCw size={14} />
+              Verificar resultado / Recuperar
+            </button>
+          </div>
+        )}
+
         {/* Bloco de Gestão de Membros exclusivo para Administrador */}
         {isAdmin && (
           <div className="church-home-admin-section">
@@ -162,7 +215,7 @@ export default function ChurchHomePage() {
         )}
 
         {/* Aviso de limite de administração para Administrador */}
-        {isAdmin && (
+        {isAdmin && !pendingCommand && (
           <div className="church-home-admin-limit-notice" role="note">
             <ShieldAlert size={16} className="church-home-admin-limit-icon" aria-hidden="true" />
             <span>
@@ -172,7 +225,7 @@ export default function ChurchHomePage() {
         )}
 
         {/* Bloco Criar Minha Igreja para contas com apenas acesso básico de membro */}
-        {!isAdmin && eligibilityData?.eligible && (
+        {!isAdmin && !pendingCommand && eligibilityData?.eligible && (
           <div className="church-home-create-section">
             <div className="church-home-create-box">
               <div className="church-home-create-icon" aria-hidden="true">
@@ -198,8 +251,8 @@ export default function ChurchHomePage() {
           </div>
         )}
 
-        {/* Notificação se o membro já é administrador ativo em outra igreja */}
-        {!isAdmin && eligibilityData && !eligibilityData.eligible && eligibilityData.reason === 'already_admin' && (
+        {/* Notificação se o membro já é administrador ativo em outra igreja e sem comando pendente */}
+        {!isAdmin && !pendingCommand && eligibilityData && !eligibilityData.eligible && eligibilityData.reason === 'already_admin' && (
           <div className="church-home-admin-limit-notice" role="note">
             <ShieldAlert size={16} className="church-home-admin-limit-icon" aria-hidden="true" />
             <span>
@@ -241,12 +294,13 @@ export default function ChurchHomePage() {
         </button>
       </div>
 
-      {/* Modal Criar Minha Igreja */}
+      {/* Modal Criar Minha Igreja / Recuperação */}
       <CreateChurchModal
         isOpen={isCreateModalOpen}
         onClose={() => setIsCreateModalOpen(false)}
         onSuccess={(createdChurch) => {
           setIsCreateModalOpen(false);
+          setPendingCommand(null);
           if (createdChurch?.church_id && refreshAccess) {
             refreshAccess(createdChurch.church_id);
           }

@@ -1,6 +1,13 @@
 -- Escala do Reino: ensaio transacional de validação do incremento "Criar minha igreja".
 -- Executa em transação protegida e termina estritamente com ROLLBACK.
 -- Nenhuma tabela, função, permissão ou dado de teste é persistido.
+--
+-- ATENÇÃO — AMBIENTE DE EXECUÇÃO E DEPENDÊNCIAS DE FIXTURES:
+-- Este script foi projetado para execução estrita em ambiente isolado dedicado para testes
+-- (PostgreSQL local ou ambiente efêmero de staging/CI) com esquemas auth e app_private disponíveis.
+-- O ensaio cria registros sintéticos em auth.users e altera confirmações de e-mail para fins de validação.
+-- NÃO COPIE OU EXECUTE ESTE ENSAIO NO AMBIENTE DE PILOTO/PRODUÇÃO sem definir a estratégia de contas
+-- de teste e sem expressa autorização. Não execute SQL remoto.
 begin;
 set local lock_timeout = '5s';
 set local statement_timeout = '60s';
@@ -313,7 +320,7 @@ begin
     v_clean_maps_url := null;
   end if;
   if v_clean_maps_url is not null and not (
-    v_clean_maps_url ~* '^https://(maps\.app\.goo\.gl/|goo\.gl/maps/|(www\.)?google\.[a-z.]+/maps|maps\.google\.[a-z.]+/)'
+    v_clean_maps_url ~* '^https://(maps\.app\.goo\.gl/|goo\.gl/maps/|(www\.)?google\.(com(\.[a-z]{2})?|[a-z]{2})/maps|maps\.google\.(com(\.[a-z]{2})?|[a-z]{2})/)'
   ) then
     raise exception 'Link do Google Maps deve ser uma URL válida de compartilhamento do Google Maps.' using errcode = '23514';
   end if;
@@ -601,9 +608,10 @@ grant execute on function public.create_my_church(uuid, text, text, text, text, 
 revoke all on function public.get_create_church_receipt(uuid) from public, anon, authenticated, service_role;
 grant execute on function public.get_create_church_receipt(uuid) to authenticated;
 
--- 2. Bloco de testes transacionais com asserções estritas
+-- 2. Bloco de testes transacionais com alternância de papéis e asserções estritas
 do $test_suite$
 declare
+  v_operator text := current_user;
   v_test_user_a uuid := gen_random_uuid();
   v_test_user_b uuid := gen_random_uuid();
   v_test_user_c uuid := gen_random_uuid();
@@ -614,17 +622,77 @@ declare
   v_is_eligible boolean;
   v_reason text;
   v_caught_error boolean;
-  v_receipt_count integer;
+  v_role text;
+  v_table text;
+  v_bad_url text;
+  v_bad_urls text[];
 begin
-  -- Fixtures sintéticas isoladas dentro da transação do ensaio
+  -- Asserção inicial: ensaio precisa iniciar sob papel com privilégios de operador
+  if current_user = 'authenticated' or current_user = 'anon' then
+    raise exception 'Ensaio deve ser iniciado com permissões administrativas de operador.';
+  end if;
+
+  -- [Cenário 0.1] Negativas de permissões diretas em app_private para anon, authenticated e service_role
+  foreach v_role in array array['anon', 'authenticated', 'service_role'] loop
+    if has_schema_privilege(v_role, 'app_private', 'USAGE,CREATE') then
+      raise exception 'Falha no teste: % não deve possuir USAGE ou CREATE em app_private', v_role;
+    end if;
+
+    foreach v_table in array array['churches', 'members', 'church_access', 'audit_entries', 'command_receipts', 'access_invitations', 'access_requests'] loop
+      if has_table_privilege(v_role, 'app_private.' || v_table, 'SELECT,INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER') then
+        raise exception 'Falha no teste: % não deve possuir privilégios em app_private.%', v_role, v_table;
+      end if;
+    end loop;
+  end loop;
+
+  -- [Cenário 0.2] Negativa de execução das RPCs públicas para anon e service_role
+  foreach v_role in array array['anon', 'service_role'] loop
+    execute 'set local role ' || quote_ident(v_role);
+    if current_user <> v_role then
+      raise exception 'Falha ao alternar papel para %', v_role;
+    end if;
+
+    begin
+      perform public.check_church_creation_eligibility();
+      raise exception 'Falha no teste: % não deve executar check_church_creation_eligibility', v_role;
+    exception when insufficient_privilege then
+      null;
+    end;
+
+    begin
+      perform public.create_my_church(gen_random_uuid(), 'Igreja', 'Pastor', 'America/Sao_Paulo', null, null, 'warn');
+      raise exception 'Falha no teste: % não deve executar create_my_church', v_role;
+    exception when insufficient_privilege then
+      null;
+    end;
+
+    begin
+      perform public.get_create_church_receipt(gen_random_uuid());
+      raise exception 'Falha no teste: % não deve executar get_create_church_receipt', v_role;
+    exception when insufficient_privilege then
+      null;
+    end;
+
+    execute 'reset role';
+    if current_user <> v_operator then
+      raise exception 'Falha ao retornar ao operador a partir de %', v_role;
+    end if;
+  end loop;
+
+  -- Fixtures sintéticas criadas estritamente como operador
   insert into auth.users (id, email, email_confirmed_at)
   values
     (v_test_user_a, 'test_create_a_' || v_test_user_a::text || '@example.com', statement_timestamp()),
     (v_test_user_b, 'test_create_b_' || v_test_user_b::text || '@example.com', statement_timestamp()),
     (v_test_user_c, 'test_create_c_' || v_test_user_c::text || '@example.com', statement_timestamp());
 
-  -- Contexto de execução autenticada para Usuário A
+  -- Alterna para authenticated com claims de Usuário A
+  perform set_config('request.jwt.claim.sub', v_test_user_a::text, true);
   perform set_config('request.jwt.claims', json_build_object('sub', v_test_user_a::text, 'role', 'authenticated')::text, true);
+  execute 'set local role authenticated';
+  if current_user <> 'authenticated' then
+    raise exception 'Falha: current_user deveria ser authenticated para chamadas de RPC';
+  end if;
 
   -- [Cenário 1] Usuário sem igreja administrada é elegível
   select eligible, reason into v_is_eligible, v_reason from public.check_church_creation_eligibility();
@@ -648,8 +716,27 @@ begin
     raise exception 'Falha no teste: criação não retornou church_id ou member_id válidos';
   end if;
 
+  -- Retorna ao operador para inspecionar que as tabelas privadas foram populadas corretamente
+  execute 'reset role';
+  if current_user <> v_operator then
+    raise exception 'Falha ao retornar ao operador para inspeção de app_private';
+  end if;
+
+  if not exists (select 1 from app_private.churches where id = v_created_church_id)
+     or not exists (select 1 from app_private.members where id = v_created_member_id)
+     or not exists (select 1 from app_private.church_access where church_id = v_created_church_id and user_id = v_test_user_a and is_admin = true)
+     or not exists (select 1 from app_private.command_receipts where church_id = v_created_church_id and command_id = v_command_id and action = 'create_church')
+     or not exists (select 1 from app_private.audit_entries where target_id = v_created_church_id::text and action = 'create_church') then
+    raise exception 'Falha no teste: registros não encontrados em app_private na inspeção do operador';
+  end if;
+
+  -- Retorna para authenticated
+  execute 'set local role authenticated';
+  if current_user <> 'authenticated' then
+    raise exception 'Falha: current_user deveria ser authenticated';
+  end if;
+
   -- [Cenário 3] Replay legítimo imediato (mesmo command_id e mesmos parâmetros)
-  -- Deve recuperar o registro com already_existed = true
   if not exists (
     select 1 from public.create_my_church(
       v_command_id,
@@ -668,7 +755,6 @@ begin
   end if;
 
   -- [Cenário 4] Rejeição de colisão ambígua de parâmetros com delimitação ':'
-  -- Se name='Comunidade' e creatorName='Esperança:Pastor João', o hash estruturado JSONB DEVE ser diferente
   v_caught_error := false;
   begin
     perform public.create_my_church(
@@ -689,8 +775,10 @@ begin
   end if;
 
   -- [Cenário 5] Rejeição de reuso de command_id em ação diferente
+  execute 'reset role';
   insert into app_private.command_receipts (church_id, user_id, command_id, action, params_hash, result_member_id, created_at)
   values (v_created_church_id, v_test_user_a, v_other_action_cmd, 'create_member', '\x1234', v_created_member_id, statement_timestamp());
+  execute 'set local role authenticated';
 
   v_caught_error := false;
   begin
@@ -741,8 +829,13 @@ begin
     raise exception 'Falha no teste: criação de segunda igreja administrada deve falhar com 42501';
   end if;
 
+  -- Retorna ao operador para setup dos cenários de múltiplos administradores e regras de continuidade
+  execute 'reset role';
+  if current_user <> v_operator then
+    raise exception 'Falha ao retornar ao operador';
+  end if;
+
   -- [Cenário 8] Regra de Administração: Uma igreja pode ter múltiplos administradores ativos!
-  -- Usuário B também pode ser admin da MESMA igreja criada (v_created_church_id)
   insert into app_private.members (id, church_id, display_name, status, created_by_user_id)
   values (gen_random_uuid(), v_created_church_id, 'Segundo Admin B', 'active', v_test_user_a);
 
@@ -750,7 +843,6 @@ begin
   values (gen_random_uuid(), v_created_church_id, v_test_user_b, (select id from app_private.members where display_name = 'Segundo Admin B' and church_id = v_created_church_id), 'active', true, statement_timestamp(), v_test_user_a);
 
   -- [Cenário 9] Bloqueio físico de admin em duas igrejas distintas pelo índice de unicidade
-  -- Tentativa direta de inserir uma segunda administração ativa para Usuário A em outra igreja deve violar o índice único
   declare
     v_other_church_id uuid := gen_random_uuid();
     v_other_member_id uuid := gen_random_uuid();
@@ -780,7 +872,7 @@ begin
   where church_id = v_created_church_id and user_id = v_test_user_a;
 
   -- [Cenário 11] Replay e Recibo após revogação de acesso
-  -- Uma vez revogado, o replay de create_my_church e a consulta get_create_church_receipt DEVEM falhar com 42501
+  execute 'set local role authenticated';
   v_caught_error := false;
   begin
     perform public.create_my_church(
@@ -811,8 +903,10 @@ begin
     raise exception 'Falha no teste: get_create_church_receipt após revogação de acesso deve falhar com 42501';
   end if;
 
+  -- Volta ao operador para testar os gatilhos de continuidade
+  execute 'reset role';
+
   -- [Cenário 12] Proteção do último administrador: Usuário B é agora o único admin de v_created_church_id
-  -- Tentativa de Usuário B deixar a administração deve ser sumariamente bloqueada pelo gatilho com 23514
   v_caught_error := false;
   begin
     update app_private.church_access
@@ -826,7 +920,7 @@ begin
     raise exception 'Falha no teste: remoção/revogação do último admin elegível deve ser bloqueada com 23514';
   end if;
 
-  -- Tentativa de desativar o membro de Usuário B deve ser bloqueada pelo gatilho em members
+  -- Tentativa de desativar o membro de Usuário B deve ser bloqueada pelo gatilho em members com 23514
   v_caught_error := false;
   begin
     update app_private.members
@@ -841,7 +935,6 @@ begin
   end if;
 
   -- [Cenário 13] Sucessor inelegível não autoriza saída do último admin válido
-  -- Adiciona Usuário C como admin, mas com e-mail NÃO confirmado (inelegível)
   update auth.users set email_confirmed_at = null where id = v_test_user_c;
 
   insert into app_private.members (id, church_id, display_name, status, created_by_user_id)
@@ -850,7 +943,6 @@ begin
   insert into app_private.church_access (id, church_id, user_id, member_id, status, is_admin, onboarding_completed_at, granted_by_user_id)
   values (gen_random_uuid(), v_created_church_id, v_test_user_c, (select id from app_private.members where display_name = 'Admin C Inelegível' and church_id = v_created_church_id), 'active', true, statement_timestamp(), v_test_user_b);
 
-  -- Usuário B ainda NÃO pode sair porque Usuário C é inelegível!
   v_caught_error := false;
   begin
     update app_private.church_access
@@ -864,25 +956,152 @@ begin
     raise exception 'Falha no teste: sucessor com conta inelegível não pode permitir a saída do único admin válido';
   end if;
 
-  -- [Cenário 14] Validação de URLs inválidas do Google Maps no servidor
-  v_caught_error := false;
+  -- [Cenário 14] Validação estrita de URLs do Google Maps no servidor
+  -- 14.1 URLs válidas aceitas
+  declare
+    v_test_user_d uuid := gen_random_uuid();
+    v_valid_url text;
+    v_valid_urls text[] := array[
+      'https://maps.app.goo.gl/exemplo123',
+      'https://goo.gl/maps/exemplo456',
+      'https://www.google.com/maps/place/Igreja',
+      'https://google.com.br/maps/place/Igreja'
+    ];
   begin
-    perform public.create_my_church(
-      gen_random_uuid(),
-      'Igreja URL Inválida',
-      'Pastor',
-      'America/Sao_Paulo',
-      null,
-      'https://site-malicioso.com/phishing',
-      'warn'
-    );
-  exception
-    when sqlstate '23514' then
-      v_caught_error := true;
+    insert into auth.users (id, email, email_confirmed_at)
+    values (v_test_user_d, 'test_create_d_' || v_test_user_d::text || '@example.com', statement_timestamp());
+
+    perform set_config('request.jwt.claim.sub', v_test_user_d::text, true);
+    perform set_config('request.jwt.claims', json_build_object('sub', v_test_user_d::text, 'role', 'authenticated')::text, true);
+    execute 'set local role authenticated';
+
+    foreach v_valid_url in array v_valid_urls loop
+      perform public.create_my_church(
+        gen_random_uuid(),
+        'Igreja Maps Válido ' || substr(v_valid_url, 9, 8),
+        'Pastor Maps',
+        'America/Sao_Paulo',
+        null,
+        v_valid_url,
+        'warn'
+      );
+      -- Como v_test_user_d agora é admin, resetar role para limpar a administração e poder testar próxima URL
+      execute 'reset role';
+      update app_private.church_access set status = 'revoked', is_admin = false where user_id = v_test_user_d;
+      execute 'set local role authenticated';
+    end loop;
+    execute 'reset role';
   end;
-  if not v_caught_error then
-    raise exception 'Falha no teste: URL fora dos domínios do Google Maps deve ser rejeitada com 23514';
+
+  -- 14.2 URLs inválidas e subdomínios falsos rejeitados com 23514
+  v_bad_urls := array[
+    'https://site-malicioso.com/phishing',
+    'https://google.exemplo.com/maps',
+    'https://fakegoogle.com/maps',
+    'https://maps.google.attacker.com/xyz',
+    'http://maps.google.com/insecure',
+    'https://evil.com/google.com/maps'
+  ];
+  declare
+    v_test_user_maps_fail uuid := gen_random_uuid();
+  begin
+    insert into auth.users (id, email, email_confirmed_at)
+    values (v_test_user_maps_fail, 'test_create_mf_' || v_test_user_maps_fail::text || '@example.com', statement_timestamp());
+
+    perform set_config('request.jwt.claim.sub', v_test_user_maps_fail::text, true);
+    perform set_config('request.jwt.claims', json_build_object('sub', v_test_user_maps_fail::text, 'role', 'authenticated')::text, true);
+    execute 'set local role authenticated';
+
+    foreach v_bad_url in array v_bad_urls loop
+      v_caught_error := false;
+      begin
+        perform public.create_my_church(
+          gen_random_uuid(),
+          'Igreja URL Inválida',
+          'Pastor',
+          'America/Sao_Paulo',
+          null,
+          v_bad_url,
+          'warn'
+        );
+      exception
+        when sqlstate '23514' then
+          v_caught_error := true;
+      end;
+      if not v_caught_error then
+        raise exception 'Falha no teste: URL % deveria ser rejeitada com 23514', v_bad_url;
+      end if;
+    end loop;
+    execute 'reset role';
+  end;
+
+  -- [Cenário 15] Atomicidade por falha controlada na auditoria e ausência de gravações parciais
+  -- Operador cria trigger temporário em app_private.audit_entries que simula erro de inserção
+  execute 'reset role';
+  if current_user <> v_operator then
+    raise exception 'Falha ao garantir operador antes do teste de atomicidade';
   end if;
+
+  create function app_private.fail_audit_trigger()
+  returns trigger language plpgsql as $$
+  begin
+    if NEW.action = 'create_church' and NEW.details->>'name' = 'Igreja Falha Auditoria' then
+      raise exception 'Simulação controlada de falha na auditoria' using errcode = 'P0001';
+    end if;
+    return NEW;
+  end;
+  $$;
+
+  create trigger trg_fail_audit_test
+  before insert on app_private.audit_entries
+  for each row execute function app_private.fail_audit_trigger();
+
+  declare
+    v_test_user_e uuid := gen_random_uuid();
+    v_cmd_audit_fail uuid := gen_random_uuid();
+  begin
+    insert into auth.users (id, email, email_confirmed_at)
+    values (v_test_user_e, 'test_create_e_' || v_test_user_e::text || '@example.com', statement_timestamp());
+
+    perform set_config('request.jwt.claim.sub', v_test_user_e::text, true);
+    perform set_config('request.jwt.claims', json_build_object('sub', v_test_user_e::text, 'role', 'authenticated')::text, true);
+    execute 'set local role authenticated';
+
+    v_caught_error := false;
+    begin
+      perform public.create_my_church(
+        v_cmd_audit_fail,
+        'Igreja Falha Auditoria',
+        'Pastor Teste',
+        'America/Sao_Paulo',
+        null, null, 'warn'
+      );
+    exception
+      when sqlstate 'P0001' then
+        v_caught_error := true;
+    end;
+    if not v_caught_error then
+      raise exception 'Falha no teste: falha controlada de auditoria deveria abortar a criação';
+    end if;
+
+    -- Volta ao operador para inspecionar que NENHUM registro parcial foi salvo
+    execute 'reset role';
+    drop trigger trg_fail_audit_test on app_private.audit_entries;
+    drop function app_private.fail_audit_trigger();
+
+    if exists (select 1 from app_private.churches where name = 'Igreja Falha Auditoria') then
+      raise exception 'Falha no teste de atomicidade: igreja foi gravada parcialmente após falha de auditoria';
+    end if;
+    if exists (select 1 from app_private.command_receipts where command_id = v_cmd_audit_fail) then
+      raise exception 'Falha no teste de atomicidade: recibo foi gravado parcialmente após falha de auditoria';
+    end if;
+    if exists (select 1 from app_private.members where display_name = 'Pastor Teste' and created_by_user_id = v_test_user_e) then
+      raise exception 'Falha no teste de atomicidade: membro foi gravado parcialmente após falha de auditoria';
+    end if;
+    if exists (select 1 from app_private.church_access where user_id = v_test_user_e) then
+      raise exception 'Falha no teste de atomicidade: acesso foi gravado parcialmente após falha de auditoria';
+    end if;
+  end;
 
 end;
 $test_suite$;

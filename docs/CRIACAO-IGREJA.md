@@ -146,7 +146,7 @@ Para assegurar que nenhuma igreja fique órfã de liderança administrativa:
 1. **Serialização por Igreja via Advisory Lock:**
    Ambos os gatilhos adquirem bloqueio consultivo transacional ordenado por igreja:
    `pg_catalog.pg_advisory_xact_lock(hashtext('church_admin_continuity'), hashtext(v_church_id::text))`
-   Isso serializa modificações concorrentes que afetam a liderança daquela igreja, evitando deadlocks de linha e leituras sujas.
+   Isso serializa modificações concorrentes que afetam a liderança daquela igreja durante a transação, reduzindo disputas concorrentes de linha. Contudo, advisory locks não eliminam deadlocks por si sós em cenários de concorrência concorrente complexa sem ordenação global, e a comprovação física de concorrência exige execução operacional com duas conexões simultâneas.
 2. **Gatilho em `app_private.church_access` (`protect_last_active_admin`):**
    - Disparado antes de `UPDATE` ou `DELETE`.
    - Se o registro afetado for um administrador ativo (`OLD.is_admin = true AND OLD.status = 'active'`) e a operação pretender removê-lo, desativá-lo (`NEW.status <> 'active'`), revogar seu privilégio (`NEW.is_admin = false`) ou alterar seu `member_id`/`user_id`:
@@ -154,13 +154,13 @@ Para assegurar que nenhuma igreja fique órfã de liderança administrativa:
        - Vínculo ativo com `is_admin = true` e `onboarding_completed_at IS NOT NULL`.
        - Membro associado em `members` com `status = 'active'`.
        - Conta Auth em `auth.users` não deletada, sem bloqueio vigente e com e-mail confirmado.
-     - Se não existir sucessor elegível, a operação é abortada com exceção `P0001: Cannot remove, deactivate or revoke the last eligible active administrator of a church`.
+     - Se não existir sucessor elegível, a operação é abortada com código de erro `23514`: `'Operação não permitida: a igreja não pode ficar sem administrador ativo elegível.'`.
 3. **Gatilho em `app_private.members` (`protect_last_active_admin_member`):**
    - Disparado antes de `UPDATE` ou `DELETE` na tabela `members`.
    - Se o membro a ser removido ou desativado estiver vinculado a um `church_access` de administrador ativo:
      - Adquire o mesmo lock consultivo transacional na igreja.
      - Verifica se existe outro administrador elegível na igreja.
-     - Se for o único, impede a desativação ou remoção física com a mesma exceção `P0001`.
+     - Se for o único, impede a desativação ou remoção física com o mesmo código de erro `23514`: `'Operação não permitida: não é possível desativar ou remover o membro do último administrador ativo elegível da igreja.'`.
 
 ---
 
@@ -170,21 +170,22 @@ Localizados em `docs/sql/`:
 
 1. **`009_preflight_create_my_church.sql` (Somente leitura):**
    - Diagnostica previamente se existem contas com múltiplas administrações ativas duplicadas antes da criação do índice.
-   - Confere se as 7 tabelas de `app_private` existem.
-   - Verifica se a extensão `pgcrypto` está ativa.
+   - Confere se as 7 tabelas de `app_private` e as 4 RPCs anteriores existem.
+   - O preflight atual não verifica a extensão `pgcrypto`; ele concentra sua validação prévia na ausência de administrações ativas duplicadas, integridade das 7 tabelas e presença das colunas essenciais.
    - Confere especificamente as colunas necessárias em `auth.users`, `churches`, `members`, `church_access`, `audit_entries` e `command_receipts`.
-   - Confere se os novos objetos ainda não existem ou estão prontos para criação.
+   - Confere se os novos objetos ainda não existem e confirma o isolamento estrito de `app_private`.
 
 2. **`009_validate_create_my_church.sql` (Ensaio transacional com `ROLLBACK`):**
-   - Utiliza blocos `BEGIN ... EXCEPTION ... END` válidos em PL/pgSQL (sem sintaxe externa).
-   - Executa todas as etapas do DDL e DML em transação isolada de teste.
-   - Testa sob authenticated com claims controladas, alternando para operador apenas para inspecionar fixtures da aplicação.
-   - Testa a negativa para `anon` e `service_role` nas tabelas privadas de `app_private`.
-   - Testa que uma igreja pode ter múltiplos administradores (usuário A e usuário B admins da igreja X).
-   - Testa o bloqueio de uma conta administrar duas igrejas simultaneamente.
-   - Testa a proteção do último administrador elegível e a permissão de saída quando há sucessor elegível.
-   - Testa a validação e rejeição de URLs do Google Maps arbitrárias ou maliciosas.
-   - Testa atomicidade com falha de auditoria e ausência de gravações parciais.
+   - Restrito a ambiente isolado dedicado para testes (local ou staging efêmero); não deve ser executado no piloto sem estratégia de contas de teste definida e autorizada.
+   - Utiliza blocos `BEGIN ... EXCEPTION ... END` válidos em PL/pgSQL.
+   - Estrutura fixtures e inspeções administrativas como operador, alternando para `authenticated` via `SET LOCAL ROLE authenticated` com claims controladas para as RPCs, e retornando via `RESET ROLE` com asserções explícitas de `current_user`.
+   - Não concede acesso direto a `app_private` para facilitar testes.
+   - Testa a negativa para `anon` e `service_role` na execução das RPCs e em todas as tabelas de `app_private`.
+   - Testa a criação atômica, idempotência via hash JSONB estruturado e replay com mesmos parâmetros.
+   - Testa que uma igreja pode ter múltiplos administradores e bloqueio físico do índice para a mesma conta em duas igrejas.
+   - Testa a proteção do último administrador elegível (erro `23514`) e saída permitida com sucessor elegível.
+   - Testa a validação estrita de URLs do Google Maps no servidor (rejeitando subdomínios falsos como `google.exemplo.com/maps` e URLs arbitrárias).
+   - Testa atomicidade com falha controlada de auditoria e ausência estrita de registros parciais em `churches`, `members`, `church_access` e `command_receipts`.
    - Finaliza obrigatoriamente com `ROLLBACK`, deixando a base intacta.
 
 3. **`009_create_my_church.sql` (Instalação permanente com `COMMIT`):**
@@ -275,6 +276,7 @@ Executados com sucesso via Node.js nativo com o comando `npm.cmd test`:
 
 ### 5.2 Limites de Evidência Declarados
 - **Validação de Código de Produção vs Operação do Banco:**
-  - Os 57 testes automatizados comprovam o ciclo no cliente, o comportamento dos serviços, a persistência no storage e o tratamento das respostas da RPC.
-  - A validação executável do SQL (`009_validate_create_my_church.sql`) em um ambiente PostgreSQL dedicado ou com duas conexões simultâneas para validação física de concorrência em locks consultivos permanece como etapa operacional a ser conduzida pelo operador antes da aplicação permanente em produção.
+  - Os testes automatizados comprovam o ciclo no cliente, o comportamento dos serviços, a persistência no storage, o descarte de respostas obsoletas e o tratamento das respostas da RPC.
+  - A validação executável do SQL (`009_validate_create_my_church.sql`) em um ambiente PostgreSQL dedicado e a validação de concorrência com duas conexões simultâneas para prova física de serialização em locks consultivos permanecem como etapas operacionais a serem conduzidas pelo operador antes da aplicação permanente em produção.
+  - Análise estática do SQL não constitui aprovação operacional do banco de dados.
   - Não foram executadas operações manuais no projeto Supabase remoto nem inseridas fixtures na base do piloto.

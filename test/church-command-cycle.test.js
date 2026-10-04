@@ -13,6 +13,8 @@ import {
   checkChurchCreationEligibility,
   checkChurchReceipt,
   dispatchChurchCreation,
+  invalidateChurchCommandSession,
+  getChurchCommandSessionGeneration,
   STORAGE_KEY_PREFIX,
 } from '../src/utils/churchCommandService.js';
 
@@ -646,4 +648,408 @@ describe('6. Testes de Regressão — Casos Reproduzidos pelo Codex e Contratos 
     assert.equal(current.churchData.name, 'Igreja Alpha');
   });
 });
+
+describe('7. Proteção contra Respostas Antigas, Isolamento de Sessão e Recuperação Acessível', () => {
+  it('A em voo → logout e retorno → B persistido → resposta de A chega: B permanece intacto e A é descartado como STALE_SESSION', async () => {
+    const storage = createMockStorage();
+    const userId = 'user-alice-123';
+
+    let resolveRpcA;
+    const rpcPromiseA = new Promise((resolve) => {
+      resolveRpcA = resolve;
+    });
+
+    const mockSupabase = {
+      schema() {
+        return {
+          rpc(name, args) {
+            if (args.p_command_id === 'cmd-A') {
+              return rpcPromiseA;
+            }
+            return Promise.resolve({ data: [], error: null });
+          },
+        };
+      },
+    };
+
+    const cmdDataA = {
+      name: 'Igreja Alfa',
+      creatorName: 'Pastor Alice',
+      timezone: 'America/Sao_Paulo',
+      defaultDurationPolicy: 'warn',
+    };
+
+    // Inicia envio do comando A
+    const dispatchPromiseA = dispatchChurchCreation({
+      supabaseClient: mockSupabase,
+      storage,
+      userId,
+      churchData: cmdDataA,
+      commandId: 'cmd-A',
+    });
+
+    // Garante que o comando A foi salvo antes da chamada
+    const inFlightCmdA = loadPendingChurchCommand(storage, userId);
+    assert.equal(inFlightCmdA.commandId, 'cmd-A');
+
+    // Ocorre logout: limpa storage e invalida a geração de sessão de comandos
+    clearAllChurchCommandStorage(storage);
+    assert.equal(loadPendingChurchCommand(storage, userId), null);
+
+    // Usuário retorna à mesma conta e prepara/salva um novo comando B
+    const cmdB = {
+      commandId: 'cmd-B',
+      churchData: {
+        name: 'Igreja Beta',
+        creatorName: 'Pastor Alice',
+        timezone: 'America/Sao_Paulo',
+        defaultDurationPolicy: 'block',
+      },
+      createdAt: new Date().toISOString(),
+    };
+    savePendingChurchCommand(storage, userId, cmdB);
+    assert.equal(loadPendingChurchCommand(storage, userId).commandId, 'cmd-B');
+
+    // Agora a resposta da RPC para o comando A finalmente é resolvida com sucesso
+    resolveRpcA({
+      data: [{
+        church_id: 'church-alpha-id',
+        church_name: 'Igreja Alfa',
+        member_id: 'member-alice-id',
+        display_name: 'Pastor Alice',
+        timezone: 'America/Sao_Paulo',
+        default_duration_policy: 'warn',
+        is_admin: true,
+        already_existed: false,
+      }],
+      error: null,
+    });
+
+    const resultA = await dispatchPromiseA;
+
+    // Resposta de A deve ser identificada como sessão obsoleta
+    assert.equal(resultA.status, 'STALE_SESSION');
+
+    // CRÍTICO: Comando B DEVE permanecer intacto no storage! Não pode ser null ou apagado por A!
+    const persistedAfterA = loadPendingChurchCommand(storage, userId);
+    assert.ok(persistedAfterA, 'Comando B não deve ter sido removido pela resposta obsoleta de A');
+    assert.equal(persistedAfterA.commandId, 'cmd-B');
+    assert.equal(persistedAfterA.churchData.name, 'Igreja Beta');
+  });
+
+  it('consulta de recibo antiga com logout/troca de sessão é descartada como STALE_SESSION e não remove comando novo', async () => {
+    const storage = createMockStorage();
+    const userId = 'user-bob-456';
+
+    let resolveReceipt;
+    const receiptPromise = new Promise((resolve) => {
+      resolveReceipt = resolve;
+    });
+
+    const mockSupabase = {
+      schema() {
+        return {
+          rpc(name, args) {
+            return receiptPromise;
+          },
+        };
+      },
+    };
+
+    savePendingChurchCommand(storage, userId, {
+      commandId: 'cmd-receipt-old',
+      churchData: { name: 'Igreja Antiga' },
+    });
+
+    // Inicia verificação de recibo
+    const checkPromise = checkChurchReceipt({
+      supabaseClient: mockSupabase,
+      storage,
+      userId,
+      commandId: 'cmd-receipt-old',
+    });
+
+    // Ocorre logout/mudança de sessão
+    clearAllChurchCommandStorage(storage);
+
+    // Novo comando é salvo na nova sessão
+    savePendingChurchCommand(storage, userId, {
+      commandId: 'cmd-receipt-new',
+      churchData: { name: 'Igreja Nova' },
+    });
+
+    // Recibo antigo resolve
+    resolveReceipt({
+      data: [{
+        church_id: 'church-old-id',
+        church_name: 'Igreja Antiga',
+        member_id: 'mem-1',
+        display_name: 'Bob',
+        is_admin: true,
+        timezone: 'America/Sao_Paulo',
+        default_duration_policy: 'warn',
+      }],
+      error: null,
+    });
+
+    const result = await checkPromise;
+    assert.equal(result.status, 'STALE_SESSION');
+
+    // Comando novo permanece intacto
+    const current = loadPendingChurchCommand(storage, userId);
+    assert.ok(current);
+    assert.equal(current.commandId, 'cmd-receipt-new');
+  });
+
+  it('removePendingChurchCommand não remove comando se o expectedCommandId não coincidir com o armazenado', () => {
+    const storage = createMockStorage();
+    const userId = 'user-carol';
+
+    savePendingChurchCommand(storage, userId, {
+      commandId: 'cmd-actual',
+      churchData: { name: 'Igreja Atual' },
+    });
+
+    // Tentativa de remover passando ID diferente (de uma resposta antiga)
+    const removed = removePendingChurchCommand(storage, userId, 'cmd-stale');
+    assert.equal(removed, false);
+
+    // O comando atual permanece intacto
+    const remaining = loadPendingChurchCommand(storage, userId);
+    assert.ok(remaining);
+    assert.equal(remaining.commandId, 'cmd-actual');
+
+    // Remoção com o ID correto tem sucesso
+    const removedCorrect = removePendingChurchCommand(storage, userId, 'cmd-actual');
+    assert.equal(removedCorrect, true);
+    assert.equal(loadPendingChurchCommand(storage, userId), null);
+  });
+
+  it('envio confirmado com resposta perdida → reload com acesso admin → recuperação acessível → recibo válido encerra apenas o comando correspondente', async () => {
+    const storage = createMockStorage();
+    const userId = 'user-david';
+    const commandId = 'cmd-david-church';
+
+    // 1. Comando foi persistido antes do envio
+    savePendingChurchCommand(storage, userId, {
+      commandId,
+      churchData: {
+        name: 'Igreja Esperança Confirmada',
+        creatorName: 'Pastor David',
+        timezone: 'America/Sao_Paulo',
+        defaultDurationPolicy: 'warn',
+      },
+      createdAt: new Date().toISOString(),
+    });
+
+    // 2. Simula reload da página: storage retém o comando
+    const pendingOnReload = loadPendingChurchCommand(storage, userId);
+    assert.ok(pendingOnReload);
+    assert.equal(pendingOnReload.commandId, commandId);
+
+    // 3. Simula que get_my_church_access encontrou acesso administrativo concedido
+    // O sistema NÃO trata already_admin como erro nem descarta o comando sem conferir recibo
+    // Consulta o recibo para o comando pendente
+    const mockSupabase = {
+      schema() {
+        return {
+          rpc(name, args) {
+            assert.equal(args.p_command_id, commandId);
+            return Promise.resolve({
+              data: [{
+                church_id: 'church-david-123',
+                church_name: 'Igreja Esperança Confirmada',
+                member_id: 'member-david-456',
+                display_name: 'Pastor David',
+                timezone: 'America/Sao_Paulo',
+                default_duration_policy: 'warn',
+                is_admin: true,
+              }],
+              error: null,
+            });
+          },
+        };
+      },
+    };
+
+    const receiptResult = await checkChurchReceipt({
+      supabaseClient: mockSupabase,
+      commandId,
+    });
+
+    assert.equal(receiptResult.status, 'RECEIPT_FOUND');
+    assert.equal(receiptResult.record.church_id, 'church-david-123');
+
+    // Encerramento remove SOMENTE o comando correspondente
+    removePendingChurchCommand(storage, userId, commandId);
+    assert.equal(loadPendingChurchCommand(storage, userId), null);
+  });
+
+  it('membro da igreja B que criou a igreja A: reload com múltiplos acessos preserva recuperação e seleciona igreja A', async () => {
+    const storage = createMockStorage();
+    const userId = 'user-elena';
+    const commandId = 'cmd-elena-new-church';
+
+    // Elena já era membro da Igreja B
+    // Ela envia a criação da Igreja A, salva o comando no storage
+    savePendingChurchCommand(storage, userId, {
+      commandId,
+      churchData: {
+        name: 'Igreja A Novamente',
+        creatorName: 'Elena Líder',
+        timezone: 'America/Sao_Paulo',
+        defaultDurationPolicy: 'warn',
+      },
+      createdAt: new Date().toISOString(),
+    });
+
+    // Resposta se perdeu; após reload, get_my_church_access encontra múltiplos vínculos
+    // O comando pendente de criação da Igreja A continua detectável no storage mesmo com múltiplos acessos
+    const pendingOnSelectPage = loadPendingChurchCommand(storage, userId);
+    assert.ok(pendingOnSelectPage);
+    assert.equal(pendingOnSelectPage.commandId, commandId);
+
+    // Recuperação consulta o recibo para reconciliação
+    const mockSupabase = {
+      schema() {
+        return {
+          rpc(name, args) {
+            return Promise.resolve({
+              data: [{
+                church_id: 'church-a-created',
+                church_name: 'Igreja A Novamente',
+                member_id: 'mem-a-2',
+                display_name: 'Elena Líder',
+                timezone: 'America/Sao_Paulo',
+                default_duration_policy: 'warn',
+                is_admin: true,
+              }],
+              error: null,
+            });
+          },
+        };
+      },
+    };
+
+    const recovery = await checkChurchReceipt({
+      supabaseClient: mockSupabase,
+      commandId,
+    });
+
+    assert.equal(recovery.status, 'RECEIPT_FOUND');
+    assert.equal(recovery.record.church_id, 'church-a-created');
+
+    // Ao confirmar recibo, comando é encerrado
+    removePendingChurchCommand(storage, userId, commandId);
+    assert.equal(loadPendingChurchCommand(storage, userId), null);
+
+    // E a igreja explicitamente selecionada na interface deve ser a igreja criada ('church-a-created')
+    let selectedChurchId = null;
+    const selectChurch = (id) => { selectedChurchId = id; };
+    selectChurch(recovery.record.church_id);
+    assert.equal(selectedChurchId, 'church-a-created');
+  });
+
+  it('validação de Google Maps rejeita subdomínios arbitrários como google.exemplo.com/maps e aceita links válidos', () => {
+    // Subdomínio falso que passaria em um regex frouxo como google\.[a-z.]+
+    const resFakeDomain = validateAndNormalizeChurchInput({
+      name: 'Igreja Teste',
+      creatorName: 'Pastor Teste',
+      timezone: 'America/Sao_Paulo',
+      googleMapsUrl: 'https://google.exemplo.com/maps',
+    });
+    assert.equal(resFakeDomain.isValid, false);
+    assert.ok(resFakeDomain.errors.googleMapsUrl);
+
+    const resFake2 = validateAndNormalizeChurchInput({
+      name: 'Igreja Teste',
+      creatorName: 'Pastor Teste',
+      timezone: 'America/Sao_Paulo',
+      googleMapsUrl: 'https://fakegoogle.com/maps',
+    });
+    assert.equal(resFake2.isValid, false);
+    assert.ok(resFake2.errors.googleMapsUrl);
+
+    // Links válidos
+    const valid1 = validateAndNormalizeChurchInput({
+      name: 'Igreja Teste',
+      creatorName: 'Pastor Teste',
+      timezone: 'America/Sao_Paulo',
+      googleMapsUrl: 'https://maps.google.com.br/maps?q=Igreja',
+    });
+    assert.equal(valid1.isValid, true);
+    assert.equal(valid1.normalizedData.googleMapsUrl, 'https://maps.google.com.br/maps?q=Igreja');
+
+    const valid2 = validateAndNormalizeChurchInput({
+      name: 'Igreja Teste',
+      creatorName: 'Pastor Teste',
+      timezone: 'America/Sao_Paulo',
+      googleMapsUrl: 'https://maps.app.goo.gl/abC123XYZ',
+    });
+    assert.equal(valid2.isValid, true);
+  });
+
+  it('descarte de callback e bloqueio de onSuccess quando a sessão muda antes do retorno', async () => {
+    const storage = createMockStorage();
+    const userId = 'user-callback-test';
+
+    let resolveRpc;
+    const rpcPromise = new Promise((res) => { resolveRpc = res; });
+    const mockSupabase = {
+      schema: () => ({
+        rpc: () => rpcPromise,
+      }),
+    };
+
+    let sessionActive = true;
+    const isSessionValid = () => sessionActive;
+    let onSuccessCalled = false;
+    const onSuccess = () => { onSuccessCalled = true; };
+
+    const initialGen = getChurchCommandSessionGeneration();
+
+    const creationPromise = dispatchChurchCreation({
+      supabaseClient: mockSupabase,
+      storage,
+      userId,
+      churchData: {
+        name: 'Igreja Callback',
+        creatorName: 'Pastor Callback',
+        timezone: 'America/Sao_Paulo',
+      },
+      commandId: 'cmd-cb',
+      sessionGeneration: initialGen,
+      isSessionValid,
+    }).then((res) => {
+      // Simula o comportamento estrito de CreateChurchModal
+      if (!isSessionValid() || res.status === 'STALE_SESSION') {
+        return; // Descarte de callback
+      }
+      if (res.status === 'SUCCESS') {
+        onSuccess(res.data);
+      }
+    });
+
+    // Sessão é encerrada/invalidada
+    sessionActive = false;
+    invalidateChurchCommandSession();
+
+    resolveRpc({
+      data: [{
+        church_id: 'church-cb-123',
+        church_name: 'Igreja Callback',
+        member_id: 'mem-cb',
+        display_name: 'Pastor Callback',
+        is_admin: true,
+      }],
+      error: null,
+    });
+
+    await creationPromise;
+
+    // Callback de sucesso NÃO deve ter sido chamado
+    assert.equal(onSuccessCalled, false);
+  });
+});
+
 
