@@ -110,6 +110,82 @@ export function evaluateLabGuards({ isDev, pageUrl, supabaseUrl, isConfigured })
 }
 
 /**
+ * Renderiza as informações da sessão ativa com segurança no DOM.
+ * Constrói elementos e nós de texto literais preenchidos com textContent / createTextNode,
+ * garantindo que metadados controlados pelo usuário (como full_name, email, id e datas)
+ * nunca sejam interpolados em sinks HTML e não introduzam tags, elementos ou scripts.
+ *
+ * @param {Object|null} user - Objeto de usuário retornado pelo Supabase Auth
+ * @param {Object} [elements] - Elementos de destino opcionais (para injeção ou testes isolados)
+ * @param {HTMLElement|null} [elements.sessionBoxEl]
+ * @param {HTMLElement|null} [elements.appLaunchAreaEl]
+ */
+export function renderSession(user, elements = {}) {
+  const sessionBoxEl = elements?.sessionBoxEl || (typeof document !== 'undefined' ? document.getElementById('session-box') : null);
+  const appLaunchAreaEl = elements?.appLaunchAreaEl || (typeof document !== 'undefined' ? document.getElementById('app-launch-area') : null);
+
+  if (!sessionBoxEl || !appLaunchAreaEl) return;
+  if (!user) {
+    sessionBoxEl.style.display = 'none';
+    sessionBoxEl.innerHTML = '';
+    appLaunchAreaEl.style.display = 'none';
+    return;
+  }
+
+  const safeName = user.user_metadata?.full_name ? String(user.user_metadata.full_name) : '(não informado)';
+  const safeEmail = String(user.email || '');
+  const safeId = String(user.id || '');
+  const createdAt = user.created_at ? new Date(user.created_at).toLocaleString('pt-BR') : '-';
+
+  sessionBoxEl.style.display = 'block';
+  sessionBoxEl.innerHTML = '';
+
+  const titleEl = document.createElement('div');
+  titleEl.style.fontWeight = '600';
+  titleEl.style.marginBottom = '8px';
+  titleEl.style.color = 'var(--success-text)';
+  titleEl.textContent = '✓ Sessão Supabase Auth Ativa';
+  sessionBoxEl.appendChild(titleEl);
+
+  function createFieldRow(label, textValue, isCode = false) {
+    const row = document.createElement('div');
+    const strong = document.createElement('strong');
+    strong.textContent = `${label}:`;
+    row.appendChild(strong);
+    row.appendChild(document.createTextNode(' '));
+
+    if (isCode) {
+      const code = document.createElement('code');
+      code.style.fontSize = '0.75rem';
+      code.textContent = textValue;
+      row.appendChild(code);
+    } else {
+      const textNode = document.createTextNode(textValue);
+      textNode.textContent = textValue;
+      row.appendChild(textNode);
+    }
+    return row;
+  }
+
+  sessionBoxEl.appendChild(createFieldRow('E-mail', safeEmail));
+  sessionBoxEl.appendChild(createFieldRow('Nome', safeName));
+  sessionBoxEl.appendChild(createFieldRow('ID do Usuário', safeId, true));
+  sessionBoxEl.appendChild(createFieldRow('Criado em', createdAt));
+
+  const noteEl = document.createElement('div');
+  noteEl.style.marginTop = '8px';
+  noteEl.style.fontSize = '0.75rem';
+  noteEl.style.color = 'var(--text-muted)';
+  noteEl.innerHTML = `
+    Esta sessão é real e compartilhada pelo <code>localStorage</code> da mesma origem com a aplicação.
+    Nenhuma administração ou igreja foi atribuída ainda. A concessão ocorre exclusivamente pelo fluxo de produto.
+  `;
+  sessionBoxEl.appendChild(noteEl);
+
+  appLaunchAreaEl.style.display = 'block';
+}
+
+/**
  * Inicialização em ambiente de navegador (Vite dev)
  */
 if (typeof window !== 'undefined' && typeof document !== 'undefined') {
@@ -146,37 +222,6 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
     else if (type === 'success') guardStatusEl.classList.add('notice--success');
     else if (type === 'warning') guardStatusEl.classList.add('notice--warning');
     guardStatusEl.textContent = message;
-  }
-
-  function renderSession(user) {
-    if (!sessionBoxEl || !appLaunchAreaEl) return;
-    if (!user) {
-      sessionBoxEl.style.display = 'none';
-      sessionBoxEl.innerHTML = '';
-      appLaunchAreaEl.style.display = 'none';
-      return;
-    }
-
-    const safeName = user.user_metadata?.full_name ? String(user.user_metadata.full_name) : '(não informado)';
-    const safeEmail = String(user.email || '');
-    const safeId = String(user.id || '');
-    const createdAt = user.created_at ? new Date(user.created_at).toLocaleString('pt-BR') : '-';
-
-    sessionBoxEl.style.display = 'block';
-    sessionBoxEl.innerHTML = `
-      <div style="font-weight: 600; margin-bottom: 8px; color: var(--success-text);">
-        ✓ Sessão Supabase Auth Ativa
-      </div>
-      <div><strong>E-mail:</strong> ${safeEmail}</div>
-      <div><strong>Nome:</strong> ${safeName}</div>
-      <div><strong>ID do Usuário:</strong> <code style="font-size: 0.75rem;">${safeId}</code></div>
-      <div><strong>Criado em:</strong> ${createdAt}</div>
-      <div style="margin-top: 8px; font-size: 0.75rem; color: var(--text-muted);">
-        Esta sessão é real e compartilhada pelo <code>localStorage</code> da mesma origem com a aplicação.
-        Nenhuma administração ou igreja foi atribuída ainda. A concessão ocorre exclusivamente pelo fluxo de produto.
-      </div>
-    `;
-    appLaunchAreaEl.style.display = 'block';
   }
 
   // Executa guards antes de expor formulário ou chamar qualquer método Auth
