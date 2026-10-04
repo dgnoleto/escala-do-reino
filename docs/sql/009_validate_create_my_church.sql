@@ -779,7 +779,15 @@ begin
   -- [Cenário 5] Rejeição de reuso de command_id em ação diferente
   execute 'reset role';
   insert into app_private.command_receipts (church_id, user_id, command_id, action, params_hash, result_member_id, created_at)
-  values (v_created_church_id, v_test_user_a, v_other_action_cmd, 'create_member', '\x1234', v_created_member_id, statement_timestamp());
+  values (
+    v_created_church_id,
+    v_test_user_a,
+    v_other_action_cmd,
+    'create_member',
+    pg_catalog.sha256(pg_catalog.convert_to('fixture-other-action', 'UTF8')),
+    v_created_member_id,
+    statement_timestamp()
+  );
   execute 'set local role authenticated';
 
   v_caught_error := false;
