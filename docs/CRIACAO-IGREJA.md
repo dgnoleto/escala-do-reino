@@ -256,7 +256,7 @@ Localizados em `docs/sql/`:
 
 ### 5.1 Testes Automatizados Locais
 Executados com sucesso via Node.js nativo com o comando `npm.cmd test`:
-- **Total:** **72 testes automatizados** distribuídos em **14 suítes** (100% de aprovação, 0 falhas).
+- **Total:** **107 testes automatizados** distribuídos em **20 suítes** (100% de aprovação, 0 falhas).
 - **Testes dedicados de criação de igreja e regressões (`test/church-command-cycle.test.js` — 35 testes, 7 suítes):**
   1. *Normalização e validação de entrada:* conversão NFD para NFC, preservação de apóstrofos e cedilhas, rejeição de nomes em branco, validação de limites de comprimento, políticas aceitas (`warn`/`block`) e formato estrito de URL do Google Maps.
   2. *Classificação de erros:* separação de códigos Postgres definitivos (`23505`, `23514`, `P0001`, `42501`) e falhas de transporte/5xx como respostas incertas.
@@ -288,15 +288,47 @@ Executados com sucesso via Node.js nativo com o comando `npm.cmd test`:
   4. *App real de produção:* logout durante espera ou erro de recarga limpa a confirmação e impede vazamento para a conta seguinte.
 - **Testes de ciclo de membros (`test/member-command-cycle.test.js` — 33 testes, 6 suítes):**
   - Todas as 6 suítes continuam passando integralmente sem regressões.
+- **Testes de configuração do cliente Supabase (`test/supabase-client-config.test.js` — 25 testes, 5 suítes):**
+  - Validação estrita de protocolo HTTPS em produção e desenvolvimento.
+  - Validação estrita de loopback HTTP exclusivamente em DEV (`localhost`, `127.0.0.1`, `[::1]`).
+  - Rejeição de loopback HTTP em produção (`import.meta.env.DEV = false`).
+  - Rejeição estrita de hosts falsos (`localhost.evil.com`, `127.0.0.1.evil.com`, `evil-localhost.com`), IPs de rede LAN (`192.168.x`, `10.x`, `172.16.x`) e domínios remotos via HTTP.
+  - Rejeição de URLs com credenciais embutidas e URLs malformadas.
+  - Validação da chave pública anônima em integração com `isSupabaseConfigured`.
+- **Testes das guardas de segurança da ferramenta de teste local (`test/local-auth-guard.test.js` — 10 testes, 1 suíte):**
+  - Aprovação em ambientes válidos (127.0.0.1, localhost, IPv6 [::1]).
+  - Bloqueio estrito quando `isDev` for `false`.
+  - Bloqueio de origens de página fora de loopback.
+  - Bloqueio de backend em portas divergentes de `54321`.
+  - Bloqueio de backend em HTTPS ou com credenciais embutidas.
+  - Bloqueio quando cliente não estiver configurado.
 - **Build de produção:**
-  - Compilado com sucesso via `npm.cmd run build` (Vite v6.4.3).
+  - Compilado com sucesso via `npm.cmd run build` (Vite v6.4.3). Confirmação de que a pasta `tools/` e os arquivos de teste local não são incluídos no pacote de produção (`dist/`).
 
-### 5.2 Limites de Evidência Declarados
+### 5.2 Ambiente de Laboratório Local e Ferramenta de Teste
+
+Para viabilizar o teste local pontual contra a instância Supabase do laboratório (`http://127.0.0.1:54321`):
+1. **Configuração Mínima do Cliente (`src/lib/supabaseClient.js`):**
+   - Aceita HTTP estritamente para hostnames de loopback (`localhost`, `127.0.0.1` ou `::1`) e unicamente quando `import.meta.env.DEV` for `true`.
+   - Utiliza análise de URL pelo construtor WHATWG `new URL` com comparação exata de hostname.
+   - Em produção (`DEV = false`), preserva a exigência estrita de HTTPS.
+   - Rejeita credenciais embutidas na URL, URLs malformadas, IPs de rede local privada e falsos hosts.
+2. **Ferramenta Separada de Autenticação (`tools/local-auth-test.html` e `tools/local-auth-test.js`):**
+   - Disponível apenas em desenvolvimento no endereço `http://127.0.0.1:3000/tools/local-auth-test.html`.
+   - Opera fora da interface de produto, sem inclusão em `public/` e sem impacto no bundle de produção.
+   - Executa guardas em runtime antes de qualquer chamada Auth: exige `DEV = true`, página em loopback e backend em `http://<loopback>:54321`.
+   - Utiliza a instância real de `supabase` de `src/lib/supabaseClient.js` para persistir a sessão de teste no `localStorage` compartilhado da mesma origem.
+   - Suporta cadastro (`signUp`) e login (`signInWithPassword`) manuais com e-mail `@example.com` e senha digitada pelo operador.
+   - Não grava senhas, tokens ou dados sensíveis em arquivos, logs ou URLs.
+   - Orienta verificação do Mailpit (`http://127.0.0.1:54324`) caso a confirmação de e-mail esteja ativada na instância.
+   - **Ressalva de conformidade:** O utilitário local de teste viabiliza a obtenção de sessão no laboratório onde o Google OAuth está desabilitado; ele não substitui a validação do botão Google do piloto nem antecipa a implementação da tela de e-mail/senha de produto prevista no PRD 3.1.
+
+### 5.3 Limites de Evidência Declarados
 - **Cobertura de Componentes React:**
   - Os testes de componentes com React Test Renderer cobrem a montagem da árvore de componentes, efeitos, ciclos de vida de promessas, descarte de callbacks e transições entre rotas/telas (`AccessPendingPage` -> `checking_access` -> `access_error` -> `ChurchHomePage`).
   - Não são testes visuais em navegador DOM (como Cypress ou Playwright) com interação de cursor ou layout CSS físico.
 - **Validação de Código de Produção vs Operação do Banco:**
-  - Os 72 testes de cliente e componentes comprovam a camada de aplicação; eles não são os 64 cenários do PRD comprovados em banco real nem prova de funcionamento físico do PostgreSQL.
-  - A validação executável do SQL (`009_validate_create_my_church.sql`) em um ambiente PostgreSQL dedicado e a validação de concorrência com duas conexões simultâneas para prova física de serialização em locks consultivos permanecem como etapas operacionais a serem conduzidas pelo operador antes da aplicação permanente em produção.
+  - Os 107 testes de cliente, configuração e componentes comprovam a camada de aplicação; eles não são os 64 cenários do PRD comprovados em banco real nem prova de funcionamento físico do PostgreSQL.
+  - A validação executável do SQL (`009_validate_create_my_church.sql`) e a validação de concorrência com duas conexões simultâneas para prova física de serialização em locks consultivos permanecem como etapas operacionais a serem conduzidas pelo operador antes da aplicação permanente em produção.
   - Análise estática do SQL não constitui aprovação operacional do banco de dados.
   - Não foram executadas operações manuais no projeto Supabase remoto nem inseridas fixtures na base do piloto.

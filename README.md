@@ -50,24 +50,41 @@ Clone o repositório e instale as dependências:
 npm install
 ```
 
-Copie o modelo de variáveis de ambiente e preencha com os valores do seu projeto Supabase:
+Copie o modelo de variáveis de ambiente e preencha com os valores do seu ambiente:
 
 ```bash
 cp .env.example .env.local
 ```
 
-| Variável | Onde encontrar |
+| Variável | Descrição / Onde encontrar |
 | --- | --- |
-| `VITE_SUPABASE_URL` | Supabase → Project Settings → API → Project URL |
-| `VITE_SUPABASE_PUBLISHABLE_KEY` | Supabase → Project Settings → API → anon/public key |
+| `VITE_SUPABASE_URL` | URL do backend Supabase (`https://<projeto>.supabase.co` para projeto remoto ou `http://127.0.0.1:54321` para laboratório local) |
+| `VITE_SUPABASE_PUBLISHABLE_KEY` | Chave pública anônima (`anon`/`publishable key`), mantida localmente |
 
-> `.env.local` está no `.gitignore` e nunca deve ser versionado. Não use chaves `service_role` ou secretos OAuth no cliente web.
+> `.env.local` está no `.gitignore` e nunca deve ser versionado. Não use chaves `service_role`, credenciais ou segredos em variáveis `VITE_*`. Apenas a chave publicável é utilizada pelo cliente web.
+
+### Ambiente de Desenvolvimento Local (Laboratório Supabase)
+
+Para testar contra o Supabase local (`http://127.0.0.1:54321`) e o aplicativo web (`http://127.0.0.1:3000`):
+- O cliente Supabase (`src/lib/supabaseClient.js`) aceita URL HTTP exclusivamente quando `import.meta.env.DEV` for `true`, com análise exata de hostname (`localhost`, `127.0.0.1` ou `::1`) e sem credenciais embutidas. Em produção, a exigência de HTTPS estrito permanece inalterada.
+- URLs remotas via HTTP, IPs de rede local e falsos hosts (ex: `localhost.evil.com`) são categoricamente rejeitados.
 
 Para iniciar o servidor de desenvolvimento na porta 3000:
 
 ```bash
 npm run dev
 ```
+
+### Ferramenta Separada de Autenticação Local para Testes
+
+O laboratório local não possui OAuth do Google habilitado e a tela de login de produto ainda não implementou e-mail/senha. Para permitir a obtenção de sessão Supabase Auth real durante o desenvolvimento sem alterar rotas, telas ou botões de produto:
+- Está disponível a ferramenta separada `tools/local-auth-test.html` (com módulo `tools/local-auth-test.js`), acessível exclusivamente via navegador durante `npm run dev` em:
+  `http://127.0.0.1:3000/tools/local-auth-test.html` (ou `http://localhost:3000/tools/local-auth-test.html`).
+- **Guardas estritas:** A ferramenta exige runtime em modo DEV, página em loopback, backend Supabase em HTTP loopback na porta 54321 e chave pública configurada. Na falha de qualquer guarda, nenhuma chamada Auth é executada.
+- **Sessão real, sem concessão automática:** A ferramenta utiliza a instância centralizada de `src/lib/supabaseClient.js`, permitindo cadastrar (`signUp`) e autenticar (`signInWithPassword`) contas de teste fictícias com e-mail do domínio `@example.com` e senha digitada pelo operador. A sessão é gravada no `localStorage` compartilhado da mesma origem. A concessão do primeiro administrador e a criação da igreja permanecem exclusivas do fluxo de produto (modal e RPC atômica).
+- **Sem alteração de produto:** A ferramenta não está na pasta `public/`, não é importada pelo aplicativo de produto e não é incluída na pasta `dist/` durante `npm run build`.
+- **Ressalva importante:** A autenticação manual por este utilitário local viabiliza os testes de interface do laboratório; ela **não** valida o botão Google OAuth do piloto nem conclui a implementação do fluxo e-mail/senha de produto previsto no PRD 3.1.
+
 
 ## Login e acesso à igreja
 
@@ -118,8 +135,8 @@ O incremento de **cadastro real de membros na web** e o fluxo de **Criar minha i
 - O cadastro básico de membro coleta **apenas o nome** (`display_name`), sem CPF. O e-mail do destinatário será informado posteriormente, no fluxo de emissão do convite. **Não há campo de e-mail no formulário atual de cadastro.**
 - O fluxo "Criar minha igreja" implementa validação NFC, fuso IANA, endereço, mapa estrito, política warn/block, idempotência por comando, retenção de comando em voo, reconciliação por recibo e transição segura para a igreja criada com identificador textual direto.
 - **Evidências de validação automatizada:**
-  - Os **72 testes automatizados** distribuídos em **14 suítes** (100% aprovados, 0 falhas) cobrem o ciclo de comandos de membros (33 testes, 6 suítes), o ciclo de criação de igreja, geração explícita de sessão e isolamento (35 testes, 7 suítes), e a execução de componentes reais de produção com React Test Renderer 18.3.1 (4 testes, 1 suíte) comprovando bloqueio de callback após logout no modal, seleção de igreja após recarga bem-sucedida, preservação da mensagem de confirmação de criação na tela ativa (`AccessErrorPage`) após falha de recarga, retentativa sem reexecução da criação e descarte de confirmação no logout.
-  - O build de produção Vite compila com sucesso (`npm.cmd run build`).
+  - Os **107 testes automatizados** distribuídos em **20 suítes** (100% aprovados, 0 falhas) cobrem o ciclo de comandos de membros (33 testes, 6 suítes), o ciclo de criação de igreja, geração explícita de sessão e isolamento (35 testes, 7 suítes), a execução de componentes reais de produção com React Test Renderer 18.3.1 (4 testes, 1 suíte), a validação estrita da URL do Supabase e chave pública (25 testes, 5 suítes) e as guardas de segurança da ferramenta de autenticação local (10 testes, 1 suíte).
+  - O build de produção Vite compila com sucesso (`npm.cmd run build`), sem incluir a ferramenta de teste local em `dist/`.
   - Esses testes comprovam o comportamento do cliente web, contratos dos serviços e a montagem/transição real de telas no React; não comprovam a execução real do banco nem concorrência física entre conexões no Supabase, que continuam dependentes de validação operacional autorizada.
   - O responsável confirmou no navegador o funcionamento do cadastro e da listagem, a preservação dos quatro membros na tela durante a falta de conexão e a retirada do aviso após a reconexão.
   - A resposta incerta durante a criação no navegador (queda física durante a RPC com recuperação posterior via recibo), a concorrência real entre conexões simultâneas disputando o bloqueio consultivo no banco e o cancelamento operacional por timeout via API HTTP continuam pendentes de validação.
