@@ -90,7 +90,7 @@ A identidade do usuário é derivada exclusivamente de `auth.uid()`. Nenhum endp
   1. Nova igreja em `app_private.churches`.
   2. Cadastro de membro do criador em `app_private.members` como primeiro administrador.
   3. Vínculo de acesso em `app_private.church_access` (`is_admin = true`, `status = 'active'`, `onboarding_completed_at = now()`, `granted_by = v_user_id`).
-  4. Entrada de auditoria em `app_private.audit_entries` com `actor_user_id = v_user_id`, `actor_source = 'application'`, `action = 'create_church'`, `target_entity = 'churches'`, `details` em JSONB.
+  4. Entrada de auditoria em `app_private.audit_entries` com `actor_user_id = v_user_id`, `actor_source = 'application'`, `action = 'create_church'`, `target_type = 'church'`, `target_id = v_new_church_id`, `details` em JSONB.
   5. Recibo de comando em `app_private.command_receipts` (`action = 'create_church'`, `params_hash`, `result_member_id`).
   - Qualquer falha (inclusive erro na auditoria ou violação do índice de administração única) desfaz integralmente todas as alterações (`ROLLBACK`).
 - **Limite técnico de taxa:**
@@ -256,8 +256,8 @@ Localizados em `docs/sql/`:
 
 ### 5.1 Testes Automatizados Locais
 Executados com sucesso via Node.js nativo com o comando `npm.cmd test`:
-- **Total:** **57 testes automatizados** distribuídos em **12 suítes** (100% de aprovação, 0 falhas).
-- **Testes dedicados de criação de igreja e regressões (`test/church-command-cycle.test.js` — 24 testes):**
+- **Total:** **68 testes automatizados** distribuídos em **13 suítes** (100% de aprovação, 0 falhas).
+- **Testes dedicados de criação de igreja e regressões (`test/church-command-cycle.test.js` — 35 testes, 7 suítes):**
   1. *Normalização e validação de entrada:* conversão NFD para NFC, preservação de apóstrofos e cedilhas, rejeição de nomes em branco, validação de limites de comprimento, políticas aceitas (`warn`/`block`) e formato estrito de URL do Google Maps.
   2. *Classificação de erros:* separação de códigos Postgres definitivos (`23505`, `23514`, `P0001`, `42501`) e falhas de transporte/5xx como respostas incertas.
   3. *Ciclo de comandos e retenção:* persistência com isolamento por usuário, cancelamento do envio caso `sessionStorage` falhe, limpeza global no logout.
@@ -269,14 +269,28 @@ Executados com sucesso via Node.js nativo com o comando `npm.cmd test`:
      - Recibo contendo apenas `church_id` é classificado como `RECEIPT_INCOMPLETE` e retém o comando.
      - Validação estrita de URL do Google Maps rejeitando domínios maliciosos e URLs inseguras.
      - Imutabilidade do comando pendente impedindo sobrescrita de `commandId`.
-- **Testes de ciclo de membros (`test/member-command-cycle.test.js` — 33 testes):**
+  7. *Proteção contra respostas antigas, isolamento de sessão e recuperação acessível:*
+     - Descarte de resposta em voo de comando A como `STALE_SESSION` após logout/retorno, preservando comando B intacto.
+     - Consulta de recibo antiga descartada como `STALE_SESSION` sem remover novo comando.
+     - `removePendingChurchCommand` bloqueia remoção com `expectedCommandId` divergente.
+     - Recuperação acessível com acesso admin e reconciliação por recibo.
+     - Preservação de contexto com múltiplos acessos selecionando a igreja criada.
+     - Validação de Maps rejeitando subdomínios arbitrários.
+     - **Regressão Codex — Envio com geração explícita:** descarta resposta como `STALE_SESSION` após invalidação global (`invalidateChurchCommandSession`).
+     - **Regressão Codex — Recibo com geração explícita:** descarta recibo como `STALE_SESSION` após invalidação global.
+     - **Ligação real à fonte viva do AuthContext:** verificação viva via `getAuthSnapshot()` e `getChurchCommandSessionGeneration()` garante que logout durante a chamada descarta callback, bloqueia `onSuccess` e não altera storage.
+     - **Contrato de entrada na igreja criada via AccessPendingPage:** `refreshAccess(createdChurch.church_id)` recebe identificador textual direto, destino é a igreja criada e falha de recarga não re-executa criação.
+- **Testes de ciclo de membros (`test/member-command-cycle.test.js` — 33 testes, 6 suítes):**
   - Todas as 6 suítes continuam passando integralmente sem regressões.
 - **Build de produção:**
-  - Compilado com sucesso via `npm.cmd run build` (Vite v6.4.3 em 3.01s).
+  - Compilado com sucesso via `npm.cmd run build` (Vite v6.4.3).
 
 ### 5.2 Limites de Evidência Declarados
+- **Cobertura de Componentes React e Fonte Viva:**
+  - Os testes unitários comprovam a lógica do ciclo de comandos, o comportamento dos serviços, a persistência no storage, o descarte de respostas obsoletas e o acoplamento do modal e páginas à fonte viva do `AuthContext` via snapshot imediato.
+  - A renderização interativa em navegador real (DOM visual e eventos de mouse/teclado no modal montado) permanece como validação de ponta a ponta na esteira de aceitação.
 - **Validação de Código de Produção vs Operação do Banco:**
-  - Os testes automatizados comprovam o ciclo no cliente, o comportamento dos serviços, a persistência no storage, o descarte de respostas obsoletas e o tratamento das respostas da RPC.
+  - Os 68 testes de cliente comprovam a camada de aplicação; eles não são os 64 cenários do PRD comprovados em banco real nem prova de funcionamento físico do PostgreSQL.
   - A validação executável do SQL (`009_validate_create_my_church.sql`) em um ambiente PostgreSQL dedicado e a validação de concorrência com duas conexões simultâneas para prova física de serialização em locks consultivos permanecem como etapas operacionais a serem conduzidas pelo operador antes da aplicação permanente em produção.
   - Análise estática do SQL não constitui aprovação operacional do banco de dados.
   - Não foram executadas operações manuais no projeto Supabase remoto nem inseridas fixtures na base do piloto.

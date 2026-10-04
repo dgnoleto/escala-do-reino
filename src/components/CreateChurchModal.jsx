@@ -20,6 +20,7 @@ import {
   checkChurchReceipt,
   loadPendingChurchCommand,
   removePendingChurchCommand,
+  getChurchCommandSessionGeneration,
 } from '../utils/churchCommandService';
 
 const TIMEZONE_OPTIONS = [
@@ -56,7 +57,7 @@ function getBrowserSuggestedTimezone() {
 }
 
 export default function CreateChurchModal({ isOpen, onClose, onSuccess }) {
-  const { session, sessionId } = useAuth();
+  const { session, sessionId, getAuthSnapshot } = useAuth();
   const userId = session?.user?.id;
 
   const isMountedRef = useRef(true);
@@ -176,10 +177,22 @@ export default function CreateChurchModal({ isOpen, onClose, onSuccess }) {
   if (!isOpen) return null;
 
   async function handleRecoverUncertainCommand() {
-    if (!uncertainCommandId || !userId || !supabase) return;
+    const liveAuth = getAuthSnapshot ? getAuthSnapshot() : { userId, sessionId };
+    const currentUserId = liveAuth.userId;
+    const currentSessionId = liveAuth.sessionId;
+    if (!uncertainCommandId || !currentUserId || !supabase) return;
     const recoveringCommandId = uncertainCommandId;
-    const currentSessionId = sessionId;
-    const currentUserId = userId;
+    const initialServiceGen = getChurchCommandSessionGeneration();
+
+    const isLiveValid = () => {
+      if (!isMountedRef.current) return false;
+      const nowAuth = getAuthSnapshot ? getAuthSnapshot() : { userId: session?.user?.id, sessionId };
+      if (!nowAuth.userId || nowAuth.userId !== currentUserId) return false;
+      if (nowAuth.sessionId !== currentSessionId) return false;
+      if (getChurchCommandSessionGeneration() !== initialServiceGen) return false;
+      return true;
+    };
+
     setIsRecovering(true);
     setSubmitError(null);
 
@@ -187,16 +200,12 @@ export default function CreateChurchModal({ isOpen, onClose, onSuccess }) {
       const result = await checkChurchReceipt({
         supabaseClient: supabase,
         commandId: recoveringCommandId,
-        sessionGeneration: currentSessionId,
-        isSessionValid: () => isMountedRef.current && session?.user?.id === currentUserId && sessionId === currentSessionId,
+        sessionGeneration: initialServiceGen,
+        isSessionValid: isLiveValid,
       });
 
       // Descartar se o componente foi desmontado ou a sessão/usuário mudou
-      if (!isMountedRef.current || session?.user?.id !== currentUserId || sessionId !== currentSessionId) {
-        return;
-      }
-
-      if (result.status === 'STALE_SESSION') {
+      if (!isLiveValid() || result.status === 'STALE_SESSION') {
         return;
       }
 
@@ -219,12 +228,12 @@ export default function CreateChurchModal({ isOpen, onClose, onSuccess }) {
         );
       }
     } catch (err) {
-      if (!isMountedRef.current || session?.user?.id !== currentUserId || sessionId !== currentSessionId) {
+      if (!isLiveValid()) {
         return;
       }
       setSubmitError('Erro ao consultar recibo de recuperação.');
     } finally {
-      if (isMountedRef.current && session?.user?.id === currentUserId && sessionId === currentSessionId) {
+      if (isLiveValid()) {
         setIsRecovering(false);
       }
     }
@@ -249,8 +258,24 @@ export default function CreateChurchModal({ isOpen, onClose, onSuccess }) {
     }
 
     setFieldErrors({});
-    const currentSessionId = sessionId;
-    const currentUserId = userId;
+    const liveAuth = getAuthSnapshot ? getAuthSnapshot() : { userId, sessionId };
+    const currentUserId = liveAuth.userId;
+    const currentSessionId = liveAuth.sessionId;
+    if (!currentUserId) {
+      setSubmitError('Usuário não autenticado.');
+      return;
+    }
+    const initialServiceGen = getChurchCommandSessionGeneration();
+
+    const isLiveValid = () => {
+      if (!isMountedRef.current) return false;
+      const nowAuth = getAuthSnapshot ? getAuthSnapshot() : { userId: session?.user?.id, sessionId };
+      if (!nowAuth.userId || nowAuth.userId !== currentUserId) return false;
+      if (nowAuth.sessionId !== currentSessionId) return false;
+      if (getChurchCommandSessionGeneration() !== initialServiceGen) return false;
+      return true;
+    };
+
     setIsSubmitting(true);
 
     try {
@@ -259,15 +284,11 @@ export default function CreateChurchModal({ isOpen, onClose, onSuccess }) {
         storage: typeof window !== 'undefined' ? window.sessionStorage : null,
         userId: currentUserId,
         churchData: validation.normalizedData,
-        sessionGeneration: currentSessionId,
-        isSessionValid: () => isMountedRef.current && session?.user?.id === currentUserId && sessionId === currentSessionId,
+        sessionGeneration: initialServiceGen,
+        isSessionValid: isLiveValid,
       });
 
-      if (!isMountedRef.current || session?.user?.id !== currentUserId || sessionId !== currentSessionId) {
-        return;
-      }
-
-      if (result.status === 'STALE_SESSION') {
+      if (!isLiveValid() || result.status === 'STALE_SESSION') {
         return;
       }
 
@@ -293,12 +314,12 @@ export default function CreateChurchModal({ isOpen, onClose, onSuccess }) {
       // Rejeição definitiva
       setSubmitError(result.error || 'Não foi possível criar a igreja.');
     } catch (err) {
-      if (!isMountedRef.current || session?.user?.id !== currentUserId || sessionId !== currentSessionId) {
+      if (!isLiveValid()) {
         return;
       }
       setSubmitError('Erro inesperado ao processar criação da igreja.');
     } finally {
-      if (isMountedRef.current && session?.user?.id === currentUserId && sessionId === currentSessionId) {
+      if (isLiveValid()) {
         setIsSubmitting(false);
       }
     }

@@ -86,11 +86,15 @@ export function AuthProvider({ children }) {
    * @param {object} options - { isBackground: boolean, preferredChurchId: string|null }
    */
   const fetchChurchAccess = useCallback(async (expectedUserId, { isBackground = false, preferredChurchId = null } = {}) => {
-    if (!supabase || !expectedUserId) return;
+    if (!supabase || !expectedUserId) return { success: false, error: 'Supabase ou usuário não configurado.' };
 
     // Registra a geração da sessão e a sequência desta requisição
     const thisSessionId = sessionIdRef.current;
     const thisSeq       = ++requestSeqRef.current;
+
+    if (preferredChurchId && typeof window !== 'undefined') {
+      window.sessionStorage?.setItem(STORAGE_KEY_SELECTED_CHURCH_PREFIX + expectedUserId, preferredChurchId);
+    }
 
     if (!isBackground) {
       setAuthState('checking_access');
@@ -103,7 +107,7 @@ export function AuthProvider({ children }) {
 
       // Descartar se a sessão mudou ou se uma consulta mais recente já foi disparada
       if (sessionIdRef.current !== thisSessionId || requestSeqRef.current !== thisSeq) {
-        return;
+        return { success: false, stale: true };
       }
 
       if (error) {
@@ -119,7 +123,7 @@ export function AuthProvider({ children }) {
             setAuthState('access_pending');
           }
         }
-        return;
+        return { success: false, error: error.message || 'Falha ao verificar o acesso.' };
       }
 
       if (!data || data.length === 0) {
@@ -130,7 +134,7 @@ export function AuthProvider({ children }) {
           window.sessionStorage?.removeItem(STORAGE_KEY_SELECTED_CHURCH_PREFIX + expectedUserId);
         }
         setAuthState('access_pending');
-        return;
+        return { success: false, reason: 'access_pending' };
       }
 
       setAvailableAccesses(data);
@@ -145,7 +149,7 @@ export function AuthProvider({ children }) {
           }
           setAuthError('A igreja selecionada não está mais disponível para esta conta.');
           setAuthState('access_error');
-          return;
+          return { success: false, error: 'A igreja selecionada não está mais disponível para esta conta.' };
         }
 
         // Vínculo único válido: preserva e seleciona
@@ -155,7 +159,7 @@ export function AuthProvider({ children }) {
         setChurchAccess(singleAccess);
         churchAccessRef.current = singleAccess;
         setAuthState('access_granted');
-        return;
+        return { success: true, churchAccess: singleAccess };
       }
 
       // Múltiplos vínculos autorizados (> 1):
@@ -173,7 +177,7 @@ export function AuthProvider({ children }) {
           setChurchAccess(found);
           churchAccessRef.current = found;
           setAuthState('access_granted');
-          return;
+          return { success: true, churchAccess: found };
         } else {
           // Destino esperado não encontrado entre os múltiplos vínculos:
           // Não usar data[0] como fallback silencioso! Exigir escolha explícita.
@@ -183,23 +187,25 @@ export function AuthProvider({ children }) {
             window.sessionStorage?.removeItem(STORAGE_KEY_SELECTED_CHURCH_PREFIX + expectedUserId);
           }
           setAuthState('select_church');
-          return;
+          return { success: false, reason: 'select_church' };
         }
       }
 
       // Múltiplos acessos e nenhuma escolha salva: solicitar seleção explícita
       clearAccessContext();
       setAuthState('select_church');
+      return { success: false, reason: 'select_church' };
 
     } catch (unexpectedErr) {
       if (sessionIdRef.current !== thisSessionId || requestSeqRef.current !== thisSeq) {
-        return;
+        return { success: false, stale: true };
       }
       console.error('[AuthContext] Erro inesperado na consulta de vínculo:', unexpectedErr);
       if (!isBackground) {
         setAuthError('Erro inesperado ao verificar o acesso.');
         setAuthState('access_error');
       }
+      return { success: false, error: 'Erro inesperado ao verificar o acesso.' };
     }
   }, [clearAccessContext]);
 
@@ -241,6 +247,7 @@ export function AuthProvider({ children }) {
       if (transition.type === 'LOGOUT' || transition.type === 'UNAUTHENTICATED') {
         sessionIdRef.current += 1;
         currentUserIdRef.current = null;
+        invalidateChurchCommandSession();
         clearAccessContext();
         if (transition.shouldClearMemberStorage) {
           clearMemberCommandStorage();
@@ -277,6 +284,7 @@ export function AuthProvider({ children }) {
           window.sessionStorage?.removeItem(STORAGE_KEY_SELECTED_CHURCH_PREFIX + previousUserId);
         }
         currentUserIdRef.current = newUserId;
+        invalidateChurchCommandSession();
         clearAccessContext();
         setAvailableAccesses([]);
         clearMemberCommandStorage();
@@ -377,11 +385,22 @@ export function AuthProvider({ children }) {
   /**
    * Recarrega o vínculo com suporte a seleção de igreja preferencial (ex.: após criar igreja).
    */
-  const refreshAccess = useCallback((preferredChurchId = null) => {
+  const refreshAccess = useCallback(async (preferredChurchId = null) => {
+    const targetId = typeof preferredChurchId === 'object' && preferredChurchId !== null
+      ? preferredChurchId.preferredChurchId
+      : preferredChurchId;
     const uid = currentUserIdRef.current;
-    if (!uid) return;
-    fetchChurchAccess(uid, { isBackground: false, preferredChurchId });
+    if (!uid) return { success: false, error: 'Usuário não autenticado.' };
+    return await fetchChurchAccess(uid, { isBackground: false, preferredChurchId: targetId });
   }, [fetchChurchAccess]);
+
+  /**
+   * Getter estável da identidade e geração da sessão vigentes (fonte viva do AuthContext).
+   */
+  const getAuthSnapshot = useCallback(() => ({
+    userId: currentUserIdRef.current,
+    sessionId: sessionIdRef.current,
+  }), []);
 
   /**
    * Inicia o fluxo OAuth com o Google.
@@ -451,6 +470,7 @@ export function AuthProvider({ children }) {
       value={{
         session,
         sessionId: sessionIdRef.current,
+        getAuthSnapshot,
         authState,
         authError,
         setAuthError,

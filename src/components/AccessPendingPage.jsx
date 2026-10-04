@@ -102,7 +102,10 @@ export default function AccessPendingPage() {
     setAccessReloadError(null);
     if (createdChurch?.church_id && refreshAccess) {
       try {
-        await refreshAccess({ preferredChurchId: createdChurch.church_id });
+        const res = await refreshAccess(createdChurch.church_id);
+        if (res && res.success === false && res.error) {
+          setAccessReloadError(res.error);
+        }
       } catch (err) {
         setAccessReloadError('A igreja foi criada, mas ocorreu uma falha ao atualizar o acesso.');
       }
@@ -113,7 +116,10 @@ export default function AccessPendingPage() {
     if (confirmedChurch?.church_id && refreshAccess) {
       setAccessReloadError(null);
       try {
-        await refreshAccess({ preferredChurchId: confirmedChurch.church_id });
+        const res = await refreshAccess(confirmedChurch.church_id);
+        if (res && res.success === false && res.error) {
+          setAccessReloadError(res.error);
+        }
       } catch (err) {
         setAccessReloadError('Falha ao recarregar acesso. Tente novamente.');
       }

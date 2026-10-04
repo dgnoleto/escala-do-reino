@@ -420,9 +420,18 @@ export async function checkChurchReceipt({
     return classifyReceiptCheckResult(null, new Error('Parâmetros inválidos para recibo.'));
   }
 
-  const initialGen = sessionGeneration !== null && sessionGeneration !== undefined
+  const initialServiceGen = getChurchCommandSessionGeneration();
+  const expectedGen = (sessionGeneration !== null && sessionGeneration !== undefined)
     ? sessionGeneration
-    : getChurchCommandSessionGeneration();
+    : initialServiceGen;
+
+  if (sessionGeneration !== null && sessionGeneration !== undefined && sessionGeneration !== initialServiceGen) {
+    return {
+      status: 'STALE_SESSION',
+      shouldRetainCommand: true,
+      error: 'Sessão alterada ou encerrada durante a verificação de recibo.',
+    };
+  }
 
   try {
     const { data, error } = await supabaseClient
@@ -431,10 +440,9 @@ export async function checkChurchReceipt({
         p_command_id: commandId,
       });
 
-    const currentGen = sessionGeneration !== null && sessionGeneration !== undefined
-      ? sessionGeneration
-      : getChurchCommandSessionGeneration();
-    const sessionStillValid = currentGen === initialGen && (!isSessionValid || isSessionValid());
+    const currentServiceGen = getChurchCommandSessionGeneration();
+    const isServiceGenValid = currentServiceGen === initialServiceGen && currentServiceGen === expectedGen;
+    const sessionStillValid = isServiceGenValid && (!isSessionValid || isSessionValid());
 
     if (!sessionStillValid) {
       return {
@@ -446,10 +454,9 @@ export async function checkChurchReceipt({
 
     return classifyReceiptCheckResult(data, error);
   } catch (err) {
-    const currentGen = sessionGeneration !== null && sessionGeneration !== undefined
-      ? sessionGeneration
-      : getChurchCommandSessionGeneration();
-    const sessionStillValid = currentGen === initialGen && (!isSessionValid || isSessionValid());
+    const currentServiceGen = getChurchCommandSessionGeneration();
+    const isServiceGenValid = currentServiceGen === initialServiceGen && currentServiceGen === expectedGen;
+    const sessionStillValid = isServiceGenValid && (!isSessionValid || isSessionValid());
 
     if (!sessionStillValid) {
       return {
@@ -525,9 +532,18 @@ export async function dispatchChurchCreation({
     dataToSend = normalizedData;
   }
 
-  const initialGen = sessionGeneration !== null && sessionGeneration !== undefined
+  const initialServiceGen = getChurchCommandSessionGeneration();
+  const expectedGen = (sessionGeneration !== null && sessionGeneration !== undefined)
     ? sessionGeneration
-    : getChurchCommandSessionGeneration();
+    : initialServiceGen;
+
+  if (sessionGeneration !== null && sessionGeneration !== undefined && sessionGeneration !== initialServiceGen) {
+    return {
+      status: 'STALE_SESSION',
+      error: 'A sessão informada já está desatualizada.',
+      commandId,
+    };
+  }
 
   // 2. Executa a chamada RPC no servidor
   try {
@@ -543,10 +559,9 @@ export async function dispatchChurchCreation({
         p_default_duration_policy: dataToSend.defaultDurationPolicy,
       });
 
-    const currentGen = sessionGeneration !== null && sessionGeneration !== undefined
-      ? sessionGeneration
-      : getChurchCommandSessionGeneration();
-    const sessionStillValid = currentGen === initialGen && (!isSessionValid || isSessionValid());
+    const currentServiceGen = getChurchCommandSessionGeneration();
+    const isServiceGenValid = currentServiceGen === initialServiceGen && currentServiceGen === expectedGen;
+    const sessionStillValid = isServiceGenValid && (!isSessionValid || isSessionValid());
 
     if (!sessionStillValid) {
       // Sessão mudou ou foi encerrada durante o voo da requisição.
@@ -602,10 +617,9 @@ export async function dispatchChurchCreation({
       commandId,
     };
   } catch (unexpected) {
-    const currentGen = sessionGeneration !== null && sessionGeneration !== undefined
-      ? sessionGeneration
-      : getChurchCommandSessionGeneration();
-    const sessionStillValid = currentGen === initialGen && (!isSessionValid || isSessionValid());
+    const currentServiceGen = getChurchCommandSessionGeneration();
+    const isServiceGenValid = currentServiceGen === initialServiceGen && currentServiceGen === expectedGen;
+    const sessionStillValid = isServiceGenValid && (!isSessionValid || isSessionValid());
 
     if (!sessionStillValid) {
       return {

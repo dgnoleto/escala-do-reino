@@ -626,6 +626,8 @@ declare
   v_table text;
   v_bad_url text;
   v_bad_urls text[];
+  v_err_msg text;
+  v_err_state text;
 begin
   -- Asserção inicial: ensaio precisa iniciar sob papel com privilégios de operador
   if current_user = 'authenticated' or current_user = 'anon' then
@@ -726,7 +728,7 @@ begin
      or not exists (select 1 from app_private.members where id = v_created_member_id)
      or not exists (select 1 from app_private.church_access where church_id = v_created_church_id and user_id = v_test_user_a and is_admin = true)
      or not exists (select 1 from app_private.command_receipts where church_id = v_created_church_id and command_id = v_command_id and action = 'create_church')
-     or not exists (select 1 from app_private.audit_entries where target_id = v_created_church_id::text and action = 'create_church') then
+     or not exists (select 1 from app_private.audit_entries where target_id = v_created_church_id and action = 'create_church') then
     raise exception 'Falha no teste: registros não encontrados em app_private na inspeção do operador';
   end if;
 
@@ -946,20 +948,37 @@ begin
   v_caught_error := false;
   begin
     update app_private.church_access
-    set status = 'inactive'
+    set is_admin = false
     where church_id = v_created_church_id and user_id = v_test_user_b;
   exception
-    when sqlstate '23514' then
-      v_caught_error := true;
+    when others then
+      get stacked diagnostics
+        v_err_state = returned_sqlstate,
+        v_err_msg = message_text;
+      if v_err_state = '23514' and v_err_msg like '%não pode ficar sem administrador ativo elegível%' then
+        v_caught_error := true;
+      end if;
   end;
   if not v_caught_error then
     raise exception 'Falha no teste: sucessor com conta inelegível não pode permitir a saída do único admin válido';
   end if;
 
+  -- Confere que o vínculo original do admin continua preservado
+  if not exists (
+    select 1 from app_private.church_access
+    where church_id = v_created_church_id
+      and user_id = v_test_user_b
+      and is_admin = true
+      and status = 'active'
+  ) then
+    raise exception 'Falha no teste: vínculo original do último admin deveria ter sido preservado';
+  end if;
+
   -- [Cenário 14] Validação estrita de URLs do Google Maps no servidor
-  -- 14.1 URLs válidas aceitas
+  -- 14.1 URLs válidas aceitas: uma conta sintética nova por URL válida
   declare
-    v_test_user_d uuid := gen_random_uuid();
+    v_url_user uuid;
+    v_url_command_id uuid;
     v_valid_url text;
     v_valid_urls text[] := array[
       'https://maps.app.goo.gl/exemplo123',
@@ -967,17 +986,32 @@ begin
       'https://www.google.com/maps/place/Igreja',
       'https://google.com.br/maps/place/Igreja'
     ];
+    v_url_church_id uuid;
+    v_url_member_id uuid;
   begin
-    insert into auth.users (id, email, email_confirmed_at)
-    values (v_test_user_d, 'test_create_d_' || v_test_user_d::text || '@example.com', statement_timestamp());
-
-    perform set_config('request.jwt.claim.sub', v_test_user_d::text, true);
-    perform set_config('request.jwt.claims', json_build_object('sub', v_test_user_d::text, 'role', 'authenticated')::text, true);
-    execute 'set local role authenticated';
-
     foreach v_valid_url in array v_valid_urls loop
-      perform public.create_my_church(
-        gen_random_uuid(),
+      -- Garante papel de operador antes de preparar a fixture
+      execute 'reset role';
+      if current_user <> v_operator then
+        raise exception 'Falha ao garantir operador antes da fixture de URL';
+      end if;
+
+      v_url_user := gen_random_uuid();
+      v_url_command_id := gen_random_uuid();
+
+      insert into auth.users (id, email, email_confirmed_at)
+      values (v_url_user, 'test_create_url_' || v_url_user::text || '@example.com', statement_timestamp());
+
+      perform set_config('request.jwt.claim.sub', v_url_user::text, true);
+      perform set_config('request.jwt.claims', json_build_object('sub', v_url_user::text, 'role', 'authenticated')::text, true);
+      execute 'set local role authenticated';
+      if current_user <> 'authenticated' then
+        raise exception 'Falha ao alternar papel para authenticated no teste de URL válida';
+      end if;
+
+      select church_id, member_id into v_url_church_id, v_url_member_id
+      from public.create_my_church(
+        v_url_command_id,
         'Igreja Maps Válido ' || substr(v_valid_url, 9, 8),
         'Pastor Maps',
         'America/Sao_Paulo',
@@ -985,10 +1019,24 @@ begin
         v_valid_url,
         'warn'
       );
-      -- Como v_test_user_d agora é admin, resetar role para limpar a administração e poder testar próxima URL
+
+      if v_url_church_id is null or v_url_member_id is null then
+        raise exception 'Falha: criação de igreja com URL válida % não retornou IDs', v_valid_url;
+      end if;
+
+      -- Retorna ao operador para confirmar registros relacionados e preparar próxima fixture
       execute 'reset role';
-      update app_private.church_access set status = 'revoked', is_admin = false where user_id = v_test_user_d;
-      execute 'set local role authenticated';
+      if current_user <> v_operator then
+        raise exception 'Falha ao retornar ao operador para conferência de URL';
+      end if;
+
+      if not exists (select 1 from app_private.churches where id = v_url_church_id and google_maps_url = v_valid_url)
+         or not exists (select 1 from app_private.members where id = v_url_member_id and church_id = v_url_church_id)
+         or not exists (select 1 from app_private.church_access where church_id = v_url_church_id and user_id = v_url_user and is_admin = true and status = 'active')
+         or not exists (select 1 from app_private.command_receipts where church_id = v_url_church_id and command_id = v_url_command_id and action = 'create_church')
+         or not exists (select 1 from app_private.audit_entries where church_id = v_url_church_id and target_id = v_url_church_id and action = 'create_church') then
+        raise exception 'Falha: registros relacionados para URL % não foram encontrados em app_private', v_valid_url;
+      end if;
     end loop;
     execute 'reset role';
   end;
@@ -1045,8 +1093,8 @@ begin
   create function app_private.fail_audit_trigger()
   returns trigger language plpgsql as $$
   begin
-    if NEW.action = 'create_church' and NEW.details->>'name' = 'Igreja Falha Auditoria' then
-      raise exception 'Simulação controlada de falha na auditoria' using errcode = 'P0001';
+    if NEW.action = 'create_church' and NEW.details->>'church_name' = 'Igreja Falha Auditoria' then
+      raise exception 'Simulação controlada de falha na auditoria: [AUDIT_SIMULATED_FAILURE]' using errcode = 'P0001';
     end if;
     return NEW;
   end;
@@ -1066,6 +1114,9 @@ begin
     perform set_config('request.jwt.claim.sub', v_test_user_e::text, true);
     perform set_config('request.jwt.claims', json_build_object('sub', v_test_user_e::text, 'role', 'authenticated')::text, true);
     execute 'set local role authenticated';
+    if current_user <> 'authenticated' then
+      raise exception 'Falha ao alternar papel para authenticated no cenário 15';
+    end if;
 
     v_caught_error := false;
     begin
@@ -1077,15 +1128,24 @@ begin
         null, null, 'warn'
       );
     exception
-      when sqlstate 'P0001' then
-        v_caught_error := true;
+      when others then
+        get stacked diagnostics
+          v_err_state = returned_sqlstate,
+          v_err_msg = message_text;
+        if v_err_state = 'P0001' and v_err_msg like '%[AUDIT_SIMULATED_FAILURE]%' then
+          v_caught_error := true;
+        end if;
     end;
     if not v_caught_error then
-      raise exception 'Falha no teste: falha controlada de auditoria deveria abortar a criação';
+      raise exception 'Falha no teste: falha controlada de auditoria deveria abortar a criação com [AUDIT_SIMULATED_FAILURE]';
     end if;
 
     -- Volta ao operador para inspecionar que NENHUM registro parcial foi salvo
     execute 'reset role';
+    if current_user <> v_operator then
+      raise exception 'Falha ao garantir operador após teste de atomicidade';
+    end if;
+
     drop trigger trg_fail_audit_test on app_private.audit_entries;
     drop function app_private.fail_audit_trigger();
 
@@ -1100,6 +1160,9 @@ begin
     end if;
     if exists (select 1 from app_private.church_access where user_id = v_test_user_e) then
       raise exception 'Falha no teste de atomicidade: acesso foi gravado parcialmente após falha de auditoria';
+    end if;
+    if exists (select 1 from app_private.audit_entries where actor_user_id = v_test_user_e or details->>'command_id' = v_cmd_audit_fail::text) then
+      raise exception 'Falha no teste de atomicidade: auditoria foi gravada parcialmente após falha de auditoria';
     end if;
   end;
 

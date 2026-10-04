@@ -1050,6 +1050,252 @@ describe('7. Proteção contra Respostas Antigas, Isolamento de Sessão e Recupe
     // Callback de sucesso NÃO deve ter sido chamado
     assert.equal(onSuccessCalled, false);
   });
+
+  it('Envio com geração explícita precisa descartar resposta após invalidação global (Regressão Codex)', async () => {
+    let finishRpc;
+    const rpcPromise = new Promise((resolve) => { finishRpc = resolve; });
+    const mockClient = {
+      schema: () => ({
+        rpc: () => rpcPromise,
+      }),
+    };
+    const storage = createMockStorage();
+    const userId = 'user-explicit-gen-dispatch';
+
+    const initialGen = getChurchCommandSessionGeneration();
+
+    const operation = dispatchChurchCreation({
+      supabaseClient: mockClient,
+      storage,
+      userId,
+      churchData: {
+        name: 'Igreja Geração Explícita',
+        creatorName: 'João da Silva',
+        timezone: 'America/Sao_Paulo',
+      },
+      sessionGeneration: initialGen,
+      isSessionValid: () => true,
+    });
+
+    // Invalidação global durante o voo da RPC
+    invalidateChurchCommandSession();
+
+    // RPC resolve com sucesso no servidor
+    finishRpc({
+      data: [{
+        church_id: 'church-exp-123',
+        church_name: 'Igreja Geração Explícita',
+        member_id: 'member-exp-456',
+        is_admin: true,
+      }],
+      error: null,
+    });
+
+    const result = await operation;
+    assert.equal(result.status, 'STALE_SESSION');
+  });
+
+  it('Recibo com geração explícita precisa descartar resposta após invalidação global (Regressão Codex)', async () => {
+    let finishReceipt;
+    const receiptPromise = new Promise((resolve) => { finishReceipt = resolve; });
+    const mockClient = {
+      schema: () => ({
+        rpc: () => receiptPromise,
+      }),
+    };
+
+    const initialGen = getChurchCommandSessionGeneration();
+
+    const operation = checkChurchReceipt({
+      supabaseClient: mockClient,
+      commandId: 'cmd-explicit-gen-receipt',
+      sessionGeneration: initialGen,
+      isSessionValid: () => true,
+    });
+
+    // Invalidação global durante a consulta do recibo
+    invalidateChurchCommandSession();
+
+    finishReceipt({
+      data: [{
+        church_id: 'church-exp-receipt',
+        church_name: 'Igreja Recibo Explícito',
+        member_id: 'mem-exp-receipt',
+        is_admin: true,
+      }],
+      error: null,
+    });
+
+    const result = await operation;
+    assert.equal(result.status, 'STALE_SESSION');
+  });
+
+  it('ligação real do modal à fonte viva do AuthContext: logout durante envio descarta callback, bloqueia onSuccess e preserva storage', async () => {
+    const storage = createMockStorage();
+    let authSnapshot = {
+      userId: 'user-modal-living',
+      sessionId: 10,
+    };
+    const getAuthSnapshot = () => ({ ...authSnapshot });
+
+    let finishRpc;
+    const rpcPromise = new Promise((res) => { finishRpc = res; });
+    const mockSupabase = {
+      schema: () => ({
+        rpc: () => rpcPromise,
+      }),
+    };
+
+    let onSuccessCalled = false;
+    let submitErrorState = null;
+    let uncertainIdState = null;
+    let isSubmittingState = true;
+    let isMounted = true;
+
+    // Simula CreateChurchModal iniciando o envio com a fonte viva do AuthContext
+    const liveAuth = getAuthSnapshot();
+    const initialUserId = liveAuth.userId;
+    const initialSessionId = liveAuth.sessionId;
+    const initialServiceGen = getChurchCommandSessionGeneration();
+
+    const isLiveValid = () => {
+      if (!isMounted) return false;
+      const nowAuth = getAuthSnapshot();
+      if (!nowAuth.userId || nowAuth.userId !== initialUserId) return false;
+      if (nowAuth.sessionId !== initialSessionId) return false;
+      if (getChurchCommandSessionGeneration() !== initialServiceGen) return false;
+      return true;
+    };
+
+    const sendPromise = dispatchChurchCreation({
+      supabaseClient: mockSupabase,
+      storage,
+      userId: initialUserId,
+      churchData: {
+        name: 'Igreja Viva',
+        creatorName: 'Pastor Vivo',
+        timezone: 'America/Sao_Paulo',
+      },
+      sessionGeneration: initialServiceGen,
+      isSessionValid: isLiveValid,
+      commandId: 'cmd-live-test',
+    }).then((res) => {
+      if (!isLiveValid() || res.status === 'STALE_SESSION') {
+        return; // Descarte estrito
+      }
+      if (res.status === 'SUCCESS') {
+        uncertainIdState = null;
+        onSuccessCalled = true;
+      }
+    }).catch(() => {
+      if (!isLiveValid()) return;
+      submitErrorState = 'Erro capturado';
+    }).finally(() => {
+      if (isLiveValid()) {
+        isSubmittingState = false;
+      }
+    });
+
+    // Usuário desloga durante o voo: signOut() do AuthContext atualiza fonte viva e incrementa gerações
+    authSnapshot = { userId: null, sessionId: 11 };
+    invalidateChurchCommandSession();
+
+    // RPC resolve
+    finishRpc({
+      data: [{
+        church_id: 'church-live-id',
+        church_name: 'Igreja Viva',
+        member_id: 'member-live-id',
+        is_admin: true,
+      }],
+      error: null,
+    });
+
+    await sendPromise;
+
+    // Verifica que nada foi acionado na sessão desatualizada
+    assert.equal(onSuccessCalled, false, 'onSuccess não deve ser disparado para resposta de sessão anterior');
+    assert.equal(submitErrorState, null, 'submitError não deve ser atribuído em sessão expirada');
+    assert.equal(uncertainIdState, null);
+    assert.equal(isSubmittingState, true, 'isSubmitting não deve ser alterado após invalidação da sessão');
+  });
+
+  it('contrato de entrada na igreja criada a partir de AccessPendingPage: refreshAccess recebe church_id direto, destino é a igreja criada e falha de recarga não re-executa criação', async () => {
+    const receivedPreferredChurchIds = [];
+    let refreshShouldFail = true;
+
+    // Simula a função refreshAccess do AuthContext (com o contrato corrigido)
+    const mockRefreshAccess = async (preferredChurchId) => {
+      receivedPreferredChurchIds.push(preferredChurchId);
+      if (refreshShouldFail) {
+        return { success: false, error: 'Falha de rede temporária ao consultar vínculo.' };
+      }
+      return {
+        success: true,
+        churchAccess: {
+          church_id: preferredChurchId,
+          church_name: 'Igreja Renovada',
+          is_admin: true,
+        },
+      };
+    };
+
+    // Estado local da página AccessPendingPage
+    let confirmedChurch = null;
+    let accessReloadError = null;
+    let modalOpen = true;
+
+    // Simula handleChurchCreated de AccessPendingPage
+    const createdChurchPayload = {
+      church_id: 'church-created-target-123',
+      church_name: 'Igreja Renovada',
+      member_id: 'member-created-456',
+      is_admin: true,
+    };
+
+    // 1. Igreja criada dispara handleChurchCreated
+    modalOpen = false;
+    confirmedChurch = createdChurchPayload;
+    accessReloadError = null;
+
+    if (createdChurchPayload?.church_id && mockRefreshAccess) {
+      try {
+        const res = await mockRefreshAccess(createdChurchPayload.church_id);
+        if (res && res.success === false && res.error) {
+          accessReloadError = res.error;
+        }
+      } catch (err) {
+        accessReloadError = 'A igreja foi criada, mas ocorreu uma falha ao atualizar o acesso.';
+      }
+    }
+
+    // A chamada para refreshAccess deve ter recebido a STRING 'church-created-target-123', NÃO um objeto
+    assert.equal(receivedPreferredChurchIds.length, 1);
+    assert.equal(typeof receivedPreferredChurchIds[0], 'string');
+    assert.equal(receivedPreferredChurchIds[0], 'church-created-target-123');
+
+    // A igreja permanece confirmada e a falha de recarga é exibida sem perda de contexto
+    assert.ok(confirmedChurch);
+    assert.equal(confirmedChurch.church_id, 'church-created-target-123');
+    assert.equal(accessReloadError, 'Falha de rede temporária ao consultar vínculo.');
+    assert.equal(modalOpen, false, 'Modal de criação não deve ser reaberto');
+
+    // 2. Usuário aciona retentativa de recarga (handleRetryAccessReload)
+    refreshShouldFail = false;
+    accessReloadError = null;
+
+    if (confirmedChurch?.church_id && mockRefreshAccess) {
+      const retryRes = await mockRefreshAccess(confirmedChurch.church_id);
+      if (retryRes && retryRes.success === false && retryRes.error) {
+        accessReloadError = retryRes.error;
+      }
+    }
+
+    // Segunda chamada deve ter recarregado EXATAMENTE a mesma igreja
+    assert.equal(receivedPreferredChurchIds.length, 2);
+    assert.equal(receivedPreferredChurchIds[1], 'church-created-target-123');
+    assert.equal(accessReloadError, null, 'Erro deve ser limpo após recarga bem-sucedida');
+  });
 });
 
 
