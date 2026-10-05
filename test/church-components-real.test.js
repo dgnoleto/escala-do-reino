@@ -280,4 +280,223 @@ describe('Testes com Componentes de Produção e React Test Renderer (Execução
       act(() => renderer.unmount());
     }
   });
+
+  test('5. App real de produção (M61): abrir seleção descarta consulta de contexto anterior ainda em voo', async () => {
+    const items = new Map([['selected_church_context-user', 'church-a']]);
+    const storage = {
+      getItem: (k) => items.get(k) ?? null,
+      setItem: (k, v) => items.set(k, String(v)),
+      removeItem: (k) => items.delete(k),
+      key: (i) => [...items.keys()][i] ?? null,
+      get length() { return items.size; },
+    };
+    const listeners = new Map();
+    globalThis.window = {
+      sessionStorage: storage,
+      addEventListener: (name, fn) => {
+        if (!listeners.has(name)) listeners.set(name, new Set());
+        listeners.get(name).add(fn);
+      },
+      removeEventListener: (name, fn) => listeners.get(name)?.delete(fn),
+    };
+    globalThis.document = { visibilityState: 'visible', addEventListener() {}, removeEventListener() {} };
+    Object.defineProperty(globalThis, 'navigator', { configurable: true, value: { onLine: true } });
+    const a = { church_id: 'church-a', church_name: 'Igreja A', member_id: 'member-a', display_name: 'Teste', is_admin: true };
+    const b = { church_id: 'church-b', church_name: 'Igreja B', member_id: 'member-b', display_name: 'Teste', is_admin: false };
+    let finishBackground;
+    const background = new Promise((resolve) => { finishBackground = resolve; });
+    let accessCalls = 0;
+    globalThis.__reviewTransport = {
+      auth: {
+        onAuthStateChange: () => ({ data: { subscription: { unsubscribe() {} } } }),
+        getSession: async () => ({ data: { session: { user: { id: 'context-user', user_metadata: {} } } } }),
+      },
+      schema: () => ({
+        rpc: (name) => {
+          if (name === 'check_church_creation_eligibility') {
+            return Promise.resolve({ data: [{ eligible: true, reason: 'eligible' }], error: null });
+          }
+          assert.equal(name, 'get_my_church_access');
+          accessCalls++;
+          return accessCalls === 1 ? Promise.resolve({ data: [a, b], error: null }) : background;
+        },
+      }),
+    };
+    let renderer;
+    await act(async () => {
+      renderer = TestRenderer.create(React.createElement(App));
+      await new Promise((r) => setTimeout(r, 25));
+    });
+    await act(async () => { await new Promise((r) => setTimeout(r, 10)); });
+    try {
+      // Tela atual exibe Igreja A e o botão para alternar igreja
+      assert.equal(renderer.root.findAllByProps({ 'aria-label': 'Alternar igreja consultada' }).length, 1);
+      // Dispara evento de foco para iniciar consulta em segundo plano
+      await act(async () => { for (const listener of listeners.get('focus') || []) listener(); });
+      assert.equal(accessCalls, 2);
+      // Usuário clica em 'Alternar igreja consultada'
+      await act(async () => {
+        renderer.root.findByProps({ 'aria-label': 'Alternar igreja consultada' }).props.onClick();
+      });
+      assert.equal(renderer.root.findAllByProps({ 'aria-label': 'Seleção de Igreja' }).length, 1);
+      assert.equal(storage.getItem('selected_church_context-user'), null);
+      // Resposta atrasada chega simulando revogação de B durante o voo
+      await act(async () => { finishBackground({ data: [a], error: null }); });
+      assert.equal(
+        renderer.root.findAllByProps({ 'aria-label': 'Seleção de Igreja' }).length,
+        1,
+        'Resposta anterior não deve sair da seleção nem restaurar automaticamente igreja A'
+      );
+      assert.equal(storage.getItem('selected_church_context-user'), null);
+    } finally {
+      act(() => renderer.unmount());
+    }
+  });
+
+  test('6. App real de produção (M61): resposta de erro atrasada de consulta em voo é descartada sem fechar a seleção nem exibir erro', async () => {
+    const items = new Map([['selected_church_context-user', 'church-a']]);
+    const storage = {
+      getItem: (k) => items.get(k) ?? null,
+      setItem: (k, v) => items.set(k, String(v)),
+      removeItem: (k) => items.delete(k),
+      key: (i) => [...items.keys()][i] ?? null,
+      get length() { return items.size; },
+    };
+    const listeners = new Map();
+    globalThis.window = {
+      sessionStorage: storage,
+      addEventListener: (name, fn) => {
+        if (!listeners.has(name)) listeners.set(name, new Set());
+        listeners.get(name).add(fn);
+      },
+      removeEventListener: (name, fn) => listeners.get(name)?.delete(fn),
+    };
+    globalThis.document = { visibilityState: 'visible', addEventListener() {}, removeEventListener() {} };
+    Object.defineProperty(globalThis, 'navigator', { configurable: true, value: { onLine: true } });
+    const a = { church_id: 'church-a', church_name: 'Igreja A', member_id: 'member-a', display_name: 'Teste', is_admin: true };
+    const b = { church_id: 'church-b', church_name: 'Igreja B', member_id: 'member-b', display_name: 'Teste', is_admin: false };
+    let finishBackground;
+    const background = new Promise((resolve) => { finishBackground = resolve; });
+    let accessCalls = 0;
+    globalThis.__reviewTransport = {
+      auth: {
+        onAuthStateChange: () => ({ data: { subscription: { unsubscribe() {} } } }),
+        getSession: async () => ({ data: { session: { user: { id: 'context-user', user_metadata: {} } } } }),
+      },
+      schema: () => ({
+        rpc: (name) => {
+          if (name === 'check_church_creation_eligibility') {
+            return Promise.resolve({ data: [{ eligible: true, reason: 'eligible' }], error: null });
+          }
+          assert.equal(name, 'get_my_church_access');
+          accessCalls++;
+          return accessCalls === 1 ? Promise.resolve({ data: [a, b], error: null }) : background;
+        },
+      }),
+    };
+    let renderer;
+    await act(async () => {
+      renderer = TestRenderer.create(React.createElement(App));
+      await new Promise((r) => setTimeout(r, 25));
+    });
+    await act(async () => { await new Promise((r) => setTimeout(r, 10)); });
+    try {
+      assert.equal(renderer.root.findAllByProps({ 'aria-label': 'Alternar igreja consultada' }).length, 1);
+      await act(async () => { for (const listener of listeners.get('focus') || []) listener(); });
+      assert.equal(accessCalls, 2);
+      await act(async () => {
+        renderer.root.findByProps({ 'aria-label': 'Alternar igreja consultada' }).props.onClick();
+      });
+      assert.equal(renderer.root.findAllByProps({ 'aria-label': 'Seleção de Igreja' }).length, 1);
+      assert.equal(storage.getItem('selected_church_context-user'), null);
+      // Resposta de erro 42501 (permissão revogada) da consulta anterior chega após a abertura da seleção
+      await act(async () => {
+        finishBackground({ data: null, error: { code: '42501', message: 'permission denied' } });
+      });
+      assert.equal(
+        renderer.root.findAllByProps({ 'aria-label': 'Seleção de Igreja' }).length,
+        1,
+        'Erro de consulta anterior não deve fechar a tela de seleção nem transicionar para access_pending'
+      );
+      assert.equal(storage.getItem('selected_church_context-user'), null);
+      assert.equal(renderer.root.findAllByProps({ id: 'btn-retry-access' }).length, 0);
+    } finally {
+      act(() => renderer.unmount());
+    }
+  });
+
+  test('7. App real de produção (M61): seleção explícita da igreja B invalida consulta anterior de A e preserva a nova escolha', async () => {
+    const items = new Map([['selected_church_context-user', 'church-a']]);
+    const storage = {
+      getItem: (k) => items.get(k) ?? null,
+      setItem: (k, v) => items.set(k, String(v)),
+      removeItem: (k) => items.delete(k),
+      key: (i) => [...items.keys()][i] ?? null,
+      get length() { return items.size; },
+    };
+    const listeners = new Map();
+    globalThis.window = {
+      sessionStorage: storage,
+      addEventListener: (name, fn) => {
+        if (!listeners.has(name)) listeners.set(name, new Set());
+        listeners.get(name).add(fn);
+      },
+      removeEventListener: (name, fn) => listeners.get(name)?.delete(fn),
+    };
+    globalThis.document = { visibilityState: 'visible', addEventListener() {}, removeEventListener() {} };
+    Object.defineProperty(globalThis, 'navigator', { configurable: true, value: { onLine: true } });
+    const a = { church_id: 'church-a', church_name: 'Igreja A', member_id: 'member-a', display_name: 'Teste', is_admin: true };
+    const b = { church_id: 'church-b', church_name: 'Igreja B', member_id: 'member-b', display_name: 'Teste', is_admin: false };
+    let finishBackground;
+    const background = new Promise((resolve) => { finishBackground = resolve; });
+    let accessCalls = 0;
+    globalThis.__reviewTransport = {
+      auth: {
+        onAuthStateChange: () => ({ data: { subscription: { unsubscribe() {} } } }),
+        getSession: async () => ({ data: { session: { user: { id: 'context-user', user_metadata: {} } } } }),
+      },
+      schema: () => ({
+        rpc: (name) => {
+          if (name === 'check_church_creation_eligibility') {
+            return Promise.resolve({ data: [{ eligible: true, reason: 'eligible' }], error: null });
+          }
+          assert.equal(name, 'get_my_church_access');
+          accessCalls++;
+          if (accessCalls === 1) return Promise.resolve({ data: [a, b], error: null });
+          if (accessCalls === 2) return background;
+          return Promise.resolve({ data: [a, b], error: null });
+        },
+      }),
+    };
+    let renderer;
+    await act(async () => {
+      renderer = TestRenderer.create(React.createElement(App));
+      await new Promise((r) => setTimeout(r, 25));
+    });
+    await act(async () => { await new Promise((r) => setTimeout(r, 10)); });
+    try {
+      assert.equal(renderer.root.findAllByProps({ 'aria-label': 'Alternar igreja consultada' }).length, 1);
+      // Inicia consulta de segundo plano enquanto estava em A
+      await act(async () => { for (const listener of listeners.get('focus') || []) listener(); });
+      assert.equal(accessCalls, 2);
+      // Usuário clica em 'Alternar igreja consultada' -> SelectChurchPage
+      await act(async () => {
+        renderer.root.findByProps({ 'aria-label': 'Alternar igreja consultada' }).props.onClick();
+      });
+      assert.equal(renderer.root.findAllByProps({ 'aria-label': 'Seleção de Igreja' }).length, 1);
+      // Usuário seleciona Igreja B
+      await act(async () => {
+        const btnB = renderer.root.findByProps({ 'aria-label': 'Acessar Igreja B como Membro' });
+        btnB.props.onClick();
+        await new Promise((r) => setTimeout(r, 20));
+      });
+      // Resposta atrasada da consulta de fundo de A resolve contendo apenas A
+      await act(async () => { finishBackground({ data: [a], error: null }); });
+      // Contexto salvo deve ser Igreja B, e não A
+      assert.equal(storage.getItem('selected_church_context-user'), 'church-b');
+      assert.match(visibleText(renderer), /Igreja B/);
+    } finally {
+      act(() => renderer.unmount());
+    }
+  });
 });

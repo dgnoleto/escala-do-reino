@@ -417,6 +417,8 @@ export function AuthProvider({ children }) {
   const selectChurch = useCallback((churchId) => {
     const uid = currentUserIdRef.current;
     if (!uid) return;
+    // Invalida a sequência de consultas anteriores em voo antes de alterar ou limpar o contexto (M61 / PRD)
+    requestSeqRef.current += 1;
     clearAccessContext();
     if (churchId) {
       if (typeof window !== 'undefined') {
