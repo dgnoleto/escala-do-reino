@@ -588,8 +588,7 @@ export default function CreateChurchModal({ isOpen, onClose, onSuccess }) {
           <div className="governance-notice">
             <Info size={14} className="governance-icon" />
             <span>
-              Ao criar a igreja, sua conta torna-se a <strong>única administradora ativa</strong> desta igreja.
-              Pelas regras do sistema, cada conta pode administrar no máximo uma igreja por vez.
+              Ao criar a igreja, sua conta torna-se a <strong>primeira administradora</strong> desta igreja. Cada conta pode administrar no máximo uma igreja por vez; uma igreja pode ter vários administradores.
             </span>
           </div>
 

@@ -178,7 +178,7 @@ export function renderSession(user, elements = {}) {
   noteEl.style.color = 'var(--text-muted)';
   noteEl.innerHTML = `
     Esta sessão é real e compartilhada pelo <code>localStorage</code> da mesma origem com a aplicação.
-    Nenhuma administração ou igreja foi atribuída ainda. A concessão ocorre exclusivamente pelo fluxo de produto.
+    Esta ferramenta autentica sua conta de teste. Ela não cria igrejas nem concede administração; essas operações ocorrem pelo fluxo do aplicativo.
   `;
   sessionBoxEl.appendChild(noteEl);
 

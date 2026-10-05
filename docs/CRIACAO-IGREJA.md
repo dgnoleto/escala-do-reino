@@ -256,7 +256,7 @@ Localizados em `docs/sql/`:
 
 ### 5.1 Testes Automatizados Locais
 Executados com sucesso via Node.js nativo com o comando `npm.cmd test`:
-- **Total:** **117 testes automatizados** distribuídos em **23 suítes** (100% de aprovação, 0 falhas).
+- **Total:** **117 resultados registrados** em **23 suítes** (100% de aprovação, 0 falhas). Os seis arquivos versionados em `test/` contêm exatamente **116 testes automatizados** em **23 suítes**. O comando geral `npm.cmd test` (que executa `node --test`) descobre também o arquivo `tools/local-auth-test.js` pelo padrão `*test.js`, reportando-o como resultado adicional sem falhas. A execução explícita dos arquivos de teste via `node --test (Get-ChildItem test/*.test.js)` reporta exatamente 116 testes em 23 suítes.
 - **Testes dedicados de criação de igreja e regressões (`test/church-command-cycle.test.js` — 35 testes, 8 suítes):**
   1. *Normalização e validação de entrada:* conversão NFD para NFC, preservação de apóstrofos e cedilhas, rejeição de nomes em branco, validação de limites de comprimento, políticas aceitas (`warn`/`block`) e formato estrito de URL do Google Maps.
   2. *Classificação de erros:* separação de códigos Postgres definitivos (`23505`, `23514`, `P0001`, `42501`) e falhas de transporte/5xx como respostas incertas.
@@ -305,7 +305,7 @@ Executados com sucesso via Node.js nativo com o comando `npm.cmd test`:
   - Bloqueio de backend em portas divergentes de `54321`.
   - Bloqueio de backend em HTTPS ou com credenciais embutidas.
   - Bloqueio quando cliente não estiver configurado.
-- **Testes de renderização segura do utilitário local de autenticação (`test/local-auth-render.test.js` — 7 testes, 2 suítes):**
+- **Testes de renderização segura do utilitário local de autenticação (`test/local-auth-render.test.js` — 6 testes, 2 suítes):**
   - Renderização segura da sessão de teste com `document.createElement`, atributos e `textContent`, prevenindo interpolação de HTML (`innerHTML`).
 - **Build de produção:**
   - Compilado com sucesso via `npm.cmd run build` (Vite v6.4.3). Confirmação de que a pasta `tools/` e os arquivos de teste local não são incluídos no pacote de produção (`dist/`).
@@ -333,7 +333,13 @@ Para viabilizar o teste local pontual contra a instância Supabase do laboratór
   - Os testes de componentes com React Test Renderer cobrem a montagem da árvore de componentes, efeitos, ciclos de vida de promessas, descarte de callbacks e transições entre rotas/telas (`AccessPendingPage` -> `checking_access` -> `access_error` -> `ChurchHomePage`).
   - Não são testes visuais em navegador DOM (como Cypress ou Playwright) com interação de cursor ou layout CSS físico.
 - **Validação de Código de Produção vs Operação do Banco:**
-  - Os 117 testes de cliente, configuração e componentes comprovam a camada de aplicação; eles não são os 64 cenários do PRD comprovados em banco real nem prova de funcionamento físico do PostgreSQL.
+  - Os 116 testes de cliente, configuração e componentes comprovam a camada de aplicação; eles não são os 64 cenários do PRD comprovados em banco real nem prova de funcionamento físico do PostgreSQL.
   - A validação executável do SQL (`009_validate_create_my_church.sql`) e a validação de concorrência com duas conexões simultâneas para prova física de serialização em locks consultivos permanecem como etapas operacionais a serem conduzidas pelo operador antes da aplicação permanente em produção.
   - Análise estática do SQL não constitui aprovação operacional do banco de dados.
   - Não foram executadas operações manuais no projeto Supabase remoto nem inseridas fixtures na base do piloto.
+- **Ensaio Controlado de Recuperação e Recibo em Laboratório Local (05/10/2026, commit b566185):**
+  - Conduzido pelo Codex em ambiente local isolado (EscalaReinoLab) com conta sintética autorizada (`pastor.recuperacao.pr7@example.com`):
+    1. *Bloqueio antes do envio:* envio interrompido no transporte antes de chamar a rede; a aplicação apresentou "Envio anterior não confirmado" e manteve os dados do formulário; a consulta de recibo indicou registro ainda não encontrado; leitura independente do PostgreSQL em transação somente leitura confirmou 0 igrejas, membros, vínculos, recibos ou auditorias gravados.
+    2. *Perda de confirmação após resposta real:* reenvio do formulário reutilizou o mesmo `command_id` (`8251abd6-53f2-40f3-88e7-c5735492f411`); a RPC `create_my_church` foi executada com sucesso no backend, retornando vínculo e privilégio administrativo; a confirmação foi descartada no transporte antes do aplicativo; o aplicativo permaneceu em estado incerto. Leitura somente leitura do banco confirmou exatamente 1 igreja, 1 membro, 1 vínculo ativo administrativo (`is_admin=true`), 1 recibo e 1 auditoria correlacionados.
+    3. *Recuperação via recibo:* acionamento exclusivo de "Verificar no servidor" executou `check_church_receipt`, recuperou a criação, selecionou a igreja correta e exibiu perfil Administrador; recarga da página manteve o acesso; a tela Gestão de Membros exibiu 1 membro ativo sem duplicação de registros. Nova leitura somente leitura confirmou a persistência íntegra sem registros duplicados.
+  - **Limites declarados do ensaio:** Identificado como ensaio controlado em laboratório local (`RESULTADO-ENSAIO.md`). Não constitui teste de desconexão física da rede, não valida Google OAuth nem confirmação de e-mail do piloto, não é implantação no piloto e não atesta conformidade integral dos 64 cenários M01–M64 do PRD.
