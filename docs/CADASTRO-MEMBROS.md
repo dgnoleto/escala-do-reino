@@ -85,7 +85,7 @@ Conforme informado pelo responsável pelo projeto, a aplicação dos scripts em 
 3. **Criação permanente com COMMIT (`007_member_management.sql`):** instalação autorizada e executada com sucesso, criando a tabela `app_private.command_receipts`, as funções RPC em `public` (`list_church_members`, `create_church_member`, `get_create_member_receipt`), permissões de execução e notificação ao PostgREST.
 4. **Verificação posterior somente leitura (`008_verify_member_management.sql`):** concluída com todas as asserções retornando `true` (incluindo `statement_timeout = 5s`).
 
-**Estado atual informado:** o banco contempla **sete tabelas internas** em `app_private` e **quatro funções RPC** em `public` acessíveis pela Data API com o papel `authenticated`. Não repetir os scripts de instalação já concluídos (001 a 008). Esses resultados são registrados como evidências informadas pelo responsável, sem constituir nova inspeção direta do Supabase neste incremento.
+**Estado atual informado:** o banco contempla **sete tabelas internas** em `app_private` e **sete funções RPC de produto** em `public` acessíveis pela Data API com o papel `authenticated` (com a instalação de `009_create_my_church.sql` e verificação `010` concluídas com sucesso no projeto piloto em 06/10/2026). Não repetir os scripts de instalação já concluídos (001 a 010). Esses resultados são registrados como evidências informadas pelo responsável, sem constituir nova inspeção direta do Supabase neste incremento.
 
 ---
 

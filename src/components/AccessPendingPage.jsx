@@ -1,22 +1,136 @@
-import React from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { useAuth } from '../context/AuthContext';
+import { supabase } from '../lib/supabaseClient';
+import {
+  Church,
+  PlusCircle,
+  AlertCircle,
+  RefreshCw,
+  Loader2,
+  ShieldAlert,
+  Mail,
+  WifiOff,
+  LogOut
+} from 'lucide-react';
+import { checkChurchCreationEligibility, loadPendingChurchCommand } from '../utils/churchCommandService';
+import CreateChurchModal from './CreateChurchModal';
 
 /**
- * Tela exibida para usuários autenticados neste incremento.
- * O acesso real à igreja ainda não foi liberado — aguarda implementação futura
- * de convites, vínculo a membro e aprovação.
+ * AccessPendingPage — exibida para contas autenticadas sem vínculo elegível.
  *
- * Mostra: nome e e-mail da conta Google; botão "Sair".
- * Não exibe: tokens, IDs técnicos, painéis do protótipo.
+ * Funcionalidades do incremento "Criar minha igreja":
+ * - Consulta a elegibilidade da conta para criar uma nova igreja no servidor.
+ * - Falha ao consultar elegibilidade não concede permissão de criação (estados carregando, erro e retry).
+ * - Se elegível: oferece ação destacada "Criar minha igreja", abrindo o formulário controlado.
+ * - Se já administra outra igreja: explica com clareza o impedimento e a regra de administração única.
+ * - Se e-mail não confirmado ou bloqueio: apresenta a explicação correspondente.
+ * - Suporta reconciliação de comando pendente mesmo quando o servidor retornar already_admin.
+ * - Preserva estados de carregamento, erro, tentativa novamente e falta de conexão.
+ * - Conclusão com sucesso redireciona com segurança para a igreja criada via refreshAccess.
  */
 export default function AccessPendingPage() {
-  const { session, signOut } = useAuth();
+  const { session, signOut, refreshAccess, recordCreationConfirmation } = useAuth();
 
   const user = session?.user;
-  // Exibe somente informações de apresentação segura — sem tokens ou IDs internos
   const displayName = user?.user_metadata?.full_name || user?.user_metadata?.name || null;
   const displayEmail = user?.email || null;
   const avatarUrl = user?.user_metadata?.avatar_url || null;
+
+  // Estado de elegibilidade para criação de igreja
+  const [eligibilityState, setEligibilityState] = useState('checking'); // 'checking' | 'ready' | 'error'
+  const [eligibilityData, setEligibilityData] = useState(null);
+  const [eligibilityError, setEligibilityError] = useState(null);
+  const [isOnline, setIsOnline] = useState(typeof navigator !== 'undefined' ? navigator.onLine : true);
+
+  // Comando pendente na sessão
+  const [pendingCommand, setPendingCommand] = useState(null);
+
+  // Destino confirmado após criação e erro de recarga
+  const [confirmedChurch, setConfirmedChurch] = useState(null);
+  const [accessReloadError, setAccessReloadError] = useState(null);
+
+  // Controle do modal de criação
+  const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
+
+  // Monitora conectividade
+  useEffect(() => {
+    function handleOnline() { setIsOnline(true); }
+    function handleOffline() { setIsOnline(false); }
+
+    window.addEventListener('online', handleOnline);
+    window.addEventListener('offline', handleOffline);
+
+    return () => {
+      window.removeEventListener('online', handleOnline);
+      window.removeEventListener('offline', handleOffline);
+    };
+  }, []);
+
+  // Monitora comando pendente no storage
+  useEffect(() => {
+    if (typeof window !== 'undefined' && window.sessionStorage && user?.id) {
+      const cmd = loadPendingChurchCommand(window.sessionStorage, user.id);
+      setPendingCommand(cmd);
+    }
+  }, [user?.id, eligibilityState, isCreateModalOpen]);
+
+  // Consulta elegibilidade no servidor
+  const loadEligibility = useCallback(async () => {
+    if (!supabase || !user) return;
+    setEligibilityState('checking');
+    setEligibilityError(null);
+
+    const res = await checkChurchCreationEligibility(supabase);
+
+    if (res.success) {
+      setEligibilityData(res);
+      setEligibilityState('ready');
+    } else {
+      setEligibilityError(res.error || 'Falha ao verificar elegibilidade no servidor.');
+      setEligibilityState('error');
+    }
+  }, [user]);
+
+  useEffect(() => {
+    loadEligibility();
+  }, [loadEligibility]);
+
+  // Transição segura para a igreja criada
+  async function handleChurchCreated(createdChurch) {
+    setIsCreateModalOpen(false);
+    setConfirmedChurch(createdChurch);
+    setAccessReloadError(null);
+    if (createdChurch?.church_id && recordCreationConfirmation) {
+      recordCreationConfirmation(createdChurch);
+    }
+    if (createdChurch?.church_id && refreshAccess) {
+      try {
+        const res = await refreshAccess(createdChurch.church_id);
+        if (res && res.success === false && res.error) {
+          setAccessReloadError(res.error);
+        }
+      } catch (err) {
+        setAccessReloadError('A igreja foi criada, mas ocorreu uma falha ao atualizar o acesso.');
+      }
+    }
+  }
+
+  async function handleRetryAccessReload() {
+    if (confirmedChurch?.church_id && refreshAccess) {
+      setAccessReloadError(null);
+      if (recordCreationConfirmation) {
+        recordCreationConfirmation(confirmedChurch);
+      }
+      try {
+        const res = await refreshAccess(confirmedChurch.church_id);
+        if (res && res.success === false && res.error) {
+          setAccessReloadError(res.error);
+        }
+      } catch (err) {
+        setAccessReloadError('Falha ao recarregar acesso. Tente novamente.');
+      }
+    }
+  }
 
   return (
     <div className="pending-page" role="main">
@@ -31,15 +145,14 @@ export default function AccessPendingPage() {
         </div>
 
         <h1 className="pending-title">Você entrou na sua conta.</h1>
-        <p className="pending-subtitle">O acesso à igreja ainda não foi liberado.</p>
+        <p className="pending-subtitle">Acesso à igreja ainda não liberado.</p>
 
         <p className="pending-description">
-          Para usar o Escala do Reino, você precisa ser convidado por um administrador
-          e ter sua conta vinculada a um membro cadastrado. Entre em contato com
-          a liderança do seu ministério.
+          Para usar o Escala do Reino com uma comunidade existente, você precisa ser
+          convidado por um administrador e ter sua conta vinculada a um membro cadastrado.
         </p>
 
-        {/* Identificação da conta */}
+        {/* Identificação da conta autenticada */}
         <div className="pending-account" aria-label="Conta autenticada">
           {avatarUrl && (
             <img
@@ -60,6 +173,131 @@ export default function AccessPendingPage() {
           </div>
         </div>
 
+        {/* Seção Criar Minha Igreja / Elegibilidade */}
+        <div className="pending-create-section">
+          {!isOnline ? (
+            <div className="status-notice status-notice--offline" role="note">
+              <WifiOff size={16} className="status-notice-icon" />
+              <div className="status-notice-text">
+                <strong>Sem conexão à internet</strong>
+                <p>Conecte-se para verificar a elegibilidade e criar uma nova igreja.</p>
+              </div>
+            </div>
+          ) : eligibilityState === 'checking' ? (
+            <div className="status-notice status-notice--loading" role="status">
+              <Loader2 size={16} className="status-notice-icon spin" />
+              <span>Verificando elegibilidade para criar igreja...</span>
+            </div>
+          ) : eligibilityState === 'error' ? (
+            <div className="status-notice status-notice--error" role="alert">
+              <AlertCircle size={16} className="status-notice-icon" />
+              <div className="status-notice-text">
+                <span>Não foi possível verificar a elegibilidade para criar igreja.</span>
+                <button
+                  type="button"
+                  className="btn btn-secondary btn-sm retry-btn"
+                  onClick={loadEligibility}
+                  id="btn-retry-eligibility"
+                >
+                  <RefreshCw size={12} />
+                  Tentar novamente
+                </button>
+              </div>
+            </div>
+          ) : accessReloadError ? (
+            <div className="status-notice status-notice--error" role="alert">
+              <AlertCircle size={18} className="status-notice-icon" />
+              <div className="status-notice-text">
+                <span>{accessReloadError}</span>
+                <button
+                  type="button"
+                  className="btn btn-secondary btn-sm retry-btn"
+                  onClick={handleRetryAccessReload}
+                  id="btn-retry-access-reload"
+                >
+                  <RefreshCw size={12} />
+                  Tentar carregar acesso novamente
+                </button>
+              </div>
+            </div>
+          ) : pendingCommand ? (
+            <div className="create-church-card" style={{ borderColor: 'var(--primary)' }}>
+              <div className="create-church-header">
+                <div className="create-church-icon" aria-hidden="true">
+                  <RefreshCw size={20} className="spin" />
+                </div>
+                <div className="create-church-info">
+                  <span className="create-church-title">Envio de igreja pendente de confirmação</span>
+                  <span className="create-church-desc">
+                    Existe um comando de criação não confirmado para a igreja{' '}
+                    <strong>{pendingCommand.churchData?.name || 'solicitada'}</strong>.
+                  </span>
+                </div>
+              </div>
+              <button
+                type="button"
+                className="btn btn-primary create-church-btn"
+                onClick={() => setIsCreateModalOpen(true)}
+                id="btn-recover-pending-church"
+              >
+                <RefreshCw size={16} />
+                Verificar resultado / Recuperar
+              </button>
+            </div>
+          ) : eligibilityData?.eligible ? (
+            <div className="create-church-card">
+              <div className="create-church-header">
+                <div className="create-church-icon" aria-hidden="true">
+                  <Church size={20} />
+                </div>
+                <div className="create-church-info">
+                  <span className="create-church-title">Quer iniciar sua comunidade?</span>
+                  <span className="create-church-desc">
+                    Cadastre sua igreja e torne-se o primeiro administrador das equipes e cultos.
+                  </span>
+                </div>
+              </div>
+              <button
+                type="button"
+                className="btn btn-primary create-church-btn"
+                onClick={() => setIsCreateModalOpen(true)}
+                id="btn-open-create-church-pending"
+              >
+                <PlusCircle size={16} />
+                Criar minha igreja
+              </button>
+            </div>
+          ) : eligibilityData?.reason === 'already_admin' ? (
+            <div className="status-notice status-notice--warning" role="note">
+              <ShieldAlert size={18} className="status-notice-icon" />
+              <div className="status-notice-text">
+                <strong>Limite de administração ativo</strong>
+                <p>
+                  Sua conta já possui administração ativa na igreja{' '}
+                  <strong>{eligibilityData.activeAdminChurchName || 'existente'}</strong>.
+                  Pelas regras do sistema, cada conta pode administrar no máximo uma igreja por vez.
+                </p>
+              </div>
+            </div>
+          ) : eligibilityData?.reason === 'email_not_confirmed' ? (
+            <div className="status-notice status-notice--warning" role="note">
+              <Mail size={18} className="status-notice-icon" />
+              <div className="status-notice-text">
+                <strong>Confirmação de e-mail necessária</strong>
+                <p>Confirme o e-mail da sua conta para poder criar uma nova igreja.</p>
+              </div>
+            </div>
+          ) : (
+            <div className="status-notice status-notice--warning" role="note">
+              <AlertCircle size={18} className="status-notice-icon" />
+              <div className="status-notice-text">
+                <strong>Criação não disponível</strong>
+                <p>Sua conta não atende aos critérios para criar uma nova igreja no momento.</p>
+              </div>
+            </div>
+          )}
+        </div>
+
         {/* Botão de saída */}
         <button
           id="btn-signout"
@@ -68,14 +306,17 @@ export default function AccessPendingPage() {
           type="button"
           aria-label="Sair da conta"
         >
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-            <path d="M9 21H5a2 2 0 01-2-2V5a2 2 0 012-2h4" />
-            <polyline points="16 17 21 12 16 7" />
-            <line x1="21" y1="12" x2="9" y2="12" />
-          </svg>
+          <LogOut size={16} />
           Sair
         </button>
       </div>
+
+      {/* Modal de criação de igreja */}
+      <CreateChurchModal
+        isOpen={isCreateModalOpen}
+        onClose={() => setIsCreateModalOpen(false)}
+        onSuccess={handleChurchCreated}
+      />
 
       <style>{`
         .pending-page {
@@ -97,9 +338,9 @@ export default function AccessPendingPage() {
           border: 1px solid var(--border-subtle);
           border-radius: var(--radius-xl);
           box-shadow: var(--shadow-lg);
-          padding: 48px 40px;
+          padding: 40px 36px;
           width: 100%;
-          max-width: 440px;
+          max-width: 460px;
           display: flex;
           flex-direction: column;
           align-items: center;
@@ -109,26 +350,26 @@ export default function AccessPendingPage() {
 
         @media (max-width: 480px) {
           .pending-card {
-            padding: 36px 24px;
+            padding: 30px 20px;
           }
         }
 
         .pending-icon {
-          width: 64px;
-          height: 64px;
+          width: 56px;
+          height: 56px;
           display: flex;
           align-items: center;
           justify-content: center;
           background: var(--status-pending-bg);
           border: 2px solid var(--status-pending-border);
           border-radius: var(--radius-lg);
-          margin-bottom: 24px;
+          margin-bottom: 20px;
           color: var(--status-pending-text);
         }
 
         .pending-icon svg {
-          width: 32px;
-          height: 32px;
+          width: 28px;
+          height: 28px;
         }
 
         .pending-title {
@@ -136,7 +377,7 @@ export default function AccessPendingPage() {
           font-weight: 800;
           color: var(--text-primary);
           text-align: center;
-          margin: 0 0 8px;
+          margin: 0 0 6px;
         }
 
         .pending-subtitle {
@@ -144,15 +385,15 @@ export default function AccessPendingPage() {
           font-weight: 600;
           color: var(--status-pending-text);
           text-align: center;
-          margin: 0 0 20px;
+          margin: 0 0 16px;
         }
 
         .pending-description {
           font-size: 13px;
           color: var(--text-secondary);
           text-align: center;
-          line-height: 1.6;
-          margin: 0 0 28px;
+          line-height: 1.5;
+          margin: 0 0 20px;
         }
 
         /* Bloco de identificação da conta */
@@ -160,21 +401,21 @@ export default function AccessPendingPage() {
           display: flex;
           align-items: center;
           gap: 12px;
-          padding: 14px 16px;
+          padding: 12px 14px;
           background: var(--bg-surface);
           border: 1px solid var(--border-subtle);
           border-radius: var(--radius-md);
           width: 100%;
-          margin-bottom: 24px;
+          margin-bottom: 20px;
         }
 
         .pending-avatar {
-          width: 40px;
-          height: 40px;
+          width: 36px;
+          height: 36px;
           border-radius: 50%;
           object-fit: cover;
           flex-shrink: 0;
-          border: 2px solid var(--border-subtle);
+          border: 1.5px solid var(--border-subtle);
         }
 
         .pending-account-info {
@@ -185,7 +426,7 @@ export default function AccessPendingPage() {
         }
 
         .pending-account-name {
-          font-size: 14px;
+          font-size: 13px;
           font-weight: 700;
           color: var(--text-primary);
           white-space: nowrap;
@@ -194,16 +435,143 @@ export default function AccessPendingPage() {
         }
 
         .pending-account-email {
-          font-size: 12px;
+          font-size: 11px;
           color: var(--text-muted);
           white-space: nowrap;
           overflow: hidden;
           text-overflow: ellipsis;
         }
 
+        /* Seção Criar Igreja */
+        .pending-create-section {
+          width: 100%;
+          margin-bottom: 20px;
+        }
+
+        .create-church-card {
+          background: var(--primary-surface);
+          border: 1px solid var(--primary-border);
+          border-radius: var(--radius-lg);
+          padding: 16px;
+          display: flex;
+          flex-direction: column;
+          gap: 12px;
+        }
+
+        .create-church-header {
+          display: flex;
+          align-items: flex-start;
+          gap: 12px;
+        }
+
+        .create-church-icon {
+          width: 38px;
+          height: 38px;
+          border-radius: var(--radius-md);
+          background: var(--bg-card);
+          border: 1px solid var(--primary-border);
+          color: var(--primary);
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          flex-shrink: 0;
+        }
+
+        .create-church-info {
+          display: flex;
+          flex-direction: column;
+          gap: 3px;
+        }
+
+        .create-church-title {
+          font-size: 14px;
+          font-weight: 800;
+          color: var(--text-primary);
+        }
+
+        .create-church-desc {
+          font-size: 12px;
+          color: var(--text-secondary);
+          line-height: 1.4;
+        }
+
+        .create-church-btn {
+          width: 100%;
+          justify-content: center;
+          gap: 8px;
+          font-weight: 700;
+        }
+
+        /* Avisos de estado */
+        .status-notice {
+          display: flex;
+          align-items: flex-start;
+          gap: 10px;
+          padding: 12px 14px;
+          border-radius: var(--radius-md);
+          font-size: 12px;
+          line-height: 1.45;
+        }
+
+        .status-notice-icon {
+          flex-shrink: 0;
+          margin-top: 1px;
+        }
+
+        .status-notice-text {
+          display: flex;
+          flex-direction: column;
+          gap: 4px;
+        }
+
+        .status-notice-text p {
+          margin: 0;
+        }
+
+        .status-notice--loading {
+          background: var(--bg-surface);
+          border: 1px solid var(--border-subtle);
+          color: var(--text-muted);
+          align-items: center;
+        }
+
+        .status-notice--offline {
+          background: rgba(148, 163, 184, 0.1);
+          border: 1px solid rgba(148, 163, 184, 0.25);
+          color: var(--text-secondary);
+        }
+
+        .status-notice--error {
+          background: rgba(239, 68, 68, 0.1);
+          border: 1px solid rgba(239, 68, 68, 0.25);
+          color: var(--danger, #ef4444);
+        }
+
+        .status-notice--warning {
+          background: var(--status-pending-bg);
+          border: 1px solid var(--status-pending-border);
+          color: var(--status-pending-text);
+        }
+
+        .retry-btn {
+          align-self: flex-start;
+          margin-top: 4px;
+          gap: 5px;
+        }
+
         .pending-signout-btn {
           width: 100%;
           justify-content: center;
+          gap: 8px;
+        }
+
+        .spin {
+          animation: spin 1s linear infinite;
+        }
+
+        @keyframes spin {
+          from { transform: rotate(0deg); }
+          to { transform: rotate(360deg); }
         }
       `}</style>
     </div>

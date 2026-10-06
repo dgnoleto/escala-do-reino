@@ -1,6 +1,6 @@
 # Consulta do próprio acesso à igreja
 
-A aplicação chama `public.get_my_church_access()`, sem parâmetros de identidade, para obter o vínculo autorizado inicial do usuário. Conforme informado pelo responsável nas etapas concluídas, a Data API expõe quatro funções RPC em `public` com permissão restrita a `authenticated` (`get_my_church_access`, `list_church_members`, `create_church_member` e `get_create_member_receipt`), enquanto as sete tabelas de `app_private` permanecem estritamente fora dos schemas expostos, com RLS habilitada e sem privilégios diretos para `anon`, `authenticated` ou `service_role`.
+A aplicação chama `public.get_my_church_access()`, sem parâmetros de identidade, para obter o vínculo autorizado inicial do usuário. Conforme informado pelo responsável nas etapas concluídas (incluindo a instalação de `009_create_my_church.sql` e verificação `010` em 06/10/2026), a Data API expõe sete funções RPC de produto em `public` com permissão restrita a `authenticated` (`get_my_church_access`, `list_church_members`, `create_church_member`, `get_create_member_receipt`, `check_church_creation_eligibility`, `create_my_church` e `get_create_church_receipt`), enquanto as sete tabelas de `app_private` permanecem estritamente fora dos schemas expostos, com RLS habilitada e sem privilégios diretos para `anon`, `authenticated` ou `service_role`.
 
 ## Correção da entrega anterior
 

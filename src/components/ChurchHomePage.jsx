@@ -1,6 +1,10 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useAuth } from '../context/AuthContext';
+import { supabase } from '../lib/supabaseClient';
 import MembersPage from './MembersPage';
+import CreateChurchModal from './CreateChurchModal';
+import { Church, PlusCircle, ShieldAlert, Loader2, AlertCircle, Mail, RefreshCw } from 'lucide-react';
+import { checkChurchCreationEligibility, loadPendingChurchCommand } from '../utils/churchCommandService';
 
 /**
  * ChurchHomePage — tela inicial para contas com vínculo confirmado.
@@ -12,6 +16,10 @@ import MembersPage from './MembersPage';
  *
  * Se for Administrador:
  *   - Oferece acesso à tela de Gestão de Membros (cadastro e listagem paginada).
+ *   - Explica o impedimento do limite de administração ativa única por conta.
+ *
+ * Se for Membro (acesso básico):
+ *   - Oferece a opção "Criar minha igreja" para iniciar sua própria comunidade.
  *
  * Não exibe UUIDs, tokens, e-mails ou qualquer identificador técnico.
  * Não monta AppProvider nem acessa dados fictícios do protótipo.
@@ -19,13 +27,47 @@ import MembersPage from './MembersPage';
  * Acessibilidade: foco inicial no título, regiões semânticas, rótulos descritivos.
  */
 export default function ChurchHomePage() {
-  const { churchAccess, signOut } = useAuth();
+  const { session, churchAccess, availableAccesses, selectChurch, signOut, refreshAccess, recordCreationConfirmation } = useAuth();
   const [currentView, setCurrentView] = useState('home');
+  const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
+
+  // Consulta de elegibilidade global para membros básicos
+  const [eligibilityData, setEligibilityData] = useState(null);
+  const [eligibilityLoading, setEligibilityLoading] = useState(false);
+
+  // Comando pendente de criação retido na sessão
+  const [pendingCommand, setPendingCommand] = useState(null);
 
   // Campos provêm exclusivamente do retorno da função RPC autenticada.
   const displayName = churchAccess?.display_name ?? '';
   const churchName  = churchAccess?.church_name  ?? '';
   const isAdmin     = churchAccess?.is_admin     ?? false;
+  const userId      = session?.user?.id;
+
+  useEffect(() => {
+    if (typeof window !== 'undefined' && window.sessionStorage && userId) {
+      const cmd = loadPendingChurchCommand(window.sessionStorage, userId);
+      setPendingCommand(cmd);
+    }
+  }, [userId, isCreateModalOpen]);
+
+  useEffect(() => {
+    let isMounted = true;
+    if (!isAdmin && supabase) {
+      setEligibilityLoading(true);
+      checkChurchCreationEligibility(supabase)
+        .then((res) => {
+          if (isMounted) {
+            setEligibilityData(res);
+            setEligibilityLoading(false);
+          }
+        })
+        .catch(() => {
+          if (isMounted) setEligibilityLoading(false);
+        });
+    }
+    return () => { isMounted = false; };
+  }, [isAdmin]);
 
   const profileLabel = isAdmin ? 'Administrador' : 'Membro';
 
@@ -54,6 +96,20 @@ export default function ChurchHomePage() {
             <p className="church-home-app-label">Escala do Reino</p>
           </div>
         </div>
+
+        {availableAccesses && availableAccesses.length > 1 && (
+          <div className="church-home-switch-bar" style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: '8px' }}>
+            <button
+              className="btn btn-secondary"
+              onClick={() => selectChurch(null)}
+              type="button"
+              aria-label="Alternar igreja consultada"
+              style={{ fontSize: '0.78rem', padding: '4px 10px', height: 'auto', borderRadius: '8px' }}
+            >
+              Trocar de comunidade ({availableAccesses.length})
+            </button>
+          </div>
+        )}
 
         {/* Saudação do membro */}
         <section className="church-home-welcome" aria-label="Bem-vindo">
@@ -84,6 +140,48 @@ export default function ChurchHomePage() {
           <span>{profileLabel}</span>
         </div>
 
+        {/* Card de Recuperação Acessível: existe comando de criação pendente nesta conta */}
+        {pendingCommand && (
+          <div
+            className="church-home-recovery-card"
+            style={{
+              background: 'var(--primary-surface, #eff6ff)',
+              border: '1.5px solid var(--primary, #2563eb)',
+              borderRadius: '12px',
+              padding: '16px',
+              margin: '12px 0 16px',
+              display: 'flex',
+              flexDirection: 'column',
+              gap: '10px',
+            }}
+            role="region"
+            aria-label="Comando de criação de igreja pendente de confirmação"
+          >
+            <div style={{ display: 'flex', alignItems: 'flex-start', gap: '12px' }}>
+              <RefreshCw size={20} className="spin" color="var(--primary, #2563eb)" style={{ flexShrink: 0, marginTop: '2px' }} />
+              <div>
+                <strong style={{ fontSize: '0.9rem', color: 'var(--text-primary)' }}>
+                  Envio de igreja pendente de confirmação
+                </strong>
+                <p style={{ margin: '4px 0 0', fontSize: '0.8rem', color: 'var(--text-secondary)', lineHeight: 1.4 }}>
+                  Existe um comando de criação não confirmado para a igreja{' '}
+                  <strong>{pendingCommand.churchData?.name || 'solicitada'}</strong>.
+                </p>
+              </div>
+            </div>
+            <button
+              type="button"
+              className="btn btn-primary"
+              onClick={() => setIsCreateModalOpen(true)}
+              id="btn-recover-pending-church-home"
+              style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: '8px', fontSize: '0.85rem' }}
+            >
+              <RefreshCw size={14} />
+              Verificar resultado / Recuperar
+            </button>
+          </div>
+        )}
+
         {/* Bloco de Gestão de Membros exclusivo para Administrador */}
         {isAdmin && (
           <div className="church-home-admin-section">
@@ -113,6 +211,53 @@ export default function ChurchHomePage() {
             >
               Acessar Membros
             </button>
+          </div>
+        )}
+
+        {/* Aviso de limite de administração para Administrador */}
+        {isAdmin && !pendingCommand && (
+          <div className="church-home-admin-limit-notice" role="note">
+            <ShieldAlert size={16} className="church-home-admin-limit-icon" aria-hidden="true" />
+            <span>
+              Sua conta já administra ativamente esta igreja. Pelas regras de governança, uma conta pode administrar no máximo uma igreja por vez.
+            </span>
+          </div>
+        )}
+
+        {/* Bloco Criar Minha Igreja para contas com apenas acesso básico de membro */}
+        {!isAdmin && !pendingCommand && eligibilityData?.eligible && (
+          <div className="church-home-create-section">
+            <div className="church-home-create-box">
+              <div className="church-home-create-icon" aria-hidden="true">
+                <Church size={20} />
+              </div>
+              <div className="church-home-create-info">
+                <span className="church-home-create-title">Quer iniciar sua comunidade?</span>
+                <span className="church-home-create-desc">
+                  Cadastre sua própria igreja e torne-se o administrador responsável por ela.
+                </span>
+              </div>
+            </div>
+            <button
+              id="btn-goto-create-church"
+              className="btn btn-secondary church-home-create-btn"
+              onClick={() => setIsCreateModalOpen(true)}
+              type="button"
+              aria-label="Criar minha igreja"
+            >
+              <PlusCircle size={15} />
+              Criar minha igreja
+            </button>
+          </div>
+        )}
+
+        {/* Notificação se o membro já é administrador ativo em outra igreja e sem comando pendente */}
+        {!isAdmin && !pendingCommand && eligibilityData && !eligibilityData.eligible && eligibilityData.reason === 'already_admin' && (
+          <div className="church-home-admin-limit-notice" role="note">
+            <ShieldAlert size={16} className="church-home-admin-limit-icon" aria-hidden="true" />
+            <span>
+              Sua conta já administra ativamente outra igreja{eligibilityData.activeAdminChurchName ? ` (${eligibilityData.activeAdminChurchName})` : ''}. Pelas regras de governança, uma conta pode administrar no máximo uma igreja por vez.
+            </span>
           </div>
         )}
 
@@ -148,6 +293,22 @@ export default function ChurchHomePage() {
           Sair
         </button>
       </div>
+
+      {/* Modal Criar Minha Igreja / Recuperação */}
+      <CreateChurchModal
+        isOpen={isCreateModalOpen}
+        onClose={() => setIsCreateModalOpen(false)}
+        onSuccess={(createdChurch) => {
+          setIsCreateModalOpen(false);
+          setPendingCommand(null);
+          if (createdChurch?.church_id && recordCreationConfirmation) {
+            recordCreationConfirmation(createdChurch);
+          }
+          if (createdChurch?.church_id && refreshAccess) {
+            refreshAccess(createdChurch.church_id);
+          }
+        }}
+      />
 
       <style>{`
         .church-home-page {
@@ -337,6 +498,84 @@ export default function ChurchHomePage() {
         .church-home-admin-btn {
           width: 100%;
           justify-content: center;
+          font-weight: 700;
+        }
+
+        /* Aviso de limite de administração para admin */
+        .church-home-admin-limit-notice {
+          display: flex;
+          align-items: flex-start;
+          gap: 10px;
+          padding: 12px 14px;
+          background: var(--status-pending-bg);
+          border: 1px solid var(--status-pending-border);
+          border-radius: var(--radius-md);
+          width: 100%;
+          margin-bottom: 20px;
+          font-size: 12px;
+          color: var(--status-pending-text);
+          line-height: 1.45;
+        }
+
+        .church-home-admin-limit-icon {
+          flex-shrink: 0;
+          margin-top: 1px;
+        }
+
+        /* Bloco de criar igreja para membro com acesso básico */
+        .church-home-create-section {
+          width: 100%;
+          background: var(--bg-surface);
+          border: 1px solid var(--border-subtle);
+          border-radius: var(--radius-lg);
+          padding: 16px;
+          margin-bottom: 20px;
+          display: flex;
+          flex-direction: column;
+          gap: 12px;
+        }
+
+        .church-home-create-box {
+          display: flex;
+          align-items: flex-start;
+          gap: 12px;
+        }
+
+        .church-home-create-icon {
+          width: 36px;
+          height: 36px;
+          border-radius: var(--radius-md);
+          background: var(--primary-surface);
+          border: 1px solid var(--primary-border);
+          color: var(--primary);
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          flex-shrink: 0;
+        }
+
+        .church-home-create-info {
+          display: flex;
+          flex-direction: column;
+          gap: 2px;
+        }
+
+        .church-home-create-title {
+          font-size: 14px;
+          font-weight: 700;
+          color: var(--text-primary);
+        }
+
+        .church-home-create-desc {
+          font-size: 12px;
+          color: var(--text-secondary);
+          line-height: 1.4;
+        }
+
+        .church-home-create-btn {
+          width: 100%;
+          justify-content: center;
+          gap: 6px;
           font-weight: 700;
         }
 
