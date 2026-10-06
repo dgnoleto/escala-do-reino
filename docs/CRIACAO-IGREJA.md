@@ -174,6 +174,7 @@ Localizados em `docs/sql/`:
    - O preflight atual não verifica a extensão `pgcrypto`; ele concentra sua validação prévia na ausência de administrações ativas duplicadas, integridade das 7 tabelas e presença das colunas essenciais.
    - Confere especificamente as colunas necessárias em `auth.users`, `churches`, `members`, `church_access`, `audit_entries` e `command_receipts`.
    - Confere se os novos objetos ainda não existem e confirma o isolamento estrito de `app_private`.
+   - Executado no laboratório local e também no projeto do piloto (`jvpctgqudvjealzileib`) em 06/10/2026 com todas as 12 colunas retornando `true`.
 
 2. **`009_validate_create_my_church.sql` (Ensaio transacional com `ROLLBACK`):**
    - Restrito a ambiente isolado dedicado para testes (local ou staging efêmero); executado com sucesso e resultado PASS com ROLLBACK no PostgreSQL 17.11 local em 04/10/2026; não deve ser executado no piloto sem estratégia de contas de teste definida e autorizada.
@@ -189,7 +190,7 @@ Localizados em `docs/sql/`:
    - Finaliza obrigatoriamente com `ROLLBACK`, deixando a base intacta.
 
 3. **`009_create_my_church.sql` (Instalação permanente com `COMMIT`):**
-   - Instalado com autorização exclusiva no laboratório local em 04/10/2026 (permanecendo pendente de autorização e execução no piloto).
+   - Instalado com autorização no laboratório local em 04/10/2026 e, em 06/10/2026, instalado com autorização expressa do responsável no banco de dados do piloto com COMMIT e mensagem PASS após confirmação (projeto `jvpctgqudvjealzileib`).
    - Cria o índice parcial `church_access_single_active_admin_idx` em `(user_id)`.
    - Cria as funções de trigger com serialização consultiva e verificação de elegibilidade do sucessor.
    - Cria as 3 funções RPC em `public`: `check_church_creation_eligibility`, `create_my_church` e `get_create_church_receipt`.
@@ -198,7 +199,7 @@ Localizados em `docs/sql/`:
    - Emite notificação `NOTIFY pgrst, 'reload schema'`.
 
 4. **`010_verify_create_my_church.sql` (Verificação pós-instalação somente leitura):**
-   - Executado em nova conexão após a instalação local de 04/10/2026 com todas as 7 asserções verdadeiras.
+   - Executado após a instalação local em 04/10/2026 e após a instalação no piloto em 06/10/2026 (por leitura em solicitação separada), com todas as 7 asserções verdadeiras em ambos os ambientes.
    - Confere unicidade (`ix.indisunique`), validade (`ix.indisvalid`) e expressão de predicado do índice parcial.
    - Confere se os 2 novos gatilhos estão habilitados (`tr.tgenabled = 'O'`) e associados às funções corretas.
    - Confere se as 3 novas RPCs existem com `prosecdef = true`, `statement_timeout = 5s` e privilégios concedidos exclusivamente a `authenticated`.
@@ -330,32 +331,40 @@ Para viabilizar o teste local pontual contra a instância Supabase do laboratór
    - Orienta verificação do Mailpit (`http://127.0.0.1:54324`) caso a confirmação de e-mail esteja ativada na instância.
    - **Ressalva de conformidade:** O utilitário local de teste viabiliza a obtenção de sessão no laboratório onde o Google OAuth está desabilitado; ele não substitui a validação do botão Google do piloto nem antecipa a implementação da tela de e-mail/senha de produto prevista no PRD 3.1.
 
-### 5.3 Validações Executadas em Laboratório Local e Limites Registrados
+### 5.3 Validações Executadas em Laboratório e no Piloto
 
 - **Cobertura de Componentes React e Regressões:**
   - Os testes de componentes com React Test Renderer cobrem a montagem da árvore de componentes, efeitos, ciclos de vida de promessas, descarte de callbacks e transições entre rotas/telas (`AccessPendingPage` -> `checking_access` -> `access_error` -> `ChurchHomePage`), além de regressões M61 de descarte de consultas em voo.
   - Não são testes visuais em navegador DOM (como Cypress ou Playwright) com interação de cursor ou layout CSS físico, nem comprovam todos os fluxos reais de múltiplos vínculos sob tráfego HTTP.
-- **Ensaio SQL 009 com ROLLBACK e Verificação pós-instalação 010 (04/10/2026):**
+- **Ensaio SQL 009 com ROLLBACK e Verificação pós-instalação 010 em Laboratório (04/10/2026):**
   - Execução no PostgreSQL 17.11 local (`supabase_db_EscalaReinoLab`) de `009_validate_create_my_church.sql` integral com `ON_ERROR_STOP`, concluído com `ROLLBACK` explícito e resultado PASS.
   - Conferências imediatas pós-rollback em novas conexões comprovando preflight com 12 colunas true, laboratório sem contas residuais e integridade das verificações 006 (9 colunas true) e 008 (8 colunas true) (registro local de revisão: `outputs/validacao-sql-local-009-4f830c9/RESULTADO-ENSAIO-009.md`).
   - Instalação permanente autorizada exclusiva no laboratório de `009_create_my_church.sql` com `COMMIT`, seguida da verificação `010_verify_create_my_church.sql` em nova conexão com 7 asserções verdadeiras (índice único, gatilhos de proteção, segurança das 3 RPCs e RLS das 7 tabelas) (registro local de revisão: `outputs/validacao-sql-local-009-4f830c9/RESULTADO-INSTALACAO-009.md`).
-- **Rodada de Concorrência Coordenada com Duas Conexões Físicas (04/10/2026):**
+- **Rodada de Concorrência Coordenada com Duas Conexões Físicas em Laboratório (04/10/2026):**
   - Executada exclusivamente no laboratório local sobre os objetos 009 instalados, com duas conexões de clientes em `READ COMMITTED` e um observador somente leitura (registro local de revisão: `outputs/concorrencia-local-009/RESULTADO-RODADA.md`):
     1. *Mesma conta, comandos distintos:* conexão B aguarda advisory lock de A; após COMMIT de A, B retorna erro 42501 (limite de 1 administração ativa por conta). Uma única igreja criada; aprovação automática.
     2. *Mesmo comando e parâmetros:* B aguarda A e retorna os mesmos IDs com `already_existed = true`. Replay idempotente aprovado automaticamente.
     3. *Duas saídas administrativas:* A confirma saída; B retorna erro 23514 da proteção do último administrador. **Limitação registrada:** o resultado esperado foi conferido em mensagens e no estado do banco (A sem administração e B preservado), mas o executor original não registrou PASS automático completo em razão da ordem de entrega stdout/stderr via docker exec.
     4. *Saída administrativa e desativação de membro:* B é bloqueado com 23514 da função de proteção de membro, mantendo o membro B ativo e administrador.
   - Limite de evidência: valida os 4 escalonamentos coordenados testados em `READ COMMITTED`; não é prova de todos os níveis de isolamento nem de toda concorrência possível.
-- **Ensaio Controlado de Recuperação e Reconciliação por Recibo (05/10/2026, commit `b566185`):**
+- **Ensaio Controlado de Recuperação e Reconciliação por Recibo em Laboratório (05/10/2026, commit `b566185`):**
   - Conduzido pelo Codex em ambiente local isolado (EscalaReinoLab) com conta sintética autorizada (`pastor.recuperacao.pr7@example.com`):
     1. *Bloqueio antes do envio:* envio interrompido no transporte antes de chamar a rede; a aplicação apresentou "Envio anterior não confirmado" e manteve os dados do formulário; a consulta de recibo indicou registro ainda não encontrado; leitura independente do PostgreSQL em transação somente leitura confirmou 0 igrejas, membros, vínculos, recibos ou auditorias gravados.
     2. *Perda de confirmação após resposta real:* reenvio do formulário reutilizou o mesmo `command_id` (`8251abd6-53f2-40f3-88e7-c5735492f411`); a RPC `create_my_church` foi executada com sucesso no backend, retornando vínculo e privilégio administrativo; a confirmação foi descartada no transporte antes do aplicativo; o aplicativo permaneceu em estado incerto. Leitura somente leitura do banco confirmou exatamente 1 igreja, 1 membro, 1 vínculo ativo administrativo (`is_admin=true`), 1 recibo e 1 auditoria correlacionados.
     3. *Recuperação via recibo:* acionamento exclusivo de "Verificar no servidor" executou a reconciliação (o serviço JavaScript `checkChurchReceipt` consulta a RPC `public.get_create_church_receipt(p_command_id uuid)`), recuperou a criação, selecionou a igreja correta e exibiu perfil Administrador; recarga da página manteve o acesso; a tela Gestão de Membros exibiu 1 membro ativo sem duplicação de registros. Nova leitura somente leitura confirmou a persistência íntegra sem duplicação de registros (registro local de revisão: `outputs/teste-recuperacao-pr7-2026-10-05/RESULTADO-ENSAIO.md`).
+- **Instalação e Verificação no Banco de Dados do Piloto (06/10/2026):**
+  - No projeto Supabase do piloto (`jvpctgqudvjealzileib`), pré-voo `009_preflight_create_my_church.sql` concluído com 12 indicadores true (registro local: `outputs/preflight-piloto-pr7-2026-10-06/RESULTADO.md`).
+  - Execução permanente autorizada expressamente pelo responsável de `009_create_my_church.sql` com COMMIT e mensagem PASS após confirmação (SHA256: `D0E735E4694FD1022AB778E51505ADAD5BC91FB524B2DA6B805023F101E08AEC`). Foram instalados o índice parcial único `church_access_single_active_admin_idx`, as duas funções e dois gatilhos de proteção do último administrador, e as três RPCs do produto em `public` (`check_church_creation_eligibility`, `create_my_church` e `get_create_church_receipt`).
+  - Verificação `010_verify_create_my_church.sql` executada por leitura em solicitação separada após o sucesso do 009 com 7 indicadores true (SHA256: `63751AFB50504EC30E93EBAE198F2941CE78EF737F304F0428F55A7CA36EE91F`; registro local: `outputs/instalacao-piloto-pr7-2026-10-06/RESULTADO-INSTALACAO.md`).
+  - O banco do piloto passou a contar com **sete funções RPC** do produto em `public` com permissão concedida a `authenticated` (as quatro anteriores mais as três novas) e as **sete tabelas internas** em `app_private` preservadas com RLS e bloqueio direto.
+- **Conferência Manual no Aplicativo com Conta Existente do Piloto (06/10/2026):**
+  - O responsável acessou a aplicação web local apontada para o backend do piloto e confirmou manualmente: exibição correta da igreja Ministério Shalom, perfil Administrador, quatro membros cadastrados ativos, botão Atualizar da lista mantendo os dados, e logout/novo login recuperando integralmente o acesso e os dados. Ação "Criar minha igreja" ausente para a conta que já administra uma igreja e aviso do limite de 1 administração por conta visível conforme PRD. Na navegação atual, recarga do navegador (F5) na tela de membros retorna à tela inicial da igreja com o botão de acesso a membros preservado (a subview é mantida em memória; registro local: `outputs/teste-aplicativo-piloto-2026-10-06/RESULTADO.md`). Identificado como teste manual informado pelo responsável, não como automação de navegador ou auditoria completa de OAuth/SMTP/identidades.
 
 ### 5.4 Validações Pendentes no Piloto ou Não Cobertas
 
+- Criação positiva de nova igreja no piloto com conta elegível (a criação atômica e recuperação via recibo foram validadas no laboratório local isolado; a conta do piloto já possui administração ativa e testou a consulta e as salvaguardas);
 - Desconexão física da rede;
 - Cancelamento operacional por timeout via API HTTP;
 - Google OAuth e fluxo de entrega/confirmação real de e-mails do piloto;
-- Estado e instalação do script 009 no banco de dados do piloto (Ministério Shalom), que não recebeu os objetos deste incremento e exigirá validação e autorização prévia próprias;
+- Não houve merge do PR #7 nem publicação externa do frontend;
 - Conformidade integral dos 64 cenários M01–M64 do PRD. As regressões de seleção de contexto em componentes de produção (`test/church-components-real.test.js`) demonstram o descarte de requisições defasadas e transição de telas, mas não comprovam todos os fluxos reais de múltiplos vínculos sob tráfego HTTP.
