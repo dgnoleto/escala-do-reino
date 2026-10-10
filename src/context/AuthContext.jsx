@@ -8,6 +8,12 @@ import {
   clearAllChurchCommandStorage,
   invalidateChurchCommandSession,
 } from '../utils/churchCommandService';
+import {
+  INVITATION_PENDING_TOKEN_KEY,
+  extractInviteTokenFromUrl,
+  clearInviteTokenFromUrl,
+  clearAllInvitationStorageForUser,
+} from '../utils/invitationCommandService';
 
 const AuthContext = createContext(null);
 
@@ -41,6 +47,19 @@ export function AuthProvider({ children }) {
   const [churchAccess, setChurchAccess]           = useState(null);
   const [availableAccesses, setAvailableAccesses] = useState([]);
   const [creationConfirmation, setCreationConfirmation] = useState(null);
+  const [pendingInviteToken, setPendingInviteToken] = useState(() => {
+    if (typeof window !== 'undefined' && window.sessionStorage) {
+      const fromUrl = extractInviteTokenFromUrl();
+      if (fromUrl) {
+        window.sessionStorage.setItem(INVITATION_PENDING_TOKEN_KEY, fromUrl);
+        clearInviteTokenFromUrl();
+        return fromUrl;
+      }
+      return window.sessionStorage.getItem(INVITATION_PENDING_TOKEN_KEY) || null;
+    }
+    return null;
+  });
+  const [isPasswordRecovery, setIsPasswordRecovery] = useState(false);
 
   // Ref para confirmação viva de criação (vinculada a userId e sessionId)
   const creationConfirmationRef = useRef(null);
@@ -61,12 +80,25 @@ export function AuthProvider({ children }) {
   churchAccessRef.current   = churchAccess;
 
   /**
+   * Limpa a intenção temporária de convite retida na sessão da aba.
+   */
+  const clearPendingInviteToken = useCallback(() => {
+    if (typeof window !== 'undefined' && window.sessionStorage) {
+      window.sessionStorage.removeItem(INVITATION_PENDING_TOKEN_KEY);
+    }
+    setPendingInviteToken(null);
+  }, []);
+
+  /**
    * Remove comandos pendentes de membros e igrejas retidos na sessão para evitar vazamento entre contas.
    */
   const clearMemberCommandStorage = useCallback(() => {
     if (typeof window === 'undefined' || !window.sessionStorage) return;
     clearAllMemberCommandStorage(window.sessionStorage);
     clearAllChurchCommandStorage(window.sessionStorage);
+    if (currentUserIdRef.current) {
+      clearAllInvitationStorageForUser(window.sessionStorage, currentUserIdRef.current);
+    }
   }, []);
 
   /**
@@ -349,6 +381,9 @@ export function AuthProvider({ children }) {
         if (!isEffectActive) return;
         hasAuthEventArrived = true;
         initialHandledRef.current = true;
+        if (event === 'PASSWORD_RECOVERY') {
+          setIsPasswordRecovery(true);
+        }
         const currentGen = ++authGenerationRef.current;
         applySession(newSession, currentGen);
       }
@@ -374,9 +409,21 @@ export function AuthProvider({ children }) {
       }
     }
 
+    function handleHashChange() {
+      const fromUrl = extractInviteTokenFromUrl();
+      if (fromUrl) {
+        if (typeof window !== 'undefined' && window.sessionStorage) {
+          window.sessionStorage.setItem(INVITATION_PENDING_TOKEN_KEY, fromUrl);
+        }
+        setPendingInviteToken(fromUrl);
+        clearInviteTokenFromUrl();
+      }
+    }
+
     window.addEventListener('focus', handleFocusOrOnline);
     window.addEventListener('online', handleFocusOrOnline);
     document.addEventListener('visibilitychange', handleFocusOrOnline);
+    window.addEventListener('hashchange', handleHashChange);
 
     return () => {
       isEffectActive = false;
@@ -384,6 +431,7 @@ export function AuthProvider({ children }) {
       window.removeEventListener('focus', handleFocusOrOnline);
       window.removeEventListener('online', handleFocusOrOnline);
       document.removeEventListener('visibilitychange', handleFocusOrOnline);
+      window.removeEventListener('hashchange', handleHashChange);
       if (scheduledTimerRef.current) {
         clearTimeout(scheduledTimerRef.current);
         scheduledTimerRef.current = null;
@@ -460,6 +508,15 @@ export function AuthProvider({ children }) {
   }), []);
 
   /**
+   * Recarrega o vínculo diretamente para uma igreja sem o efeito colateral de registrar confirmação de criação.
+   */
+  const reloadChurchAccess = useCallback(async (preferredChurchId = null) => {
+    const uid = currentUserIdRef.current;
+    if (!uid) return { success: false, error: 'Usuário não autenticado.' };
+    return await fetchChurchAccess(uid, { isBackground: false, preferredChurchId });
+  }, [fetchChurchAccess]);
+
+  /**
    * Inicia o fluxo OAuth com o Google.
    */
   async function signInWithGoogle() {
@@ -471,10 +528,12 @@ export function AuthProvider({ children }) {
 
     setAuthError(null);
 
+    const origin = typeof window !== 'undefined' ? window.location.origin : 'http://localhost:3000';
+
     const { error } = await supabase.auth.signInWithOAuth({
       provider: 'google',
       options: {
-        redirectTo: 'http://localhost:3000',
+        redirectTo: origin,
       },
     });
 
@@ -487,11 +546,123 @@ export function AuthProvider({ children }) {
   }
 
   /**
+   * Autenticação via e-mail e senha.
+   */
+  async function signInWithPassword(email, password) {
+    if (!isSupabaseConfigured() || !supabase) {
+      const err = new Error('Configuração do Supabase ausente ou inválida.');
+      setAuthError(err.message);
+      return { error: err };
+    }
+
+    setAuthError(null);
+
+    const { data, error } = await supabase.auth.signInWithPassword({
+      email,
+      password,
+    });
+
+    if (error) {
+      setAuthError(error.message);
+      return { error };
+    }
+
+    return { data, error: null };
+  }
+
+  /**
+   * Cadastro de nova conta via e-mail e senha.
+   * Não presume login nem acesso caso confirmação de e-mail esteja pendente.
+   */
+  async function signUpWithPassword(email, password) {
+    if (!isSupabaseConfigured() || !supabase) {
+      const err = new Error('Configuração do Supabase ausente ou inválida.');
+      setAuthError(err.message);
+      return { error: err };
+    }
+
+    setAuthError(null);
+
+    const origin = typeof window !== 'undefined' ? window.location.origin : 'http://localhost:3000';
+
+    const { data, error } = await supabase.auth.signUp({
+      email,
+      password,
+      options: {
+        emailRedirectTo: origin,
+      },
+    });
+
+    if (error) {
+      setAuthError(error.message);
+      return { error };
+    }
+
+    return { data, error: null };
+  }
+
+  /**
+   * Solicita envio de link de recuperação de senha por e-mail.
+   */
+  async function resetPasswordForEmail(email) {
+    if (!isSupabaseConfigured() || !supabase) {
+      const err = new Error('Configuração do Supabase ausente ou inválida.');
+      setAuthError(err.message);
+      return { error: err };
+    }
+
+    setAuthError(null);
+
+    const origin = typeof window !== 'undefined' ? window.location.origin : 'http://localhost:3000';
+
+    const { data, error } = await supabase.auth.resetPasswordForEmail(email, {
+      redirectTo: origin,
+    });
+
+    if (error) {
+      setAuthError(error.message);
+      return { error };
+    }
+
+    return { data, error: null };
+  }
+
+  /**
+   * Atualiza a senha da conta autenticada (usado na recuperação).
+   */
+  async function updateUserPassword(newPassword) {
+    if (!isSupabaseConfigured() || !supabase) {
+      const err = new Error('Configuração do Supabase ausente ou inválida.');
+      setAuthError(err.message);
+      return { error: err };
+    }
+
+    setAuthError(null);
+
+    const { data, error } = await supabase.auth.updateUser({
+      password: newPassword,
+    });
+
+    if (error) {
+      setAuthError(error.message);
+      return { error };
+    }
+
+    setIsPasswordRecovery(false);
+    return { data, error: null };
+  }
+
+  /**
    * Encerra a sessão atual com tratamento seguro de erros.
    * Garante que os dados locais e de membros sejam sempre limpos, mesmo se o servidor falhar.
+   *
+   * @param {object} [options]
+   * @param {boolean} [options.preserveInvite] - Se true, preserva o token de convite na sessão para troca de conta
    */
-  async function signOut() {
+  async function signOut(options = {}) {
     if (!supabase) return;
+
+    const preserveInvite = Boolean(options?.preserveInvite);
 
     // Invalida sessões e gerações imediatamente para descartar qualquer resposta em voo
     authGenerationRef.current += 1;
@@ -506,7 +677,12 @@ export function AuthProvider({ children }) {
     clearMemberCommandStorage();
     if (uid && typeof window !== 'undefined') {
       window.sessionStorage?.removeItem(STORAGE_KEY_SELECTED_CHURCH_PREFIX + uid);
+      clearAllInvitationStorageForUser(window.sessionStorage, uid);
     }
+    if (!preserveInvite) {
+      clearPendingInviteToken();
+    }
+    setIsPasswordRecovery(false);
     setAuthError(null);
 
     try {
@@ -522,6 +698,14 @@ export function AuthProvider({ children }) {
       setSession(null);
       setAuthState('unauthenticated');
     }
+  }
+
+  /**
+   * Encerra a sessão atual preservando explicitamente a intenção do convite
+   * para permitir login com o e-mail correto (M51 / PRD).
+   */
+  function signOutPreservingInvite() {
+    return signOut({ preserveInvite: true });
   }
 
   return (
@@ -540,9 +724,20 @@ export function AuthProvider({ children }) {
         clearCreationConfirmation,
         selectChurch,
         signInWithGoogle,
+        signInWithPassword,
+        signUpWithPassword,
+        resetPasswordForEmail,
+        updateUserPassword,
         signOut,
+        signOutPreservingInvite,
         retryAccessCheck,
         refreshAccess,
+        reloadChurchAccess,
+        pendingInviteToken,
+        setPendingInviteToken,
+        clearPendingInviteToken,
+        isPasswordRecovery,
+        setIsPasswordRecovery,
         isConfigured: isSupabaseConfigured(),
       }}
     >

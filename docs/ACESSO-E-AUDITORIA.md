@@ -2,7 +2,7 @@
 
 Versão 4 · 3 de outubro de 2026
 
-**Situação:** regras de produto confirmadas e proposta dos próximos contratos. As quatro tabelas iniciais e o incremento de solicitação/auditoria já foram criados e verificados no Supabase; este documento não cria tabelas, funções, contas ou permissões adicionais. As decisões aprovadas de criação de igreja ("Criar minha igreja"), administração em no máximo uma igreja por conta, continuidade administrativa (proteção do último administrador), seleção de contexto de igreja e exclusão lógica estão consolidadas como requisitos de produto e aguardam implementação em seus respectivos incrementos. Complementa o [PRD](PRD.md), a [arquitetura](ARQUITETURA-BANCO.md), o [schema de acesso](SCHEMA-ACESSO.md) e o [schema de solicitação e auditoria](SCHEMA-APROVACAO-AUDITORIA.md).
+**Situação:** regras de produto confirmadas e preparação dos contratos de convites de acesso e aprovação de nome para revisão. As quatro tabelas iniciais e o incremento de solicitação/auditoria já foram criados e verificados no Supabase; os fluxos de criação de nova igreja ("Criar minha igreja"), administração em no máximo uma igreja por conta Auth e salvaguardas de continuidade do último administrador foram implementados na aplicação, instalados no piloto (scripts 009/010) e integrados na branch main via PR #7. Este documento detalha os contratos para convites e aprovação de outro nome. Complementa o [PRD](PRD.md), a [arquitetura](ARQUITETURA-BANCO.md), o [schema de acesso](SCHEMA-ACESSO.md) e o [schema de solicitação e auditoria](SCHEMA-APROVACAO-AUDITORIA.md).
 
 ## 1. Decisões confirmadas
 
@@ -10,17 +10,19 @@ Versão 4 · 3 de outubro de 2026
 2. Cadastro básico de membro coleta apenas o nome (`display_name`), sem CPF. Não há campo de e-mail no formulário atual de cadastro. O e-mail do destinatário será informado na emissão do convite.
 3. Convite vinculado a membro existente, válido por 72 horas desde a emissão, de uso único.
 4. Resgate exige o mesmo e-mail confirmado do destinatário. Encontrar um e-mail na base, isoladamente, não autoriza acesso. Outro endereço exige cancelar/reemitir pelo admin.
-5. Um convite pendente por membro. Nova emissão cancela o anterior.
+5. Um convite pendente por membro. Nova emissão cancela o anterior; se houver solicitação de outro nome pendente de análise vinculada ao convite anterior consumido, a reemissão cancela também essa solicitação antiga de nome, preservando o histórico de auditoria e a linha do convite consumido (sem tentar revogar indevidamente a linha consumida).
 6. A pessoa confirma o nome cadastrado ou informa outro. Outro nome aguarda aprovação de admin antes de alterar o membro e liberar acesso.
 7. **A aprovação também precisa ocorrer antes do vencimento original de 72 horas.** Enviar a proposta não reinicia nem estende o prazo. Solicitação não aprovada a tempo expira, sem acesso; nova tentativa exige novo convite.
-8. Login sozinho não libera dados de nenhuma igreja existente, nem concede liderança ou administração.
-9. **Criação de uma nova igreja ("Criar minha igreja"):** conta autenticada, com e-mail confirmado e sem administração ativa em outra igreja, pode criar uma nova igreja de forma atômica no servidor (igreja, cadastro de membro do criador, vínculo de primeiro administrador com `is_admin = true` e registro de auditoria).
-10. **Administração em uma única igreja por conta:** uma conta Auth pode possuir administração ativa em no máximo uma igreja por vez em todo o sistema. A regra deve ser garantida no servidor e no banco de dados, inclusive sob concorrência. Uma igreja pode ter múltiplos administradores, desde que cada conta respeite o limite. Não existe papel de "proprietário".
-11. **Continuidade administrativa:** o último administrador ativo de uma igreja só pode deixar a administração depois que outro administrador elegível assumir. Operações de revogação, rebaixamento ou desativação não podem contornar essa trava.
-12. **Reutilização de conta e múltiplos vínculos:** a mesma conta Auth pode ser administradora na igreja A e ter acesso básico à igreja B por convite. A conta com múltiplos vínculos deve escolher explicitamente a igreja consultada no aplicativo. A troca de igreja invalida consultas anteriores e impede mistura de dados.
-13. **Exclusão lógica:** remoção de cadastros pela aplicação é lógica e recuperável, preservando identificadores, histórico e referências. Recuperação exige autorização e auditoria, sem restauração automática de acessos e sem contornar a proteção do último administrador.
+8. **Rejeição encerra a tentativa:** rejeição administrativa da solicitação de outro nome encerra definitivamente a tentativa; nova entrada exige novo convite emitido pelo admin.
+9. **Compartilhamento manual do link:** no primeiro incremento de convites, o administrador copia e compartilha o link do convite manualmente com o destinatário (sem envio automático por serviço de e-mail nesta etapa).
+10. Login sozinho não libera dados de nenhuma igreja existente, nem concede liderança ou administração.
+11. **Criação de uma nova igreja ("Criar minha igreja"):** conta autenticada, com e-mail confirmado e sem administração ativa em outra igreja, pode criar uma nova igreja de forma atômica no servidor (implementada na aplicação, instalada no piloto via scripts 009/010 e integrada à main via PR #7).
+12. **Administração em uma única igreja por conta:** uma conta Auth pode possuir administração ativa em no máximo uma igreja por vez em todo o sistema, garantida no banco pelo índice parcial `church_access_single_active_admin_idx`.
+13. **Continuidade administrativa:** o último administrador ativo de uma igreja só pode deixar a administração depois que outro administrador elegível assumir, protegida no banco pelas funções `app_private.protect_last_active_admin()` e `app_private.protect_last_active_admin_member()` e gatilhos `church_access_protect_last_admin` e `members_protect_last_admin`. Uma igreja pode ter múltiplos administradores simultâneos; não existe papel de proprietário.
+14. **Reutilização de conta e múltiplos vínculos:** a mesma conta Auth pode ser administradora na igreja A e ter acesso básico à igreja B por convite. A conta com múltiplos vínculos deve escolher explicitamente a igreja consultada no aplicativo (`SelectChurchPage`). A troca de igreja invalida consultas anteriores e impede mistura de dados.
+15. **Exclusão lógica:** remoção de cadastros pela aplicação é lógica e recuperável, preservando identificadores, histórico e referências. Recuperação exige autorização e auditoria, sem restauração automática de acessos e sem contornar a proteção do último administrador.
 
-**Aviso de implementação:** os novos fluxos de criação de igreja, limite de 1 administração ativa por conta, continuidade administrativa, convites com e-mail, seleção de contexto e exclusão lógica aguardam implementação completa. Suas garantias no servidor e banco de dados (RPCs atômicas, restrições e índices condicionais) também são trabalho futuro em seus respectivos incrementos.
+**Aviso de implementação:** o fluxo de criação de igreja e salvaguardas de administração encontra-se entregue e integrado na branch main. O fluxo de convites com e-mail, resgate seguro, aprovação de outro nome e integração com a seleção de igreja é o incremento em preparação de contratos nesta etapa. A exclusão lógica recuperável é o incremento seguinte (etapa 4 oficial).
 
 ## 2. Identidade e destinatário
 
@@ -32,11 +34,11 @@ Uma tentativa com e-mail divergente não consome o convite nem revela dados do m
 
 ## 3. Emissão e reemissão
 
-Proposta de contrato: admin ativo na igreja escolhe membro ativo já existente e informa o e-mail do destinatário (já que o cadastro de membro não exige e-mail prévio). O servidor gera token imprevisível; guarda somente seu resumo criptográfico, autoria, instante, destinatário e vencimento exatamente 72 horas depois.
+Proposta de contrato: admin ativo na igreja escolhe membro ativo já existente e informa o e-mail do destinatário (já que o cadastro de membro não exige e-mail prévio). O servidor gera token imprevisível; guarda somente seu resumo criptográfico (`token_digest`), autoria, instante, destinatário e vencimento exatamente 72 horas depois. O link é retornado na resposta da RPC para que o administrador copie e compartilhe manualmente no primeiro incremento.
 
-Emissão serializa pelo membro: bloquear o registro da pessoa antes de conferir/cancelar o convite anterior e criar o novo. Cancelamento anterior, nova emissão e auditoria ficam na mesma transação; uma falha desfaz tudo. Duas emissões concorrentes não deixam dois convites utilizáveis.
+Emissão serializa pelo membro: bloquear o registro da pessoa antes de conferir/cancelar convite anterior e criar o novo. Se houver convite aberto não consumido, marca `revoked_at` (inclusive se vencido, para desocupar o índice). Se houver solicitação de outro nome pendente de análise vinculada a convite anterior consumido, cancela a solicitação (`status = 'cancelled'`), mantendo o convite consumido intacto (o schema proíbe preencher `revoked_at` em convite consumido). Cancelamento anterior, nova emissão e auditoria ficam na mesma transação; uma falha desfaz tudo. Duas emissões concorrentes não deixam dois convites utilizáveis.
 
-Detalhe físico proposto: índice único para um convite não consumido/não cancelado por igreja/membro, combinado com a transação. O índice não pode depender do horário atual para excluir convites expirados; a reemissão precisa tratar também a linha vencida antes de inserir a próxima. Preservar seus instantes originais e registrar a razão de substituição na auditoria. Esse índice foi aplicado no segundo incremento; a transação de reemissão continua pendente de implementação.
+Detalhe físico: índice único `access_invitations_one_open_per_member` para convite não consumido e não cancelado por igreja/membro (`redeemed_at is null and revoked_at is null`). O índice não depende do relógio; uma linha vencida ainda ocupa a posição e precisa ser finalizada transacionalmente pela reemissão antes de inserir a próxima. Preservar seus instantes originais e registrar a razão de substituição na auditoria.
 
 Não criar outro membro nem outra conta Auth ao vincular; um vínculo existente não deve ser duplicado, promovido ou rebaixado silenciosamente.
 
@@ -63,7 +65,7 @@ Usar o horário atual do servidor na decisão final, inclusive após esperar por
 
 Se vencer, mostrar expiração na consulta da própria solicitação. Expiração deriva do prazo no servidor e não depende de tarefa periódica para impedir aprovação. A nova tentativa exige novo convite e nova solicitação; não alterar o vencimento da antiga.
 
-**Tratamentos ainda propostos:** se o cadastro do membro mudar durante a análise, informar o conflito e exigir nova avaliação, sem sobrescrever silenciosamente. Rejeição, retirada da proposta e efeito de reemissão sobre uma solicitação já aberta precisam de definição antes de implementar esses comandos.
+**Decisões consolidadas de tratamento:** se o cadastro do membro mudar durante a análise, informar o conflito e exigir nova avaliação, sem sobrescrever silenciosamente. A rejeição administrativa encerra definitivamente a tentativa (`status = 'rejected'`); nova entrada exige novo convite emitido pelo admin. A reemissão pelo administrador cancela a solicitação pendente de nome anterior (`status = 'cancelled'`), preservando o histórico de auditoria e a linha consumida anterior (sem tentar revogar a linha consumida). A retirada da proposta pelo próprio solicitante permanece como decisão futura separada.
 
 ## 6. Próximas entidades propostas
 
@@ -96,18 +98,19 @@ Durante o ensaio piloto inicial, a concessão do primeiro administrador da igrej
 
 Esse procedimento foi estritamente manual e pontual para viabilizar o piloto inicial, com autoria registrada e distinção entre operador de manutenção e conta beneficiada, sem versionamento de scripts com dados privados no repositório. Esse registro é preservado como histórico técnico de testes e validação de infraestrutura.
 
-### 8.2 Novo fluxo aprovado: criação de nova igreja ("Criar minha igreja")
+### 8.2 Fluxo implementado: criação de nova igreja ("Criar minha igreja")
 
-Como evolução de produto aprovada (ainda pendente de implementação no servidor e no banco de dados), a criação de uma nova igreja passará a ser um fluxo de autoatendimento controlado no servidor:
+O fluxo de criação de nova igreja ("Criar minha igreja", limite de 1 administração por conta Auth e salvaguarda do último administrador) foi implementado na aplicação web, validado em laboratório, instalado e verificado no banco do piloto pelos scripts 009/010 e incorporado à branch main no merge `d372a58d600d9d7789b3aec25431542301e5c423` (PR #7):
 
 1. **Requisitos prévios:** o usuário deve estar autenticado via Supabase Auth com e-mail confirmado e não pode possuir administração ativa em nenhuma outra igreja do sistema.
-2. **Operação atômica no servidor:** uma função controlada (RPC ou endpoint seguro de backend) executa em transação única:
+2. **Operação atômica no servidor:** uma função controlada (RPC `create_my_church`) executa em transação única:
    - Cria o registro em `churches` com nome, endereço, link do Google Maps, fuso IANA e política de duração (`warn` ou `block`).
    - Cria o registro de membro em `members` com o nome do criador (`display_name`).
    - Cria o vínculo em `church_access` com `is_admin = true`, `status = 'active'` e `onboarding_completed_at = now()`.
    - Grava a entrada correspondente em `audit_entries`.
+   - Grava recibo em `command_receipts` para recuperação idempotente.
 3. **Segurança:** o primeiro administrador é consequência dessa operação controlada no servidor; não há campo público no cliente para autoconcessão de privilégios. Criar uma nova igreja não concede acesso a nenhuma igreja pré-existente.
-4. **Limite sistêmico:** a garantia de no máximo uma igreja administrada por conta Auth é validada no início da transação e assegurada por restrição/índice no banco.
+4. **Limite sistêmico:** a garantia de no máximo uma igreja administrada por conta Auth é validada no início da transação e assegurada pelo índice parcial único `church_access_single_active_admin_idx` no banco.
 
 ## 9. Verificações antes da liberação
 

@@ -3,8 +3,9 @@ import { useAuth } from '../context/AuthContext';
 import { supabase } from '../lib/supabaseClient';
 import MembersPage from './MembersPage';
 import CreateChurchModal from './CreateChurchModal';
-import { Church, PlusCircle, ShieldAlert, Loader2, AlertCircle, Mail, RefreshCw } from 'lucide-react';
+import { Church, PlusCircle, ShieldAlert, Loader2, AlertCircle, Mail, RefreshCw, Clock } from 'lucide-react';
 import { checkChurchCreationEligibility, loadPendingChurchCommand } from '../utils/churchCommandService';
+import { loadAccessRequestMarker, removeAccessRequestMarker } from '../utils/invitationCommandService';
 
 /**
  * ChurchHomePage — tela inicial para contas com vínculo confirmado.
@@ -27,7 +28,7 @@ import { checkChurchCreationEligibility, loadPendingChurchCommand } from '../uti
  * Acessibilidade: foco inicial no título, regiões semânticas, rótulos descritivos.
  */
 export default function ChurchHomePage() {
-  const { session, churchAccess, availableAccesses, selectChurch, signOut, refreshAccess, recordCreationConfirmation } = useAuth();
+  const { session, churchAccess, availableAccesses, selectChurch, signOut, refreshAccess, recordCreationConfirmation, reloadChurchAccess } = useAuth();
   const [currentView, setCurrentView] = useState('home');
   const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
 
@@ -37,6 +38,11 @@ export default function ChurchHomePage() {
 
   // Comando pendente de criação retido na sessão
   const [pendingCommand, setPendingCommand] = useState(null);
+
+  // Marcador de solicitação / proposta de nome para outra igreja (R5 / PRD)
+  const [accessRequestMarker, setAccessRequestMarker] = useState(null);
+  const [pendingRequestData, setPendingRequestData] = useState(null);
+  const [pendingRequestLoading, setPendingRequestLoading] = useState(false);
 
   // Campos provêm exclusivamente do retorno da função RPC autenticada.
   const displayName = churchAccess?.display_name ?? '';
@@ -50,6 +56,33 @@ export default function ChurchHomePage() {
       setPendingCommand(cmd);
     }
   }, [userId, isCreateModalOpen]);
+
+  useEffect(() => {
+    let isMounted = true;
+    if (typeof window !== 'undefined' && window.sessionStorage && userId) {
+      const marker = loadAccessRequestMarker(window.sessionStorage, userId);
+      setAccessRequestMarker(marker);
+
+      if (marker && marker.churchId && supabase) {
+        setPendingRequestLoading(true);
+        supabase.schema('public').rpc('get_my_access_request', {
+          p_church_id: marker.churchId,
+        }).then(({ data, error }) => {
+          if (!isMounted) return;
+          setPendingRequestLoading(false);
+          if (!error && Array.isArray(data) && data.length > 0) {
+            const row = data[0];
+            if (row && row.church_id === marker.churchId) {
+              setPendingRequestData(row);
+            }
+          }
+        }).catch(() => {
+          if (isMounted) setPendingRequestLoading(false);
+        });
+      }
+    }
+    return () => { isMounted = false; };
+  }, [userId]);
 
   useEffect(() => {
     let isMounted = true;
@@ -179,6 +212,176 @@ export default function ChurchHomePage() {
               <RefreshCw size={14} />
               Verificar resultado / Recuperar
             </button>
+          </div>
+        )}
+
+        {/* Card de Acompanhamento de Proposta/Solicitação de Nome em outra comunidade (R5 / PRD) */}
+        {(accessRequestMarker || pendingRequestData) && (
+          <div
+            className="church-home-request-card"
+            style={{
+              background: 'var(--bg-primary, #ffffff)',
+              border: '1.5px solid var(--primary, #2563eb)',
+              borderRadius: '12px',
+              padding: '16px',
+              margin: '12px 0 16px',
+              display: 'flex',
+              flexDirection: 'column',
+              gap: '10px',
+            }}
+            role="region"
+            aria-label="Acompanhamento de solicitação de acesso e proposta de nome"
+          >
+            <div style={{ display: 'flex', alignItems: 'flex-start', gap: '12px' }}>
+              <Clock size={20} color="var(--primary, #2563eb)" style={{ flexShrink: 0, marginTop: '2px' }} />
+              <div>
+                <strong style={{ fontSize: '0.9rem', color: 'var(--text-primary)' }}>
+                  Solicitação de Acesso / Proposta de Nome
+                </strong>
+                {(() => {
+                  const reqStatus = pendingRequestData?.status || accessRequestMarker?.status || 'pending';
+                  const isExp = reqStatus === 'expired' || pendingRequestData?.is_expired;
+                  const targetName = pendingRequestData?.church_name || accessRequestMarker?.churchName || 'outra igreja';
+
+                  if (reqStatus === 'approved') {
+                    return (
+                      <p style={{ margin: '4px 0 0', fontSize: '0.8rem', color: 'var(--text-secondary)', lineHeight: 1.4 }}>
+                        Sua proposta de nome foi aprovada pelos administradores para a comunidade <strong>{targetName}</strong>! Seu acesso foi liberado.
+                      </p>
+                    );
+                  }
+                  if (reqStatus === 'cancelled') {
+                    return (
+                      <p style={{ margin: '4px 0 0', fontSize: '0.8rem', color: 'var(--text-secondary)', lineHeight: 1.4 }}>
+                        A solicitação de acesso para a comunidade <strong>{targetName}</strong> foi cancelada, possivelmente devido à reemissão de um novo convite pelos administradores. Para ingressar, solicite um novo convite.
+                      </p>
+                    );
+                  }
+                  if (reqStatus === 'rejected') {
+                    return (
+                      <p style={{ margin: '4px 0 0', fontSize: '0.8rem', color: 'var(--text-secondary)', lineHeight: 1.4 }}>
+                        Sua proposta de alteração de nome para a comunidade <strong>{targetName}</strong> não foi aceita pelos administradores. O cadastro do membro permaneceu inalterado e nenhum acesso foi liberado. Para ingressar, solicite um novo convite.
+                      </p>
+                    );
+                  }
+                  if (isExp) {
+                    return (
+                      <p style={{ margin: '4px 0 0', fontSize: '0.8rem', color: 'var(--text-secondary)', lineHeight: 1.4 }}>
+                        O prazo para análise da solicitação de acesso na comunidade <strong>{targetName}</strong> expirou. Para ingressar, solicite um novo convite aos administradores.
+                      </p>
+                    );
+                  }
+                  return (
+                    <p style={{ margin: '4px 0 0', fontSize: '0.8rem', color: 'var(--text-secondary)', lineHeight: 1.4 }}>
+                      Você possui uma solicitação com proposta de alteração de nome pendente para a comunidade <strong>{targetName}</strong>.
+                    </p>
+                  );
+                })()}
+
+                <div style={{ marginTop: '6px', fontSize: '0.78rem', color: 'var(--text-secondary)' }}>
+                  <span>Nome proposto: <strong>{pendingRequestData?.proposed_display_name || accessRequestMarker?.proposedDisplayName}</strong></span>
+                  <span style={{ marginLeft: '12px' }}>
+                    {(() => {
+                      const reqStatus = pendingRequestData?.status || accessRequestMarker?.status || 'pending';
+                      const isExp = reqStatus === 'expired' || pendingRequestData?.is_expired;
+                      const statusLabel = reqStatus === 'approved' ? 'Aprovada' : reqStatus === 'rejected' ? 'Rejeitada' : reqStatus === 'cancelled' ? 'Cancelada' : isExp ? 'Expirada' : 'Pendente de aprovação';
+                      const statusColor = reqStatus === 'approved' ? '#059669' : (reqStatus === 'rejected' || reqStatus === 'cancelled' || isExp) ? '#dc2626' : '#d97706';
+                      return (
+                        <>
+                          Situação: <strong style={{ color: statusColor }}>{statusLabel}</strong>
+                        </>
+                      );
+                    })()}
+                  </span>
+                </div>
+              </div>
+            </div>
+
+            {(() => {
+              const reqStatus = pendingRequestData?.status || accessRequestMarker?.status || 'pending';
+              const isExp = reqStatus === 'expired' || pendingRequestData?.is_expired;
+
+              if (reqStatus === 'approved') {
+                return (
+                  <div style={{ display: 'flex', gap: '8px', marginTop: '4px' }}>
+                    <button
+                      type="button"
+                      className="btn btn-primary"
+                      onClick={async () => {
+                        const targetChurchId = pendingRequestData?.church_id || accessRequestMarker?.churchId;
+                        if (reloadChurchAccess && targetChurchId) {
+                          const res = await reloadChurchAccess(targetChurchId);
+                          if (res && res.success !== false) {
+                            if (typeof window !== 'undefined' && window.sessionStorage) {
+                              removeAccessRequestMarker(window.sessionStorage, userId);
+                            }
+                            setAccessRequestMarker(null);
+                            setPendingRequestData(null);
+                          }
+                        }
+                      }}
+                      id="btn-access-approved-church"
+                      style={{ fontSize: '0.82rem', padding: '6px 12px' }}
+                    >
+                      Acessar comunidade aprovada
+                    </button>
+                  </div>
+                );
+              }
+
+              if (reqStatus === 'rejected' || reqStatus === 'cancelled' || isExp) {
+                return (
+                  <div style={{ display: 'flex', gap: '8px', marginTop: '4px' }}>
+                    <button
+                      type="button"
+                      className="btn btn-secondary"
+                      onClick={() => {
+                        if (typeof window !== 'undefined' && window.sessionStorage) {
+                          removeAccessRequestMarker(window.sessionStorage, userId);
+                        }
+                        setAccessRequestMarker(null);
+                        setPendingRequestData(null);
+                      }}
+                      id="btn-dismiss-request-marker"
+                      style={{ fontSize: '0.82rem', padding: '6px 12px' }}
+                    >
+                      Dispensar aviso
+                    </button>
+                  </div>
+                );
+              }
+
+              return (
+                <div style={{ display: 'flex', gap: '8px', marginTop: '4px' }}>
+                  <button
+                    type="button"
+                    className="btn btn-secondary"
+                    disabled={pendingRequestLoading}
+                    onClick={async () => {
+                      if (!supabase || !accessRequestMarker?.churchId) return;
+                      setPendingRequestLoading(true);
+                      try {
+                        const { data, error } = await supabase.schema('public').rpc('get_my_access_request', {
+                          p_church_id: accessRequestMarker.churchId,
+                        });
+                        if (!error && Array.isArray(data) && data.length > 0) {
+                          const row = data[0];
+                          if (row && row.church_id === accessRequestMarker.churchId) {
+                            setPendingRequestData(row);
+                          }
+                        }
+                      } finally {
+                        setPendingRequestLoading(false);
+                      }
+                    }}
+                    id="btn-refresh-request-status"
+                    style={{ fontSize: '0.82rem', padding: '6px 12px' }}
+                  >
+                    {pendingRequestLoading ? 'Verificando…' : 'Verificar situação da proposta'}
+                  </button>
+                </div>
+              );
+            })()}
           </div>
         )}
 

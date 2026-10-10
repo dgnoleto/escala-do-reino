@@ -16,6 +16,7 @@ import CheckingAccessPage from './components/CheckingAccessPage';
 import AccessErrorPage from './components/AccessErrorPage';
 import ChurchHomePage from './components/ChurchHomePage';
 import SelectChurchPage from './components/SelectChurchPage';
+import InvitationFlowPage from './components/InvitationFlowPage';
 import { Info, Sparkles, CheckCircle2, ChevronDown, ChevronUp } from 'lucide-react';
 
 function AppContent() {
@@ -289,12 +290,38 @@ function AppContent() {
  * como tela de produção.
  */
 function AuthGate() {
-  const { authState } = useAuth();
+  const {
+    authState,
+    pendingInviteToken,
+    clearPendingInviteToken,
+    isPasswordRecovery,
+  } = useAuth();
+
+  // 1. Verificação inicial de sessão salva
+  if (authState === 'initializing') {
+    return <InitializingPage />;
+  }
+
+  // 2. Fluxo prioritário de recuperação/alteração de senha iniciado por link
+  if (isPasswordRecovery) {
+    return <LoginPage />;
+  }
+
+  // 3. Resgate de convite capturado da rota /#/invite?token=... ou retido em sessionStorage
+  // Acessível após inicialização da sessão mesmo sem churchAccess ou se já administra outra igreja
+  if (pendingInviteToken) {
+    if (authState === 'unauthenticated') {
+      return <LoginPage />;
+    }
+    return (
+      <InvitationFlowPage
+        token={pendingInviteToken}
+        onClearToken={clearPendingInviteToken}
+      />
+    );
+  }
 
   switch (authState) {
-    case 'initializing':
-      return <InitializingPage />;
-
     case 'unauthenticated':
       return <LoginPage />;
 
