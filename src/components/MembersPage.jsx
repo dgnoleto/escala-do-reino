@@ -12,8 +12,14 @@ import {
   RefreshCw,
   WifiOff,
   Shield,
-  X
+  X,
+  Send,
+  Mail,
+  FileText
 } from 'lucide-react';
+import IssueInvitationModal from './IssueInvitationModal';
+import AdminInvitationsTab from './AdminInvitationsTab';
+import AdminRequestsTab from './AdminRequestsTab';
 
 /**
  * MembersPage — tela de gestão de membros para administrador autorizado.
@@ -62,6 +68,8 @@ export default function MembersPage({ onBack }) {
   }
   const [page, setPage]               = useState(1);
   const pageSize                      = 10;
+  const [activeSection, setActiveSection] = useState('members'); // 'members' | 'invitations' | 'requests'
+  const [inviteMember, setInviteMember]   = useState(null);
 
 
   // Estado do formulário de criação
@@ -418,22 +426,65 @@ export default function MembersPage({ onBack }) {
             <h1 className="members-title">Gestão de Membros</h1>
           </div>
 
-          <button
-            id="btn-open-create-member"
-            type="button"
-            className="btn btn-primary btn-add-member"
-            onClick={() => {
-              setShowCreateModal(true);
-              setFormError(null);
-            }}
-            disabled={!isOnline || !!uncertainCommand}
-            aria-label="Cadastrar novo membro"
-            title={uncertainCommand ? "Reconcilie ou reexecute o comando pendente antes de cadastrar outro membro" : undefined}
-          >
-            <UserPlus size={16} />
-            <span>Cadastrar membro</span>
-          </button>
+          {activeSection === 'members' && (
+            <button
+              id="btn-open-create-member"
+              type="button"
+              className="btn btn-primary btn-add-member"
+              onClick={() => {
+                setShowCreateModal(true);
+                setFormError(null);
+              }}
+              disabled={!isOnline || !!uncertainCommand}
+              aria-label="Cadastrar novo membro"
+              title={uncertainCommand ? "Reconcilie ou reexecute o comando pendente antes de cadastrar outro membro" : undefined}
+            >
+              <UserPlus size={16} />
+              <span>Cadastrar membro</span>
+            </button>
+          )}
         </header>
+
+        <nav className="admin-subtabs-nav" aria-label="Abas de gestão administrativa" style={{ display: 'flex', gap: '8px', borderBottom: '1px solid var(--border-subtle)', paddingBottom: '10px', marginBottom: '8px', flexWrap: 'wrap' }}>
+          <button
+            type="button"
+            className={`btn btn-sm ${activeSection === 'members' ? 'btn-primary' : 'btn-secondary'}`}
+            onClick={() => setActiveSection('members')}
+            id="tab-btn-members"
+            style={{ borderRadius: '8px', display: 'inline-flex', alignItems: 'center', gap: '6px' }}
+          >
+            <Users size={14} /> <span>Membros</span>
+          </button>
+          <button
+            type="button"
+            className={`btn btn-sm ${activeSection === 'invitations' ? 'btn-primary' : 'btn-secondary'}`}
+            onClick={() => setActiveSection('invitations')}
+            id="tab-btn-invitations"
+            style={{ borderRadius: '8px', display: 'inline-flex', alignItems: 'center', gap: '6px' }}
+          >
+            <Mail size={14} /> <span>Convites de Acesso</span>
+          </button>
+          <button
+            type="button"
+            className={`btn btn-sm ${activeSection === 'requests' ? 'btn-primary' : 'btn-secondary'}`}
+            onClick={() => setActiveSection('requests')}
+            id="tab-btn-requests"
+            style={{ borderRadius: '8px', display: 'inline-flex', alignItems: 'center', gap: '6px' }}
+          >
+            <FileText size={14} /> <span>Solicitações de Nome</span>
+          </button>
+        </nav>
+
+        {activeSection === 'invitations' && (
+          <AdminInvitationsTab churchId={churchId} churchName={churchName} />
+        )}
+
+        {activeSection === 'requests' && (
+          <AdminRequestsTab churchId={churchId} onDecisionCompleted={() => loadMembers(page)} />
+        )}
+
+        {activeSection === 'members' && (
+          <>
 
         {/* Alertas de contexto (offline, sucesso, incerto) */}
         {!isOnline && (
@@ -671,14 +722,15 @@ export default function MembersPage({ onBack }) {
                 <thead>
                   <tr>
                     <th scope="col">Nome</th>
-                    <th scope="col" style={{ width: '130px' }}>Situação</th>
+                    <th scope="col" style={{ width: '110px' }}>Situação</th>
+                    <th scope="col" style={{ width: '120px' }}>Ações</th>
                   </tr>
                 </thead>
                 <tbody>
                   {members.map((m) => {
                     const isActive = m.status === 'active';
                     return (
-                      <tr key={m.member_id}>
+                      <tr key={m.id || m.member_id}>
                         <td>
                           <div className="member-name-cell">
                             <div className="member-avatar-initial" aria-hidden="true">
@@ -694,6 +746,20 @@ export default function MembersPage({ onBack }) {
                           >
                             {isActive ? 'Ativo' : 'Inativo'}
                           </span>
+                        </td>
+                        <td>
+                          {isActive && (
+                            <button
+                              type="button"
+                              className="btn btn-secondary btn-sm"
+                              onClick={() => setInviteMember(m)}
+                              id={`btn-invite-member-${m.member_id}`}
+                              title={`Emitir convite para ${m.display_name}`}
+                              style={{ fontSize: '0.75rem', padding: '3px 8px', display: 'inline-flex', alignItems: 'center', gap: '4px' }}
+                            >
+                              <Send size={12} /> Convidar
+                            </button>
+                          )}
                         </td>
                       </tr>
                     );
@@ -734,6 +800,21 @@ export default function MembersPage({ onBack }) {
             </nav>
           )}
         </section>
+          </>
+        )}
+
+        {inviteMember && (
+          <IssueInvitationModal
+            member={inviteMember}
+            churchId={churchId}
+            churchName={churchName}
+            isOpen={true}
+            onClose={() => setInviteMember(null)}
+            onSuccess={() => {
+              loadMembers(page);
+            }}
+          />
+        )}
 
       </div>
 

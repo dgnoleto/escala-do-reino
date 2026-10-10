@@ -10,9 +10,18 @@ import {
   ShieldAlert,
   Mail,
   WifiOff,
-  LogOut
+  LogOut,
+  Clock,
+  CheckCircle2,
+  XCircle,
+  ArrowRight
 } from 'lucide-react';
 import { checkChurchCreationEligibility, loadPendingChurchCommand } from '../utils/churchCommandService';
+import {
+  loadAccessRequestMarker,
+  removeAccessRequestMarker,
+  formatInvitationErrorMessage,
+} from '../utils/invitationCommandService';
 import CreateChurchModal from './CreateChurchModal';
 
 /**
@@ -29,12 +38,24 @@ import CreateChurchModal from './CreateChurchModal';
  * - Conclusão com sucesso redireciona com segurança para a igreja criada via refreshAccess.
  */
 export default function AccessPendingPage() {
-  const { session, signOut, refreshAccess, recordCreationConfirmation } = useAuth();
+  const {
+    session,
+    signOut,
+    refreshAccess,
+    reloadChurchAccess,
+    recordCreationConfirmation,
+  } = useAuth();
 
   const user = session?.user;
   const displayName = user?.user_metadata?.full_name || user?.user_metadata?.name || null;
   const displayEmail = user?.email || null;
   const avatarUrl = user?.user_metadata?.avatar_url || null;
+
+  // Estado de solicitação de acesso / proposta de nome vinculada à aba
+  const [requestMarker, setRequestMarker] = useState(null);
+  const [requestLoading, setRequestLoading] = useState(false);
+  const [requestData, setRequestData] = useState(null);
+  const [requestError, setRequestError] = useState(null);
 
   // Estado de elegibilidade para criação de igreja
   const [eligibilityState, setEligibilityState] = useState('checking'); // 'checking' | 'ready' | 'error'
@@ -94,6 +115,101 @@ export default function AccessPendingPage() {
   useEffect(() => {
     loadEligibility();
   }, [loadEligibility]);
+
+  // Monitora marcador de solicitação de acesso da aba
+  useEffect(() => {
+    if (typeof window !== 'undefined' && window.sessionStorage && user?.id) {
+      const marker = loadAccessRequestMarker(window.sessionStorage, user.id);
+      setRequestMarker(marker);
+    }
+  }, [user?.id]);
+
+  // Consulta a própria solicitação de acesso via get_my_access_request
+  const loadMyAccessRequest = useCallback(async (marker) => {
+    if (!supabase || !user || !marker?.churchId) return;
+    setRequestLoading(true);
+    setRequestError(null);
+
+    try {
+      const { data, error } = await supabase.schema('public').rpc('get_my_access_request', {
+        p_church_id: marker.churchId,
+      });
+
+      if (error) {
+        setRequestError(formatInvitationErrorMessage(error, 'invitee'));
+        setRequestLoading(false);
+        return;
+      }
+
+      const row = Array.isArray(data) && data.length > 0 ? data[0] : null;
+      if (!row) {
+        setRequestData(null);
+        if (typeof window !== 'undefined' && window.sessionStorage) {
+          removeAccessRequestMarker(window.sessionStorage, user?.id);
+        }
+        setRequestMarker(null);
+      } else {
+        // Reconciliação estrita com o marcador
+        if (row.church_id === marker.churchId && (!marker.requestId || row.request_id === marker.requestId)) {
+          setRequestData(row);
+        } else {
+          setRequestData(null);
+        }
+      }
+    } catch (err) {
+      setRequestError(formatInvitationErrorMessage(err, 'invitee'));
+    } finally {
+      setRequestLoading(false);
+    }
+  }, [user]);
+
+  useEffect(() => {
+    if (requestMarker) {
+      loadMyAccessRequest(requestMarker);
+    }
+  }, [requestMarker, loadMyAccessRequest]);
+
+  // Acessa a comunidade após aprovação confirmada pelo servidor
+  async function handleAccessApprovedChurch() {
+    const targetChurchId = requestData?.church_id || requestMarker?.churchId;
+    if (reloadChurchAccess && targetChurchId) {
+      const res = await reloadChurchAccess(targetChurchId);
+      // Remove o marcador apenas após revalidação concluída com sucesso
+      if (res && res.success !== false) {
+        if (typeof window !== 'undefined' && window.sessionStorage) {
+          removeAccessRequestMarker(window.sessionStorage, user?.id);
+        }
+        setRequestMarker(null);
+        setRequestData(null);
+      }
+    }
+  }
+
+  // Descarta o aviso terminal (rejeitada, cancelada ou expirada)
+  function handleDismissRequestNotice() {
+    if (typeof window !== 'undefined' && window.sessionStorage) {
+      removeAccessRequestMarker(window.sessionStorage, user?.id);
+    }
+    setRequestMarker(null);
+    setRequestData(null);
+    setRequestError(null);
+  }
+
+  function formatExpiresAt(iso) {
+    if (!iso) return '';
+    try {
+      const d = new Date(iso);
+      return d.toLocaleString('pt-BR', {
+        day: '2-digit',
+        month: '2-digit',
+        year: 'numeric',
+        hour: '2-digit',
+        minute: '2-digit',
+      });
+    } catch {
+      return iso;
+    }
+  }
 
   // Transição segura para a igreja criada
   async function handleChurchCreated(createdChurch) {
@@ -172,6 +288,142 @@ export default function AccessPendingPage() {
             )}
           </div>
         </div>
+
+        {/* Bloco de Acompanhamento de Solicitação de Acesso / Proposta de Nome */}
+        {requestMarker && (
+          <div className="pending-request-section" style={{ width: '100%', marginBottom: '20px' }}>
+            {requestLoading ? (
+              <div className="status-notice status-notice--loading" role="status">
+                <Loader2 size={16} className="status-notice-icon spin" />
+                <span>Verificando situação da sua solicitação de acesso...</span>
+              </div>
+            ) : requestError ? (
+              <div className="status-notice status-notice--error" role="alert">
+                <AlertCircle size={16} className="status-notice-icon" />
+                <div className="status-notice-text">
+                  <span>{requestError}</span>
+                  <button
+                    type="button"
+                    className="btn btn-secondary btn-sm retry-btn"
+                    onClick={() => loadMyAccessRequest(requestMarker)}
+                    id="btn-retry-my-request"
+                  >
+                    <RefreshCw size={12} />
+                    Tentar novamente
+                  </button>
+                </div>
+              </div>
+            ) : requestData?.status === 'approved' ? (
+              <div className="create-church-card" style={{ borderColor: 'var(--primary)', background: 'var(--primary-surface)' }}>
+                <div className="create-church-header">
+                  <div className="create-church-icon" style={{ background: '#ecfdf5', borderColor: '#a7f3d0', color: '#059669' }}>
+                    <CheckCircle2 size={20} />
+                  </div>
+                  <div className="create-church-info">
+                    <span className="create-church-title">Solicitação Aprovada!</span>
+                    <span className="create-church-desc">
+                      Sua proposta para o nome <strong>"{requestData.proposed_display_name}"</strong> foi aprovada na comunidade <strong>{requestData.church_name}</strong>.
+                    </span>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  className="btn btn-primary create-church-btn"
+                  onClick={handleAccessApprovedChurch}
+                  id="btn-access-approved-church"
+                >
+                  <ArrowRight size={16} />
+                  Acessar a Comunidade
+                </button>
+              </div>
+            ) : requestData && (requestData.status === 'expired' || requestData.is_expired) ? (
+              <div className="status-notice status-notice--warning" role="note">
+                <Clock size={18} className="status-notice-icon" />
+                <div className="status-notice-text">
+                  <strong>Solicitação Expirada</strong>
+                  <p>
+                    O prazo para análise da proposta de nome na comunidade <strong>{requestData.church_name}</strong> expirou.
+                    Para ingressar na comunidade, solicite um novo convite aos administradores.
+                  </p>
+                  <button
+                    type="button"
+                    className="btn btn-secondary btn-sm"
+                    onClick={handleDismissRequestNotice}
+                    id="btn-dismiss-request-expired"
+                    style={{ marginTop: '6px', alignSelf: 'flex-start' }}
+                  >
+                    Entendido
+                  </button>
+                </div>
+              </div>
+            ) : requestData?.status === 'rejected' ? (
+              <div className="status-notice status-notice--error" role="note">
+                <XCircle size={18} className="status-notice-icon" />
+                <div className="status-notice-text">
+                  <strong>Solicitação Rejeitada</strong>
+                  <p>
+                    Sua proposta de nome para a comunidade <strong>{requestData.church_name}</strong> não foi aceita pelos administradores.
+                    Para obter acesso, será necessário solicitar um novo convite.
+                  </p>
+                  <button
+                    type="button"
+                    className="btn btn-secondary btn-sm"
+                    onClick={handleDismissRequestNotice}
+                    id="btn-dismiss-request-rejected"
+                    style={{ marginTop: '6px', alignSelf: 'flex-start' }}
+                  >
+                    Entendido
+                  </button>
+                </div>
+              </div>
+            ) : requestData?.status === 'cancelled' ? (
+              <div className="status-notice status-notice--warning" role="note">
+                <AlertCircle size={18} className="status-notice-icon" />
+                <div className="status-notice-text">
+                  <strong>Solicitação Cancelada</strong>
+                  <p>
+                    A solicitação na comunidade <strong>{requestData.church_name}</strong> foi cancelada, possivelmente devido à reemissão de um novo convite.
+                  </p>
+                  <button
+                    type="button"
+                    className="btn btn-secondary btn-sm"
+                    onClick={handleDismissRequestNotice}
+                    id="btn-dismiss-request-cancelled"
+                    style={{ marginTop: '6px', alignSelf: 'flex-start' }}
+                  >
+                    Entendido
+                  </button>
+                </div>
+              </div>
+            ) : requestData?.status === 'pending' ? (
+              <div className="create-church-card">
+                <div className="create-church-header">
+                  <div className="create-church-icon" style={{ color: 'var(--primary)' }}>
+                    <Clock size={20} />
+                  </div>
+                  <div className="create-church-info">
+                    <span className="create-church-title">Solicitação de Nome em Análise</span>
+                    <span className="create-church-desc">
+                      Proposta de <strong>"{requestData.proposed_display_name}"</strong> (original: "{requestData.original_display_name}") na comunidade <strong>{requestData.church_name}</strong>.
+                    </span>
+                    <span style={{ fontSize: '11px', color: 'var(--text-muted)', marginTop: '4px' }}>
+                      Prazo de análise: {formatExpiresAt(requestData.expires_at)}
+                    </span>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  className="btn btn-secondary create-church-btn"
+                  onClick={() => loadMyAccessRequest(requestMarker)}
+                  id="btn-refresh-my-request"
+                >
+                  <RefreshCw size={14} />
+                  Atualizar situação
+                </button>
+              </div>
+            ) : null}
+          </div>
+        )}
 
         {/* Seção Criar Minha Igreja / Elegibilidade */}
         <div className="pending-create-section">

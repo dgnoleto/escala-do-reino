@@ -1,0 +1,283 @@
+{
+  "audit_actions": {
+    "revoke_access_invitation": "Revogação de convite anterior aberto durante reemissão",
+    "cancel_access_request": "Cancelamento de proposta de nome pendente dentro do prazo durante reemissão",
+    "expire_access_request": "Expiração de solicitação pendente cujo prazo de 72h transcorreu (na reemissão ou na decisão)",
+    "issue_access_invitation": "Emissão de novo convite de acesso (ou reemissão)",
+    "redeem_invitation_confirm_name": "Resgate de convite com confirmação do nome cadastrado",
+    "redeem_invitation_propose_name": "Resgate de convite com proposta de outro nome (criação de access_requests)",
+    "approve_access_request": "Aprovação administrativa de solicitação de acesso",
+    "reject_access_request": "Rejeição administrativa de solicitação de acesso"
+  },
+  "receipt_actions": {
+    "issue_invitation": "Recibo de emissão ou reemissão de convite",
+    "redeem_confirm_name": "Recibo de resgate com confirmação de nome",
+    "redeem_propose_name": "Recibo de resgate com proposta de nome",
+    "decide_access_request": "Recibo de decisão de solicitação (approve, reject ou expired)"
+  },
+  "injection_constants": {
+    "c_audit_issue": "issue_access_invitation",
+    "c_audit_revoke": "revoke_access_invitation",
+    "c_audit_cancel": "cancel_access_request",
+    "c_audit_expire": "expire_access_request",
+    "c_audit_redeem_confirm": "redeem_invitation_confirm_name",
+    "c_audit_redeem_propose": "redeem_invitation_propose_name",
+    "c_audit_approve": "approve_access_request",
+    "c_audit_reject": "reject_access_request",
+    "c_receipt_issue": "issue_invitation",
+    "c_receipt_redeem_confirm": "redeem_confirm_name",
+    "c_receipt_redeem_propose": "redeem_propose_name",
+    "c_receipt_decide": "decide_access_request"
+  },
+  "rpcs": [
+    {
+      "name": "issue_church_invitation",
+      "signature": "issue_church_invitation(uuid, uuid, uuid, text)",
+      "parameters": [
+        { "name": "p_command_id", "type": "uuid" },
+        { "name": "p_church_id", "type": "uuid" },
+        { "name": "p_member_id", "type": "uuid" },
+        { "name": "p_recipient_email", "type": "text" }
+      ],
+      "returns": "table ( invitation_id uuid, church_id uuid, member_id uuid, recipient_email text, raw_token text, expires_at timestamptz, issued_at timestamptz, previous_invitation_revoked boolean, previous_request_cancelled boolean )",
+      "audit_actions": [
+        "revoke_access_invitation",
+        "cancel_access_request",
+        "expire_access_request",
+        "issue_access_invitation"
+      ],
+      "receipt_actions": [
+        "issue_invitation"
+      ]
+    },
+    {
+      "name": "get_invitation_details",
+      "signature": "get_invitation_details(text)",
+      "parameters": [
+        { "name": "p_raw_token", "type": "text" }
+      ],
+      "returns": "table ( invitation_id uuid, church_id uuid, church_name text, member_id uuid, member_display_name text, expires_at timestamptz, is_valid boolean )",
+      "audit_actions": [],
+      "receipt_actions": []
+    },
+    {
+      "name": "redeem_invitation_confirm_name",
+      "signature": "redeem_invitation_confirm_name(uuid, text, text)",
+      "parameters": [
+        { "name": "p_command_id", "type": "uuid" },
+        { "name": "p_raw_token", "type": "text" },
+        { "name": "p_expected_display_name", "type": "text" }
+      ],
+      "returns": "table ( church_id uuid, church_name text, member_id uuid, display_name text, access_granted boolean, onboarding_completed_at timestamptz )",
+      "audit_actions": [
+        "redeem_invitation_confirm_name"
+      ],
+      "receipt_actions": [
+        "redeem_confirm_name"
+      ]
+    },
+    {
+      "name": "redeem_invitation_propose_name",
+      "signature": "redeem_invitation_propose_name(uuid, text, text)",
+      "parameters": [
+        { "name": "p_command_id", "type": "uuid" },
+        { "name": "p_raw_token", "type": "text" },
+        { "name": "p_proposed_display_name", "type": "text" }
+      ],
+      "returns": "table ( request_id uuid, church_id uuid, member_id uuid, original_display_name text, proposed_display_name text, status text, expires_at timestamptz, submitted_at timestamptz )",
+      "audit_actions": [
+        "redeem_invitation_propose_name"
+      ],
+      "receipt_actions": [
+        "redeem_propose_name"
+      ]
+    },
+    {
+      "name": "get_my_access_request",
+      "signature": "get_my_access_request(uuid)",
+      "parameters": [
+        { "name": "p_church_id", "type": "uuid" }
+      ],
+      "returns": "table ( request_id uuid, church_id uuid, church_name text, member_id uuid, original_display_name text, proposed_display_name text, status text, expires_at timestamptz, submitted_at timestamptz, decided_at timestamptz, is_expired boolean )",
+      "audit_actions": [],
+      "receipt_actions": []
+    },
+    {
+      "name": "list_church_invitations",
+      "signature": "list_church_invitations(uuid, text, integer, integer)",
+      "parameters": [
+        { "name": "p_church_id", "type": "uuid" },
+        { "name": "p_status_filter", "type": "text" },
+        { "name": "p_limit", "type": "integer" },
+        { "name": "p_offset", "type": "integer" }
+      ],
+      "returns": "table ( invitation_id uuid, member_id uuid, member_display_name text, recipient_email text, issued_at timestamptz, expires_at timestamptz, status text, redeemed_at timestamptz, revoked_at timestamptz, total_count bigint )",
+      "audit_actions": [],
+      "receipt_actions": []
+    },
+    {
+      "name": "list_church_access_requests",
+      "signature": "list_church_access_requests(uuid, text, integer, integer)",
+      "parameters": [
+        { "name": "p_church_id", "type": "uuid" },
+        { "name": "p_status_filter", "type": "text" },
+        { "name": "p_limit", "type": "integer" },
+        { "name": "p_offset", "type": "integer" }
+      ],
+      "returns": "table ( request_id uuid, member_id uuid, current_display_name text, original_display_name text, proposed_display_name text, requester_email text, submitted_at timestamptz, expires_at timestamptz, status text, decided_at timestamptz, decided_by_name text, total_count bigint )",
+      "audit_actions": [],
+      "receipt_actions": []
+    },
+    {
+      "name": "decide_access_request",
+      "signature": "decide_access_request(uuid, uuid, uuid, text)",
+      "parameters": [
+        { "name": "p_command_id", "type": "uuid" },
+        { "name": "p_church_id", "type": "uuid" },
+        { "name": "p_request_id", "type": "uuid" },
+        { "name": "p_decision", "type": "text" }
+      ],
+      "returns": "table ( request_id uuid, member_id uuid, final_display_name text, decision text, access_granted boolean, decided_at timestamptz, error_code text )",
+      "audit_actions": [
+        "expire_access_request",
+        "approve_access_request",
+        "reject_access_request"
+      ],
+      "receipt_actions": [
+        "decide_access_request"
+      ]
+    },
+    {
+      "name": "get_invitation_command_receipt",
+      "signature": "get_invitation_command_receipt(uuid)",
+      "parameters": [
+        { "name": "p_command_id", "type": "uuid" }
+      ],
+      "returns": "table ( command_id uuid, action text, church_id uuid, result_member_id uuid, result_entity_id uuid, result_payload jsonb, created_at timestamptz, link_unrecoverable boolean )",
+      "audit_actions": [],
+      "receipt_actions": []
+    }
+  ],
+  "baseline_hashes": {
+    "000_preflight.sql": "6a3d24379189786a9748db3909f31e940ad04ef69ee5ecb2f10bf451e73098f1",
+    "001_initial_access_structure.sql": "4e4c9440b3761810d41c157a53576e158ee444d5eaf2658ac6c6009231688c10",
+    "001_validate_initial_structure.sql": "09aca183a668e5d028e9a83a87d4d17599aa3ae671ec57400bd1ee51961ce795",
+    "002_verify_initial_structure.sql": "639e720427291400fdc6bb7de95db87db3f2708f0c0a7cf53d6e562326ab092e",
+    "003_access_requests_and_audit.sql": "e4e12141e6433f2903e9640de995752db83a7b48b4e1637d538b923d1d76fcc4",
+    "003_preflight_access_requests.sql": "10f44d0ece0d30ba80e82f17a82461b3f7fae750f7057c4612b3e819f9c02904",
+    "003_validate_access_requests_and_audit.sql": "4a2726075f366adc5297cfe821ee5549a07e3505a39c339f9c72031ef52deae3",
+    "004_verify_access_requests_and_audit.sql": "53ce0e566e86cade30b37629e3866af4b693e299524569b46dd18668bda1c548",
+    "005_get_my_church_access.sql": "ff1a7372ad161151750a425d169e455289c88b0402adcfc23393cd3355a7aa08",
+    "005_validate_get_my_church_access.sql": "ea366c12ccbb0ffd47655393a996e862223e81935a79f66b6858c177313f6684",
+    "006_verify_get_my_church_access.sql": "d0a956f77495f9605a9caec37a10e4af7c1841222048c0872366d082eead14f2",
+    "007_member_management.sql": "af3887db513400f9cb8d5aaa853cc10ed2ee4d94032ad55d7becc3c01452a758",
+    "007_preflight_member_management.sql": "e22500bba0511e7724e4726845f6c3e3ded851913867b287c0bd6ce38f7172d6",
+    "007_validate_member_management.sql": "d893ef611431a195cc9c7a4e6525860667ad1fb3e6f8d3bdda43e4adb9231ea9",
+    "008_verify_member_management.sql": "3a00991224b8315d71f55e80daba9ba79fcf5ef8018eb6ef33e894c9d2947742",
+    "009_create_my_church.sql": "e3c79b2395d0bf86dbe0b57d6ad7bce41a24f30504192337eda28dcc920b558a",
+    "009_preflight_create_my_church.sql": "0ecefe64a27953223de8ebccfabc0705c43779e1601d3beb91ad4020c659343d",
+    "009_validate_create_my_church.sql": "68449691e7ee5cb7fc7e918383327fc22cdc01682f33ceae79654b7642e43153",
+    "010_verify_create_my_church.sql": "030821361f1805350799664a1f3e5065d7e3b0ab6c6dffa9ae1e270f1e6e6f1d"
+  },
+  "known_schemas": {
+    "auth.users": [
+      "id",
+      "email",
+      "email_confirmed_at",
+      "deleted_at",
+      "banned_until",
+      "is_anonymous",
+      "created_at",
+      "updated_at"
+    ],
+    "app_private.churches": [
+      "id",
+      "name",
+      "timezone",
+      "address",
+      "google_maps_url",
+      "default_duration_policy",
+      "status",
+      "created_at",
+      "updated_at"
+    ],
+    "app_private.members": [
+      "id",
+      "church_id",
+      "display_name",
+      "status",
+      "created_by_user_id",
+      "created_at",
+      "updated_at"
+    ],
+    "app_private.church_access": [
+      "id",
+      "church_id",
+      "user_id",
+      "member_id",
+      "status",
+      "is_admin",
+      "onboarding_completed_at",
+      "granted_by_user_id",
+      "granted_at",
+      "revoked_by_user_id",
+      "revoked_at",
+      "created_at",
+      "updated_at"
+    ],
+    "app_private.access_invitations": [
+      "id",
+      "church_id",
+      "member_id",
+      "recipient_email",
+      "token_digest",
+      "issued_by_user_id",
+      "issued_at",
+      "expires_at",
+      "redeemed_by_user_id",
+      "redeemed_at",
+      "revoked_by_user_id",
+      "revoked_at"
+    ],
+    "app_private.access_requests": [
+      "id",
+      "church_id",
+      "member_id",
+      "invitation_id",
+      "requester_user_id",
+      "original_display_name",
+      "proposed_display_name",
+      "submitted_at",
+      "expires_at",
+      "status",
+      "decided_by_user_id",
+      "decided_at",
+      "created_at",
+      "updated_at"
+    ],
+    "app_private.audit_entries": [
+      "id",
+      "church_id",
+      "action",
+      "actor_user_id",
+      "actor_source",
+      "maintenance_operator",
+      "target_type",
+      "target_id",
+      "details",
+      "occurred_at"
+    ],
+    "app_private.command_receipts": [
+      "id",
+      "church_id",
+      "user_id",
+      "command_id",
+      "action",
+      "params_hash",
+      "result_member_id",
+      "result_entity_id",
+      "result_payload",
+      "created_at"
+    ]
+  }
+}

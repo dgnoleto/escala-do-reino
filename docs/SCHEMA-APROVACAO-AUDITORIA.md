@@ -10,16 +10,18 @@ Versão 3 · 3 de outubro de 2026
 - Um convite pendente por membro; emissão de outro cancela o anterior.
 - Nome diferente aguarda aprovação do admin antes de alterar cadastro ou conceder acesso.
 - Proposta e aprovação antes do vencimento original de 72 horas; sem prorrogação.
-- **Auditoria de criação de igreja e administração:** no piloto (Ministério Shalom), a igreja e o primeiro admin foram inicializados por operador de manutenção (`actor_source = 'maintenance'`). No novo fluxo aprovado de produto ("Criar minha igreja", que aguarda implementação no servidor e banco), a criação atômica da igreja, membro do criador e vínculo administrativo (`is_admin = true`) registrará auditoria com `actor_source = 'application'`.
-- **Auditoria de governança e continuidade:** a transferência de administração exige assunção prévia de sucessor elegível (respeitando o limite de 1 igreja administrada por conta Auth); tentativas de desativar ou revogar o último admin ativo são bloqueadas.
+- **Auditoria de criação de igreja e administração:** no piloto (Ministério Shalom), a igreja e o primeiro admin foram inicializados por operador de manutenção (`actor_source = 'maintenance'`). No fluxo aprovado de produto ("Criar minha igreja", implementado no banco pelo incremento 009 e integrado na web pelo PR #7 na `main`), a criação atômica da igreja, membro do criador e vínculo administrativo (`is_admin = true`) registra auditoria com `actor_source = 'application'`.
+- **Auditoria de governança e continuidade:** a transferência de administração exige assunção prévia de sucessor elegível (respeitando o limite de 1 igreja administrada por conta Auth); tentativas de desativar ou revogar o último admin ativo são bloqueadas (garantias instaladas no incremento 009).
 - **Auditoria de exclusão lógica e recuperação:** remoção lógica de membros e sua restauração exigem registro transacional em `audit_entries`. Restaurar membro não restaura acessos revogados.
-- **Aviso sobre implementação:** os novos fluxos de criação de igreja, limite de 1 administração ativa por conta, continuidade administrativa, convites com e-mail, seleção de contexto e exclusão lógica aguardam implementação; suas garantias no servidor e banco de dados também constituem trabalho futuro.
+- **Aviso sobre implementação:** criação de igreja, limite de 1 administração ativa por conta e continuidade administrativa foram implementadas no banco pelo incremento 009 e integradas na interface pelo PR #7 na `main`. A seleção explícita de contexto também já foi introduzida na web (`SelectChurchPage`). Os fluxos de convites com e-mail, resgate transacional, aprovação de nome e exclusão lógica aguardam implementação em seus respectivos incrementos.
 
 Este incremento criou somente estrutura fechada, índices e restrições. Não implementa emissão/resgate, aprovação, criação de igreja ou endpoints de recuperação. Alterações de nome, acesso e auditoria só serão liberadas por comandos transacionais autorizados.
 
 ## 2. Alterações em `access_invitations`
 
-Índice único `(church_id, member_id)` para linhas com `redeemed_at is null and revoked_at is null`. Não depende do relógio; uma linha vencida ainda ocupa a posição e precisa ser finalizada pela transação de reemissão. O histórico preserva o vencimento original e o motivo da substituição na auditoria.
+Índice único `(church_id, member_id)` para linhas com `redeemed_at is null and revoked_at is null`. Não depende do relógio; uma linha vencida ainda ocupa a posição e precisa ser finalizada transacionalmente (marcando `revoked_at = clock_timestamp()`) pela transação de reemissão para liberar o índice. O histórico preserva o vencimento original e o motivo da substituição na auditoria.
+
+**Atenção à restrição física `access_invitations_terminal_state`:** o schema proíbe estritamente `redeemed_at is not null and revoked_at is not null`. Ao reemitir um convite durante a análise de um nome proposto (quando o convite anterior já foi consumido e gerou uma linha em `access_requests`), a transação deve cancelar a solicitação (`access_requests.status = 'cancelled'`), mas NÃO pode revogar a linha do convite consumido (mantendo `revoked_at is null`), inserindo em seguida o novo convite.
 
 Unicidade auxiliar em `(church_id, member_id, id, redeemed_by_user_id, expires_at)` permite que a solicitação referencie o convite já consumido pela mesma conta e seu prazo original. Uma FK com `invitation_id` sozinho não comprova igreja/membro/conta. Convite consumido não significa acesso concedido.
 
@@ -49,7 +51,10 @@ Pendente não tem decisão registrada. Aprovado/rejeitado/cancelado exige deciso
 
 `approved` exige `decided_at < expires_at`. Essa restrição não substitui a validação do horário atual após bloqueios: um comando privilegiado poderia gravar um instante antigo. Autoria/instantes vêm do servidor; não aceitar datas do formulário como prova de aprovação válida.
 
-Rejeição, retirada/cancelamento e efeito de nova emissão sobre solicitações abertas são estados reservados, sem comandos liberados nesta etapa. Não acrescentar uma unicidade de solicitação pendente que impeça nova tentativa após expiração sem definir o procedimento correspondente.
+Decisões de produto confirmadas para o incremento de convites:
+1. Reemissão de convite durante análise cancela a solicitação antiga de outro nome (`status = 'cancelled'`), preservando o histórico da solicitação e o convite consumido original, emitindo um novo convite.
+2. Rejeição pelo administrador encerra a tentativa (`status = 'rejected'`); nova entrada exige que o admin emita um novo convite.
+3. No primeiro incremento, o administrador copia e compartilha o link do convite manualmente (sem envio automático por e-mail nesta etapa). Retirada pelo solicitante, revogação/reativação de acesso e associação de identidades permanecem como decisões e fluxos separados. Não acrescentar uma unicidade de solicitação pendente que impeça nova tentativa após expiração sem definir o procedimento correspondente.
 
 ## 4. `app_private.audit_entries`
 

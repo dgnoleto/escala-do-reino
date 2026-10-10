@@ -1,5 +1,6 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useAuth } from '../context/AuthContext';
+import { Mail, Lock, KeyRound, AlertCircle, CheckCircle2, ArrowLeft, RefreshCw } from 'lucide-react';
 
 /* ────────────────────────────────────────────────────────────
    Ícone do Google (SVG oficial sem dependência externa)
@@ -57,32 +58,121 @@ function Spinner() {
 }
 
 /* ────────────────────────────────────────────────────────────
-   Tela de Login principal
+   Tela de Login principal com suporte a Google e E-mail/Senha
 ──────────────────────────────────────────────────────────── */
 export default function LoginPage() {
-  const { signInWithGoogle, authError, setAuthError, isConfigured } = useAuth();
+  const {
+    signInWithGoogle,
+    signInWithPassword,
+    signUpWithPassword,
+    resetPasswordForEmail,
+    updateUserPassword,
+    authError,
+    setAuthError,
+    isConfigured,
+    pendingInviteToken,
+    isPasswordRecovery,
+  } = useAuth();
+
+  // Modos de formulário: 'login' | 'register' | 'forgot_password' | 'update_password'
+  const [mode, setMode] = useState(isPasswordRecovery ? 'update_password' : 'login');
+
+  useEffect(() => {
+    if (isPasswordRecovery) {
+      setMode('update_password');
+    }
+  }, [isPasswordRecovery]);
+
+  // Formulário em memória (senhas nunca são persistidas em storage)
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
   const [loading, setLoading] = useState(false);
+  const [infoMessage, setInfoMessage] = useState(null);
+
+  const missingConfig = !isConfigured;
 
   async function handleGoogleLogin() {
-    if (loading) return; // evita cliques duplos
+    if (loading) return;
     setLoading(true);
     setAuthError(null);
+    setInfoMessage(null);
 
     const { error } = await signInWithGoogle();
-
-    // Se retornou erro imediato (ex.: configuração ausente), para o loading.
-    // Se não houve erro, o navegador redireciona; loading fica ativo até sair da página.
     if (error) {
       setLoading(false);
     }
-    // Caso de cancelamento: o usuário fecha o popup do Google sem concluir.
-    // O Supabase OAuth via redirect não abre popup — redireciona a aba.
-    // Se o usuário voltar sem completar, onAuthStateChange não dispara sessão
-    // e o estado retorna a 'unauthenticated'; loading será resetado
-    // indiretamente porque o componente remonta. Isso é suficiente.
   }
 
-  const missingConfig = !isConfigured;
+  async function handleEmailPasswordSubmit(e) {
+    e.preventDefault();
+    if (loading || missingConfig) return;
+
+    setLoading(true);
+    setAuthError(null);
+    setInfoMessage(null);
+
+    try {
+      if (mode === 'login') {
+        const { error } = await signInWithPassword(email, password);
+        if (error) {
+          setAuthError(error.message || 'Falha ao autenticar com e-mail e senha.');
+        }
+      } else if (mode === 'register') {
+        if (password !== confirmPassword) {
+          setAuthError('As senhas informadas não coincidem.');
+          setLoading(false);
+          return;
+        }
+        if (password.length < 6) {
+          setAuthError('A senha deve ter pelo menos 6 caracteres.');
+          setLoading(false);
+          return;
+        }
+
+        const { data, error } = await signUpWithPassword(email, password);
+        if (error) {
+          setAuthError(error.message || 'Não foi possível concluir o cadastro.');
+        } else {
+          // Se session for nula, significa que a confirmação de e-mail é exigida pelo Auth
+          if (!data?.session) {
+            setInfoMessage('Cadastro realizado! Enviamos um e-mail de confirmação. Por favor, confirme seu e-mail antes de acessar.');
+            setPassword('');
+            setConfirmPassword('');
+          }
+        }
+      } else if (mode === 'forgot_password') {
+        const { error } = await resetPasswordForEmail(email);
+        if (error) {
+          setAuthError(error.message || 'Não foi possível solicitar a recuperação.');
+        } else {
+          setInfoMessage('Se houver uma conta registrada com este e-mail, enviamos as instruções de recuperação de senha.');
+        }
+      } else if (mode === 'update_password') {
+        if (password !== confirmPassword) {
+          setAuthError('As senhas informadas não coincidem.');
+          setLoading(false);
+          return;
+        }
+        if (password.length < 6) {
+          setAuthError('A nova senha deve ter pelo menos 6 caracteres.');
+          setLoading(false);
+          return;
+        }
+
+        const { error } = await updateUserPassword(password);
+        if (error) {
+          setAuthError(error.message || 'Falha ao atualizar a senha.');
+        } else {
+          setInfoMessage('Senha atualizada com sucesso! Acessando sua conta…');
+          setPassword('');
+          setConfirmPassword('');
+        }
+      }
+    } finally {
+      setLoading(false);
+    }
+  }
 
   return (
     <div className="login-page" role="main">
@@ -98,19 +188,18 @@ export default function LoginPage() {
         </div>
 
         <h1 className="login-title">Escala do Reino</h1>
-        <p className="login-subtitle">Ministério Shalom</p>
-        <p className="login-description">
-          Organize eventos, equipes e escalas da sua igreja.
-        </p>
+        <p className="login-subtitle">Acesso e Identidade</p>
+
+        {pendingInviteToken && (
+          <div className="login-invite-badge" role="status">
+            <span>Você possui um convite em andamento. Conecte-se com o e-mail convidado.</span>
+          </div>
+        )}
 
         {/* Aviso de configuração ausente */}
         {missingConfig && (
           <div className="login-alert login-alert--warning" role="alert" aria-live="polite">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-              <path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z" />
-              <line x1="12" y1="9" x2="12" y2="13" />
-              <line x1="12" y1="17" x2="12.01" y2="17" />
-            </svg>
+            <AlertCircle size={16} />
             <span>
               Configuração do Supabase ausente. Defina{' '}
               <code>VITE_SUPABASE_URL</code> e{' '}
@@ -120,34 +209,241 @@ export default function LoginPage() {
           </div>
         )}
 
-        {/* Erro de autenticação */}
-        {authError && !missingConfig && (
-          <div className="login-alert login-alert--error" role="alert" aria-live="assertive">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-              <circle cx="12" cy="12" r="10" />
-              <line x1="15" y1="9" x2="9" y2="15" />
-              <line x1="9" y1="9" x2="15" y2="15" />
-            </svg>
-            <span>Não foi possível entrar. Tente novamente.</span>
+        {/* Mensagens de Sucesso / Informativas */}
+        {infoMessage && (
+          <div className="login-alert login-alert--success" role="status" aria-live="polite">
+            <CheckCircle2 size={16} />
+            <span>{infoMessage}</span>
           </div>
         )}
 
-        {/* Botão principal */}
-        <button
-          id="btn-google-login"
-          className="login-btn-google"
-          onClick={handleGoogleLogin}
-          disabled={loading || missingConfig}
-          aria-busy={loading}
-          aria-label={loading ? 'Entrando com o Google…' : 'Entrar com Google'}
-          type="button"
-        >
-          {loading ? <Spinner /> : <GoogleIcon />}
-          <span>{loading ? 'Redirecionando…' : 'Entrar com Google'}</span>
-        </button>
+        {/* Erro de autenticação */}
+        {authError && !missingConfig && (
+          <div className="login-alert login-alert--error" role="alert" aria-live="assertive">
+            <AlertCircle size={16} />
+            <span>{authError}</span>
+          </div>
+        )}
+
+        {/* 1. MODO: ATUALIZAR SENHA (Callback de Recuperação) */}
+        {mode === 'update_password' ? (
+          <form onSubmit={handleEmailPasswordSubmit} className="login-email-form">
+            <h2 className="login-form-heading">Definir Nova Senha</h2>
+            <p className="login-form-subheading">Digite a nova senha para sua conta.</p>
+
+            <div className="form-group">
+              <label htmlFor="login-new-password" className="form-label">Nova senha:</label>
+              <input
+                id="login-new-password"
+                type="password"
+                className="form-input"
+                placeholder="Mínimo 6 caracteres"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                disabled={loading || missingConfig}
+                autoFocus
+                required
+              />
+            </div>
+
+            <div className="form-group">
+              <label htmlFor="login-confirm-new-password" className="form-label">Confirmar nova senha:</label>
+              <input
+                id="login-confirm-new-password"
+                type="password"
+                className="form-input"
+                placeholder="Repita a nova senha"
+                value={confirmPassword}
+                onChange={(e) => setConfirmPassword(e.target.value)}
+                disabled={loading || missingConfig}
+                required
+              />
+            </div>
+
+            <button
+              id="btn-submit-update-password"
+              type="submit"
+              className="btn btn-primary login-btn-submit"
+              disabled={loading || missingConfig || !password}
+            >
+              {loading ? <Spinner /> : 'Salvar Nova Senha'}
+            </button>
+          </form>
+        ) : mode === 'forgot_password' ? (
+          /* 2. MODO: ESQUECI MINHA SENHA */
+          <form onSubmit={handleEmailPasswordSubmit} className="login-email-form">
+            <h2 className="login-form-heading">Recuperação de Senha</h2>
+            <p className="login-form-subheading">Informe seu e-mail cadastrado para receber o link de redefinição.</p>
+
+            <div className="form-group">
+              <label htmlFor="login-reset-email" className="form-label">E-mail cadastrado:</label>
+              <input
+                id="login-reset-email"
+                type="email"
+                className="form-input"
+                placeholder="seu.email@exemplo.com"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                disabled={loading || missingConfig}
+                autoFocus
+                required
+              />
+            </div>
+
+            <button
+              id="btn-submit-reset-password"
+              type="submit"
+              className="btn btn-primary login-btn-submit"
+              disabled={loading || missingConfig || !email}
+            >
+              {loading ? <Spinner /> : 'Enviar Link de Recuperação'}
+            </button>
+
+            <button
+              type="button"
+              className="btn btn-link login-toggle-link"
+              onClick={() => {
+                setMode('login');
+                setAuthError(null);
+                setInfoMessage(null);
+              }}
+              disabled={loading}
+            >
+              <ArrowLeft size={13} /> Voltar ao login
+            </button>
+          </form>
+        ) : (
+          /* 3. MODOS NORMAIS: LOGIN OU CADASTRO */
+          <>
+            {/* Botão Google (Opção rápida) */}
+            <button
+              id="btn-google-login"
+              className="login-btn-google"
+              onClick={handleGoogleLogin}
+              disabled={loading || missingConfig}
+              aria-busy={loading}
+              aria-label={loading ? 'Conectando com o Google…' : 'Entrar com Google'}
+              type="button"
+            >
+              {loading ? <Spinner /> : <GoogleIcon />}
+              <span>{loading ? 'Redirecionando…' : 'Entrar com Google'}</span>
+            </button>
+
+            <div className="login-divider">
+              <span>ou com e-mail e senha</span>
+            </div>
+
+            <form onSubmit={handleEmailPasswordSubmit} className="login-email-form">
+              <div className="form-group">
+                <label htmlFor="login-email-input" className="form-label">E-mail:</label>
+                <input
+                  id="login-email-input"
+                  type="email"
+                  className="form-input"
+                  placeholder="seu.email@exemplo.com"
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                  disabled={loading || missingConfig}
+                  required
+                />
+              </div>
+
+              <div className="form-group">
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <label htmlFor="login-password-input" className="form-label">Senha:</label>
+                  {mode === 'login' && (
+                    <button
+                      type="button"
+                      className="btn-link-forgot"
+                      onClick={() => {
+                        setMode('forgot_password');
+                        setAuthError(null);
+                        setInfoMessage(null);
+                      }}
+                      tabIndex={0}
+                    >
+                      Esqueci a senha
+                    </button>
+                  )}
+                </div>
+                <input
+                  id="login-password-input"
+                  type="password"
+                  className="form-input"
+                  placeholder="Sua senha"
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  disabled={loading || missingConfig}
+                  required
+                />
+              </div>
+
+              {mode === 'register' && (
+                <div className="form-group">
+                  <label htmlFor="login-confirm-password" className="form-label">Confirmar senha:</label>
+                  <input
+                    id="login-confirm-password"
+                    type="password"
+                    className="form-input"
+                    placeholder="Repita a senha"
+                    value={confirmPassword}
+                    onChange={(e) => setConfirmPassword(e.target.value)}
+                    disabled={loading || missingConfig}
+                    required
+                  />
+                </div>
+              )}
+
+              <button
+                id={mode === 'login' ? 'btn-email-login' : 'btn-email-register'}
+                type="submit"
+                className="btn btn-primary login-btn-submit"
+                disabled={loading || missingConfig || !email || !password}
+              >
+                {loading ? <Spinner /> : mode === 'login' ? 'Entrar com E-mail' : 'Criar Nova Conta'}
+              </button>
+            </form>
+
+            <div className="login-toggle-mode">
+              {mode === 'login' ? (
+                <p>
+                  Não possui uma conta?{' '}
+                  <button
+                    type="button"
+                    className="btn-link-mode"
+                    onClick={() => {
+                      setMode('register');
+                      setAuthError(null);
+                      setInfoMessage(null);
+                    }}
+                    id="btn-switch-to-register"
+                  >
+                    Cadastre-se
+                  </button>
+                </p>
+              ) : (
+                <p>
+                  Já possui uma conta?{' '}
+                  <button
+                    type="button"
+                    className="btn-link-mode"
+                    onClick={() => {
+                      setMode('login');
+                      setAuthError(null);
+                      setInfoMessage(null);
+                    }}
+                    id="btn-switch-to-login"
+                  >
+                    Fazer login
+                  </button>
+                </p>
+              )}
+            </div>
+          </>
+        )}
 
         <p className="login-legal">
-          Acesso restrito a membros convidados.
+          Acesso restrito a membros autorizados ou convidados.
         </p>
       </div>
 
@@ -164,7 +460,6 @@ export default function LoginPage() {
           justify-content: center;
           padding: 24px 20px;
           background: var(--bg-secondary);
-          /* gradiente sutil usando as variáveis do tema */
           background-image: radial-gradient(
             ellipse at 60% 20%,
             var(--primary-surface) 0%,
@@ -177,52 +472,42 @@ export default function LoginPage() {
           border: 1px solid var(--border-subtle);
           border-radius: var(--radius-xl);
           box-shadow: var(--shadow-lg);
-          padding: 48px 40px;
+          padding: 36px 32px;
           width: 100%;
-          max-width: 400px;
+          max-width: 420px;
           display: flex;
           flex-direction: column;
           align-items: center;
-          gap: 0;
-          animation: scaleUp 0.3s cubic-bezier(0.16, 1, 0.3, 1);
         }
 
-        @media (max-width: 480px) {
-          .login-card {
-            padding: 36px 24px;
-          }
-        }
-
-        /* Logo SVG */
         .login-logo {
-          width: 64px;
-          height: 64px;
+          width: 58px;
+          height: 58px;
           display: flex;
           align-items: center;
           justify-content: center;
           background: var(--primary-surface);
           border: 2px solid var(--primary-border);
           border-radius: var(--radius-lg);
-          margin-bottom: 24px;
+          margin-bottom: 16px;
           color: var(--primary);
         }
 
         .login-logo svg {
-          width: 34px;
-          height: 34px;
+          width: 30px;
+          height: 30px;
         }
 
         .login-title {
-          font-size: 22px;
+          font-size: 20px;
           font-weight: 800;
           color: var(--text-primary);
           text-align: center;
-          letter-spacing: -0.3px;
-          margin: 0 0 4px;
+          margin: 0 0 2px;
         }
 
         .login-subtitle {
-          font-size: 13px;
+          font-size: 12px;
           font-weight: 600;
           color: var(--primary);
           text-align: center;
@@ -231,104 +516,170 @@ export default function LoginPage() {
           text-transform: uppercase;
         }
 
-        .login-description {
-          font-size: 14px;
-          color: var(--text-secondary);
+        .login-invite-badge {
+          background: var(--primary-surface);
+          border: 1px solid var(--primary-border);
+          border-radius: var(--radius-md);
+          padding: 8px 12px;
+          font-size: 12px;
+          color: var(--primary);
           text-align: center;
-          line-height: 1.6;
-          margin: 0 0 32px;
+          margin-bottom: 16px;
+          width: 100%;
+          line-height: 1.4;
         }
 
-        /* Alertas */
         .login-alert {
           width: 100%;
           display: flex;
           align-items: flex-start;
           gap: 10px;
-          padding: 12px 14px;
+          padding: 10px 12px;
           border-radius: var(--radius-md);
           font-size: 13px;
-          line-height: 1.5;
-          margin-bottom: 20px;
-        }
-
-        .login-alert svg {
-          flex-shrink: 0;
-          margin-top: 1px;
-        }
-
-        .login-alert code {
-          font-family: var(--font-mono);
-          font-size: 11px;
-          background: rgba(0,0,0,0.15);
-          padding: 1px 5px;
-          border-radius: 4px;
-        }
-
-        .login-alert--warning {
-          background: var(--status-pending-bg);
-          border: 1px solid var(--status-pending-border);
-          color: var(--status-pending-text);
+          line-height: 1.4;
+          margin-bottom: 16px;
         }
 
         .login-alert--error {
-          background: var(--status-overrun-bg);
-          border: 1px solid var(--status-overrun-border);
-          color: var(--status-overrun-text);
+          background: #fef2f2;
+          border: 1px solid #fecaca;
+          color: #b91c1c;
         }
 
-        /* Botão Google */
+        .login-alert--warning {
+          background: #fffbeb;
+          border: 1px solid #fde68a;
+          color: #b45309;
+        }
+
+        .login-alert--success {
+          background: #ecfdf5;
+          border: 1px solid #a7f3d0;
+          color: #065f46;
+        }
+
         .login-btn-google {
           width: 100%;
           display: flex;
           align-items: center;
           justify-content: center;
           gap: 12px;
-          padding: 14px 20px;
-          background: var(--bg-surface);
-          border: 1.5px solid var(--border-subtle);
-          border-radius: var(--radius-md);
+          padding: 12px 16px;
+          background: var(--bg-card);
           color: var(--text-primary);
-          font-family: var(--font-sans);
-          font-size: 15px;
-          font-weight: 700;
+          border: 1px solid var(--border-subtle);
+          border-radius: var(--radius-md);
+          font-size: 14px;
+          font-weight: 600;
           cursor: pointer;
-          transition:
-            background var(--transition-fast),
-            border-color var(--transition-fast),
-            box-shadow var(--transition-fast),
-            transform var(--transition-fast);
-          margin-bottom: 20px;
-          min-height: 52px;
+          transition: background 0.15s, border-color 0.15s;
         }
 
         .login-btn-google:hover:not(:disabled) {
-          background: var(--bg-card-hover);
-          border-color: var(--border-active);
-          box-shadow: var(--shadow-md);
+          background: var(--bg-surface);
+          border-color: var(--primary);
         }
 
-        .login-btn-google:active:not(:disabled) {
-          transform: scale(0.98);
+        .login-divider {
+          width: 100%;
+          display: flex;
+          align-items: center;
+          text-align: center;
+          margin: 16px 0;
+          color: var(--text-muted);
+          font-size: 11px;
+          text-transform: uppercase;
         }
 
-        .login-btn-google:focus-visible {
-          outline: 2px solid var(--primary);
-          outline-offset: 2px;
+        .login-divider::before,
+        .login-divider::after {
+          content: '';
+          flex: 1;
+          border-bottom: 1px solid var(--border-subtle);
         }
 
-        .login-btn-google:disabled {
-          opacity: 0.5;
-          cursor: not-allowed;
-          transform: none;
+        .login-divider span {
+          padding: 0 10px;
+        }
+
+        .login-email-form {
+          width: 100%;
+          display: flex;
+          flex-direction: column;
+          gap: 12px;
+        }
+
+        .login-form-heading {
+          font-size: 16px;
+          font-weight: 700;
+          color: var(--text-primary);
+          margin: 0;
+          text-align: center;
+        }
+
+        .login-form-subheading {
+          font-size: 12px;
+          color: var(--text-secondary);
+          margin: 0 0 10px;
+          text-align: center;
+        }
+
+        .login-btn-submit {
+          width: 100%;
+          padding: 10px;
+          font-size: 14px;
+          margin-top: 4px;
+        }
+
+        .btn-link-forgot {
+          background: none;
+          border: none;
+          color: var(--primary);
+          font-size: 11px;
+          cursor: pointer;
+          padding: 0;
+        }
+
+        .btn-link-forgot:hover {
+          text-decoration: underline;
+        }
+
+        .login-toggle-mode {
+          margin-top: 16px;
+          font-size: 13px;
+          color: var(--text-secondary);
+          text-align: center;
+        }
+
+        .btn-link-mode {
+          background: none;
+          border: none;
+          color: var(--primary);
+          font-weight: 600;
+          cursor: pointer;
+          padding: 0;
+        }
+
+        .btn-link-mode:hover {
+          text-decoration: underline;
+        }
+
+        .login-toggle-link {
+          margin-top: 8px;
+          font-size: 12px;
+          color: var(--text-secondary);
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          gap: 4px;
         }
 
         .login-legal {
-          font-size: 12px;
+          font-size: 11px;
           color: var(--text-muted);
           text-align: center;
-          line-height: 1.5;
-          margin: 0;
+          margin: 20px 0 0;
         }
       `}</style>
     </div>
