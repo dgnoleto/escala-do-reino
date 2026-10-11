@@ -801,8 +801,12 @@ Em 09/10/2026, a interface de usuário correspondente ao incremento 011 foi impl
    - O token bruto (exatamente 43 caracteres Base64URL gerados a partir de 256 bits sem padding) é extraído preservando estritamente maiúsculas, minúsculas, sublinhados e hífens. Não se aplica `toLowerCase()`, `trim()` ou normalização NFC no cliente. Formatos com comprimento diferente de 43 caracteres são rejeitados de imediato.
    - Imediatamente após a captura, a URL é limpa com `window.history.replaceState` preservando a rota base e eventuais parâmetros de busca ou fragments de retorno (como `code`, `state` ou recuperação de senha OAuth).
    - A intenção de convite é retida temporariamente na aba via `sessionStorage['escala_invite_token_pending']`.
-   - Se o usuário não estiver autenticado, a tela de login/cadastro é apresentada exibindo aviso de convite pendente.
-   - Após login com qualquer conta (mesmo sem vínculo ou administrando outra igreja), o `AuthGate` direciona diretamente para `InvitationFlowPage`.
+   - Se o usuário não estiver autenticado, a tela de acesso (`LoginPage`) apresenta contexto claro (*"Você recebeu um convite. Para continuar, use o e-mail para o qual ele foi emitido."*) e duas escolhas visíveis:
+     - **“É meu primeiro acesso — Criar conta”**: modo padrão na abertura de convite, permitindo que a pessoa informe o e-mail convidado e defina sua própria senha no Supabase Auth sem exigir senha anterior. Textos esclarecem que a conta é pessoal de acesso ao sistema (não cria nova igreja nem outro membro). A criação da conta isolada não concede acesso imediato à igreja.
+     - **“Já tenho conta — Entrar”**: permite que quem já possui conta faça login com sua senha existente ou utilize a recuperação de senha.
+     - Login com Google permanece disponível com orientação explícita para utilizar o mesmo e-mail para o qual o convite foi emitido.
+   - Após cadastro com confirmação de e-mail pendente, a interface exibe orientações explícitas de continuidade: abrir o e-mail, clicar no link de confirmação e, caso a confirmação abra em outra aba ou navegador, retornar à aba do convite ou reabrir o link original. A tela `AccessPendingPage` também orienta usuários autenticados sem vínculo a reabrir o link do convite.
+   - Após autenticação com e-mail confirmado (na mesma aba ou por detecção de sessão), o `AuthGate` direciona diretamente para `InvitationFlowPage` preservando o token pendente.
 
 2. **Fluxo do Convidado (`InvitationFlowPage`):**
    - Consulta `public.get_invitation_details(p_raw_token)`.

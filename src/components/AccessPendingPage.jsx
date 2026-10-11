@@ -268,6 +268,25 @@ export default function AccessPendingPage() {
           convidado por um administrador e ter sua conta vinculada a um membro cadastrado.
         </p>
 
+        {/* Orientação para continuidade a partir de convite recebido */}
+        <div className="pending-invite-guidance" role="note">
+          <div className="pending-invite-guidance-header">
+            <Mail size={16} />
+            <strong>Recebeu um convite para participar de uma igreja?</strong>
+          </div>
+          <p>
+            Se você acabou de confirmar sua conta a partir de um convite de acesso:
+          </p>
+          <ul>
+            <li>
+              <strong>Retorne à aba original</strong> onde você abriu o convite; OU
+            </li>
+            <li>
+              <strong>Reabra o link original do convite</strong> neste navegador para continuar a validação e confirmar seu nome.
+            </li>
+          </ul>
+        </div>
+
         {/* Identificação da conta autenticada */}
         <div className="pending-account" aria-label="Conta autenticada">
           {avatarUrl && (
@@ -809,6 +828,43 @@ export default function AccessPendingPage() {
           align-self: flex-start;
           margin-top: 4px;
           gap: 5px;
+        }
+
+        .pending-invite-guidance {
+          background: var(--bg-surface);
+          border: 1px solid var(--border-subtle);
+          border-left: 3px solid var(--primary);
+          border-radius: var(--radius-md);
+          padding: 12px 14px;
+          margin-bottom: 20px;
+          width: 100%;
+          text-align: left;
+          font-size: 13px;
+          line-height: 1.45;
+        }
+
+        .pending-invite-guidance-header {
+          display: flex;
+          align-items: center;
+          gap: 8px;
+          color: var(--primary);
+          font-weight: 700;
+          margin-bottom: 6px;
+        }
+
+        .pending-invite-guidance p {
+          color: var(--text-secondary);
+          margin: 0 0 6px;
+        }
+
+        .pending-invite-guidance ul {
+          margin: 0;
+          padding-left: 18px;
+          color: var(--text-secondary);
+        }
+
+        .pending-invite-guidance li {
+          margin-bottom: 4px;
         }
 
         .pending-signout-btn {

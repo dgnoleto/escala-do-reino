@@ -121,6 +121,9 @@ function setupEnvironment(options = {}) {
   const clipboardCalls = [];
   let clipboardShouldFail = Boolean(options.clipboardShouldFail);
 
+  const windowListeners = new Map();
+  const documentListeners = new Map();
+
   globalThis.window = {
     sessionStorage: storage,
     location: locationObj,
@@ -136,14 +139,22 @@ function setupEnvironment(options = {}) {
         }
       },
     },
-    addEventListener() {},
-    removeEventListener() {},
+    addEventListener(name, callback) {
+      windowListeners.set(name, callback);
+    },
+    removeEventListener(name) {
+      windowListeners.delete(name);
+    },
   };
 
   globalThis.document = {
     visibilityState: 'visible',
-    addEventListener() {},
-    removeEventListener() {},
+    addEventListener(name, callback) {
+      documentListeners.set(name, callback);
+    },
+    removeEventListener(name) {
+      documentListeners.delete(name);
+    },
   };
 
   Object.defineProperty(globalThis, 'navigator', {
@@ -200,6 +211,12 @@ function setupEnvironment(options = {}) {
       },
       signUp: async (creds) => {
         authCalls.push({ type: 'signUp', email: creds.email, options: creds.options });
+        if (options.signUpHandler) {
+          return options.signUpHandler(creds);
+        }
+        if (options.signUpError) {
+          return { data: null, error: options.signUpError };
+        }
         if (options.signUpRequiresEmailConfirm) {
           return { data: { user: { id: 'new-uid', email: creds.email }, session: null }, error: null };
         }
@@ -235,6 +252,16 @@ function setupEnvironment(options = {}) {
     setClipboardShouldFail: (val) => { clipboardShouldFail = val; },
     getAuthListener: () => authListener,
     simulateEvent: (ev, s) => globalThis.__reviewTransport.auth.simulateEvent(ev, s),
+    handlers: windowListeners,
+    documentHandlers: documentListeners,
+    triggerWindowEvent: (name) => {
+      const fn = windowListeners.get(name);
+      if (fn) fn();
+    },
+    triggerDocumentEvent: (name) => {
+      const fn = documentListeners.get(name);
+      if (fn) fn();
+    },
   };
 }
 
@@ -1353,4 +1380,647 @@ describe('Suíte de Testes da Interface de Convites e Aprovação de Nome (Contr
     act(() => renderer.unmount());
   });
 
+  test('Cenário 11: Primeiro acesso por convite: escolhas visíveis, cadastro sem senha anterior, orientação de confirmação/outra aba e continuidade', async () => {
+    // 43 caracteres exatos Base64URL
+    const rawToken = 'AbCdEfGhIjKlMnOpQrStUvWxYz0123456789_-ABC11';
+    let userRegistered = false;
+    let authEmailConfirmed = false;
+
+    const fixture = setupEnvironment({
+      initialUrl: `http://localhost:3000/#/invite?token=${rawToken}`,
+      user: null, // Começa deslogado
+      signUpRequiresEmailConfirm: true,
+      rpcHandler: async (name, args) => {
+        if (name === 'get_invitation_details') {
+          assert.equal(args.p_raw_token, rawToken);
+          if (authEmailConfirmed) {
+            return {
+              data: [{
+                invitation_id: 'inv-uuid-11',
+                church_id: 'church-uuid-11',
+                church_name: 'Comunidade da Graça',
+                member_id: 'mem-11',
+                member_display_name: 'Fernanda Lima',
+                expires_at: '2026-10-14T23:59:59Z',
+                is_valid: true,
+              }],
+              error: null,
+            };
+          }
+          return {
+            data: [{
+              invitation_id: null,
+              church_id: null,
+              church_name: null,
+              member_id: null,
+              member_display_name: null,
+              expires_at: null,
+              is_valid: false,
+            }],
+            error: null,
+          };
+        }
+        if (name === 'get_my_church_access') {
+          // Conta isolada recém-criada sem vínculo
+          return { data: [], error: null };
+        }
+        return { data: [], error: null };
+      },
+    });
+
+    // 11.1 Ao abrir o convite deslogado, monta App e verifica URL limpa e token retido
+    let renderer = await mount(React.createElement(App));
+
+    // Token capturado no sessionStorage e URL limpa
+    assert.equal(fixture.storage.getItem('escala_invite_token_pending'), rawToken);
+
+    // Contexto claro do convite exibido
+    const initialText = visibleText(renderer);
+    assert.match(initialText, /Você recebeu um convite/);
+    assert.match(initialText, /Para continuar, use o e-mail para o qual ele foi emitido/);
+
+    // Duas escolhas visíveis: "É meu primeiro acesso — Criar conta" e "Já tenho conta — Entrar"
+    const firstAccessBtn = renderer.root.findByProps({ id: 'btn-invite-first-access' });
+    const existingAccBtn = renderer.root.findByProps({ id: 'btn-invite-existing-account' });
+    assert.ok(firstAccessBtn, 'Botão de primeiro acesso deve estar presente');
+    assert.ok(existingAccBtn, 'Botão de conta existente deve estar presente');
+    assert.equal(firstAccessBtn.props['aria-selected'], true, 'Primeiro acesso deve vir selecionado por padrão');
+
+    // Modo inicial é cadastro (sem exigir senha prévia)
+    const emailInput = renderer.root.findByProps({ id: 'login-email-input' });
+    const passwordInput = renderer.root.findByProps({ id: 'login-password-input' });
+    const confirmPasswordInput = renderer.root.findByProps({ id: 'login-confirm-password' });
+    const registerBtn = renderer.root.findByProps({ id: 'btn-email-register' });
+    assert.ok(emailInput);
+    assert.ok(passwordInput);
+    assert.ok(confirmPasswordInput);
+    assert.ok(registerBtn);
+
+    // Orienta que a conta é de acesso ao Escala do Reino, sem criar igreja ou outro membro
+    assert.match(initialText, /Esta conta é pessoal para o seu acesso ao Escala do Reino/);
+    assert.match(initialText, /Criar sua conta não cria uma nova igreja nem outro membro/);
+
+    // Google disponível com orientação sobre o mesmo e-mail convidado
+    assert.ok(renderer.root.findByProps({ id: 'btn-google-login' }));
+    assert.match(initialText, /sua conta Google deve usar o mesmo e-mail para o qual o convite foi emitido/);
+
+    // 11.2 Alternância fluida entre opções sem perda de contexto
+    await act(async () => {
+      existingAccBtn.props.onClick();
+    });
+    let loginText = visibleText(renderer);
+    assert.match(loginText, /Já tenho conta — Entrar/);
+    assert.ok(renderer.root.findByProps({ id: 'btn-email-login' }));
+
+    // Retorna para primeiro acesso
+    await act(async () => {
+      firstAccessBtn.props.onClick();
+    });
+    assert.match(visibleText(renderer), /É meu primeiro acesso — Criar conta/);
+
+    // 11.3 Preenche cadastro com e-mail convidado e senha escolhida
+    await act(async () => {
+      renderer.root.findByProps({ id: 'login-email-input' }).props.onChange({
+        target: { value: 'fernanda@exemplo.com' },
+      });
+      renderer.root.findByProps({ id: 'login-password-input' }).props.onChange({
+        target: { value: 'MinhaSenhaSegura#2026' },
+      });
+      renderer.root.findByProps({ id: 'login-confirm-password' }).props.onChange({
+        target: { value: 'MinhaSenhaSegura#2026' },
+      });
+    });
+
+    // Submete cadastro
+    await act(async () => {
+      renderer.root.findByType('form').props.onSubmit({ preventDefault() {} });
+      await new Promise((r) => setTimeout(r, 20));
+    });
+
+    // Confirmação orientada claramente (mesma aba e outra aba)
+    const confirmText = visibleText(renderer);
+    assert.match(confirmText, /Cadastro realizado! Enviamos um e-mail de confirmação/);
+    assert.match(confirmText, /Se a confirmação abrir uma nova aba/);
+    assert.match(confirmText, /retorne a esta aba do convite ou reabra o link original/);
+    assert.match(confirmText, /A criação da conta não concede acesso à igreja automaticamente/);
+
+    // Senha não foi persistida em storage
+    for (let i = 0; i < fixture.storage.length; i++) {
+      const k = fixture.storage.key(i);
+      assert.doesNotMatch(fixture.storage.getItem(k) || '', /MinhaSenhaSegura#2026/);
+    }
+
+    // Botão de checagem pós-confirmação disponível
+    const checkConfirmBtn = renderer.root.findByProps({ id: 'btn-check-confirmed-email' });
+    assert.ok(checkConfirmBtn);
+
+    // 11.4 Simula confirmação do e-mail (evento SIGNED_IN do Supabase Auth com e-mail confirmado)
+    authEmailConfirmed = true;
+    const confirmedUser = {
+      id: 'usr-11',
+      email: 'fernanda@exemplo.com',
+      email_confirmed_at: '2026-10-11T12:00:00Z',
+    };
+
+    await act(async () => {
+      fixture.simulateEvent('SIGNED_IN', { user: confirmedUser });
+      await new Promise((r) => setTimeout(r, 40));
+    });
+
+    // Retoma automaticamente o fluxo do convite com InvitationFlowPage
+    const flowText = visibleText(renderer);
+    assert.match(flowText, /Comunidade da Graça/);
+    assert.match(flowText, /Fernanda Lima/);
+    assert.ok(renderer.root.findByProps({ id: 'btn-confirm-name' }));
+    assert.ok(renderer.root.findByProps({ id: 'btn-propose-other-name' }));
+
+    act(() => renderer.unmount());
+
+    // 11.5 Confirmação em outra aba isolada sem o token: direciona para AccessPendingPage com orientações
+    const fixtureAnotherTab = setupEnvironment({
+      initialUrl: 'http://localhost:3000/',
+      user: confirmedUser,
+      rpcHandler: async (name) => {
+        if (name === 'get_my_church_access') return { data: [], error: null };
+        return { data: [], error: null };
+      },
+    });
+
+    const rendererAnotherTab = await mount(React.createElement(App));
+    const anotherTabText = visibleText(rendererAnotherTab);
+    assert.match(anotherTabText, /Acesso à igreja ainda não liberado/);
+    assert.match(anotherTabText, /Recebeu um convite para participar de uma igreja\?/);
+    assert.match(anotherTabText, /Retorne à aba original/);
+    assert.match(anotherTabText, /Reabra o link original do convite/);
+
+    act(() => rendererAnotherTab.unmount());
+
+    // 11.6 Tentativa de cadastro de conta já existente orienta login sem trocar senha
+    const fixtureExisting = setupEnvironment({
+      initialUrl: `http://localhost:3000/#/invite?token=${rawToken}`,
+      user: null,
+      signUpError: {
+        message: 'User already registered',
+      },
+    });
+
+    const rendererExisting = await mount(React.createElement(App));
+    await act(async () => {
+      rendererExisting.root.findByProps({ id: 'login-email-input' }).props.onChange({
+        target: { value: 'existente@exemplo.com' },
+      });
+      rendererExisting.root.findByProps({ id: 'login-password-input' }).props.onChange({
+        target: { value: 'OutraSenha#123' },
+      });
+      rendererExisting.root.findByProps({ id: 'login-confirm-password' }).props.onChange({
+        target: { value: 'OutraSenha#123' },
+      });
+    });
+
+    await act(async () => {
+      rendererExisting.root.findByType('form').props.onSubmit({ preventDefault() {} });
+      await new Promise((r) => setTimeout(r, 20));
+    });
+
+    const existingText = visibleText(rendererExisting);
+    assert.match(existingText, /Este e-mail já possui uma conta no Escala do Reino/);
+    assert.match(existingText, /Já tenho conta — Entrar/);
+
+    act(() => rendererExisting.unmount());
+
+    // 11.7 Botão "Já confirmei meu e-mail — Continuar": quando ainda sem sessão ativa, orienta para login com senha
+    const fixtureManualCheck = setupEnvironment({
+      initialUrl: `http://localhost:3000/#/invite?token=${rawToken}`,
+      user: null,
+      signUpRequiresEmailConfirm: true,
+    });
+
+    const rendererManualCheck = await mount(React.createElement(App));
+    await act(async () => {
+      rendererManualCheck.root.findByProps({ id: 'login-email-input' }).props.onChange({
+        target: { value: 'manual@exemplo.com' },
+      });
+      rendererManualCheck.root.findByProps({ id: 'login-password-input' }).props.onChange({
+        target: { value: 'SenhaManual#123' },
+      });
+      rendererManualCheck.root.findByProps({ id: 'login-confirm-password' }).props.onChange({
+        target: { value: 'SenhaManual#123' },
+      });
+    });
+
+    await act(async () => {
+      rendererManualCheck.root.findByType('form').props.onSubmit({ preventDefault() {} });
+      await new Promise((r) => setTimeout(r, 20));
+    });
+
+    // Clica em "Já confirmei meu e-mail — Continuar"
+    await act(async () => {
+      rendererManualCheck.root.findByProps({ id: 'btn-check-confirmed-email' }).props.onClick();
+      await new Promise((r) => setTimeout(r, 20));
+    });
+
+    const manualCheckText = visibleText(rendererManualCheck);
+    assert.match(manualCheckText, /informe sua senha para entrar e continuar/);
+    assert.ok(rendererManualCheck.root.findByProps({ id: 'btn-email-login' }));
+
+    act(() => rendererManualCheck.unmount());
+
+    // 11.8 Chegada de convite por hashchange na mesma aba com LoginPage já montada:
+    // Seleciona primeiro acesso (register) automaticamente e permite alternância para login sem retorno indevido
+    const fixtureSameTab = setupEnvironment({
+      initialUrl: 'http://localhost:3000/',
+      user: null,
+      rpcHandler: async (name, args) => {
+        if (name === 'get_invitation_details') {
+          return {
+            data: [{
+              invitation_id: 'inv-uuid-same-tab',
+              church_id: 'church-uuid-11',
+              church_name: 'Comunidade da Graça',
+              member_id: 'mem-same-tab',
+              member_display_name: 'Lucas Silva',
+              expires_at: '2026-10-14T23:59:59Z',
+              is_valid: true,
+            }],
+            error: null,
+          };
+        }
+        return { data: [], error: null };
+      },
+    });
+
+    // 1. Monta App inicialmente sem convite (modo login padrão)
+    const rendererSameTab = await mount(React.createElement(App));
+    let sameTabText = visibleText(rendererSameTab);
+    assert.match(sameTabText, /Entrar com E-mail/);
+    assert.doesNotMatch(sameTabText, /Você recebeu um convite/);
+
+    // 2. Simula navegação na mesma aba para a URL do convite (dispara hashchange sem remontar App)
+    const sameTabToken = 'SameTabToken0123456789_-InviteTokenTest2026';
+    fixtureSameTab.location.hash = `#/invite?token=${sameTabToken}`;
+    await act(async () => {
+      fixtureSameTab.triggerWindowEvent('hashchange');
+      await new Promise((r) => setTimeout(r, 30));
+    });
+
+    // 3. Verifica que LoginPage na mesma aba detectou o convite e selecionou primeiro acesso (register)
+    sameTabText = visibleText(rendererSameTab);
+    assert.match(sameTabText, /Você recebeu um convite/);
+    assert.match(sameTabText, /É meu primeiro acesso — Criar conta/);
+    assert.match(sameTabText, /Já tenho conta — Entrar/);
+
+    const firstAccessBtnSameTab = rendererSameTab.root.findByProps({ id: 'btn-invite-first-access' });
+    const existingAccBtnSameTab = rendererSameTab.root.findByProps({ id: 'btn-invite-existing-account' });
+    assert.equal(firstAccessBtnSameTab.props['aria-selected'], true, 'Primeiro acesso deve ser selecionado automaticamente após hashchange');
+    assert.equal(existingAccBtnSameTab.props['aria-selected'], false, 'Conta existente não deve ficar selecionada após chegada do convite');
+    assert.ok(rendererSameTab.root.findByProps({ id: 'btn-email-register' }), 'Formulário de cadastro deve ser exibido');
+
+    // 4. Alterna manualmente para "Já tenho conta — Entrar"
+    await act(async () => {
+      existingAccBtnSameTab.props.onClick();
+      await new Promise((r) => setTimeout(r, 20));
+    });
+
+    assert.equal(existingAccBtnSameTab.props['aria-selected'], true, 'Conta existente deve ser selecionada após clique');
+    assert.equal(firstAccessBtnSameTab.props['aria-selected'], false);
+    assert.ok(rendererSameTab.root.findByProps({ id: 'btn-email-login' }), 'Formulário de login deve ser exibido após alternância');
+
+    // 5. Renderizações subsequentes não devem reverter indevidamente para register
+    await act(async () => {
+      rendererSameTab.root.findByProps({ id: 'login-email-input' }).props.onChange({
+        target: { value: 'lucas@exemplo.com' },
+      });
+      await new Promise((r) => setTimeout(r, 20));
+    });
+
+    assert.equal(existingAccBtnSameTab.props['aria-selected'], true, 'Deve permanecer em login mesmo com re-render');
+    assert.ok(rendererSameTab.root.findByProps({ id: 'btn-email-login' }));
+
+    // 6. Pode alternar de volta para primeiro acesso se desejar
+    await act(async () => {
+      firstAccessBtnSameTab.props.onClick();
+      await new Promise((r) => setTimeout(r, 20));
+    });
+    assert.equal(firstAccessBtnSameTab.props['aria-selected'], true);
+    assert.ok(rendererSameTab.root.findByProps({ id: 'btn-email-register' }));
+
+    act(() => rendererSameTab.unmount());
+
+    // 11.9 Prioridade da recuperação de senha: se em recuperação de senha, convite posterior não sobrescreve para register
+    const fixtureRecovery = setupEnvironment({
+      initialUrl: 'http://localhost:3000/',
+      user: null,
+    });
+    const rendererRecovery = await mount(React.createElement(App));
+    await act(async () => {
+      fixtureRecovery.simulateEvent('PASSWORD_RECOVERY', null);
+      await new Promise((r) => setTimeout(r, 30));
+    });
+    assert.match(visibleText(rendererRecovery), /Definir Nova Senha/);
+
+    // Chega convite via hashchange durante recuperação
+    fixtureRecovery.location.hash = `#/invite?token=${sameTabToken}`;
+    await act(async () => {
+      fixtureRecovery.triggerWindowEvent('hashchange');
+      await new Promise((r) => setTimeout(r, 30));
+    });
+    // Deve manter o formulário de redefinição de senha com prioridade
+    assert.match(visibleText(rendererRecovery), /Definir Nova Senha/);
+    assert.ok(rendererRecovery.root.findByProps({ id: 'btn-submit-update-password' }));
+    act(() => rendererRecovery.unmount());
+  });
+
+  test('Cenário 12: Coordenação de consultas de sessão (checkSession e foco) contra respostas tardias, concorrência e autoridade de eventos Auth', async () => {
+    const oldSession = { user: { id: 'synthetic-old-A', email: 'old-a@review.test' } };
+    const newSession = { user: { id: 'synthetic-new-B', email: 'new-b@review.test' } };
+    const legitSession = { user: { id: 'legit-confirmed-C', email: 'legit-c@review.test' } };
+
+    async function mountAuthProbe(fixture) {
+      let authCtx = null;
+      function Probe() {
+        authCtx = useAuth();
+        return null;
+      }
+      const renderer = await mount(React.createElement(AuthProvider, null, React.createElement(Probe)));
+      await act(async () => {
+        await new Promise((r) => setTimeout(r, 20));
+      });
+      return {
+        renderer,
+        get: () => authCtx,
+      };
+    }
+
+    // 12.1 checkSession pendente com SIGNED_OUT posterior: descarta snapshot antigo e mantém estado deslogado
+    {
+      const fixture = setupEnvironment({ user: null });
+      const probe = await mountAuthProbe(fixture);
+
+      let release;
+      globalThis.__reviewTransport.auth.getSession = () => new Promise((resolve) => { release = resolve; });
+
+      let pending;
+      await act(async () => {
+        pending = probe.get().checkSession();
+        await Promise.resolve();
+      });
+
+      await act(async () => {
+        fixture.simulateEvent('SIGNED_OUT', null);
+        await new Promise((r) => setTimeout(r, 30));
+      });
+      assert.equal(probe.get().session, null, 'Contexto deve estar deslogado após SIGNED_OUT');
+
+      let checkResult;
+      await act(async () => {
+        release({ data: { session: oldSession } });
+        checkResult = await pending;
+        await new Promise((r) => setTimeout(r, 30));
+      });
+
+      assert.equal(checkResult, null, 'checkSession deve retornar null quando descartado');
+      assert.equal(probe.get().session, null, 'Sessão antiga de Conta A não deve substituir SIGNED_OUT posterior');
+      act(() => probe.renderer.unmount());
+    }
+
+    // 12.2 checkSession pendente com SIGNED_IN de Conta B posterior: descarta snapshot antigo e preserva Conta B
+    {
+      const fixture = setupEnvironment({ user: null });
+      const probe = await mountAuthProbe(fixture);
+
+      let release;
+      globalThis.__reviewTransport.auth.getSession = () => new Promise((resolve) => { release = resolve; });
+
+      let pending;
+      await act(async () => {
+        pending = probe.get().checkSession();
+        await Promise.resolve();
+      });
+
+      await act(async () => {
+        fixture.simulateEvent('SIGNED_IN', newSession);
+        await new Promise((r) => setTimeout(r, 30));
+      });
+      assert.equal(probe.get().session?.user?.id, 'synthetic-new-B', 'Contexto deve estar na Conta B após SIGNED_IN');
+
+      let checkResult;
+      await act(async () => {
+        release({ data: { session: oldSession } });
+        checkResult = await pending;
+        await new Promise((r) => setTimeout(r, 30));
+      });
+
+      assert.equal(checkResult, null, 'checkSession deve retornar null quando descartado');
+      assert.equal(probe.get().session?.user?.id, 'synthetic-new-B', 'Sessão antiga de Conta A não deve substituir Conta B');
+      act(() => probe.renderer.unmount());
+    }
+
+    // 12.3 Consulta por foco pendente com SIGNED_OUT posterior: descarta snapshot antigo e mantém deslogado
+    {
+      const fixture = setupEnvironment({ user: null });
+      const probe = await mountAuthProbe(fixture);
+
+      let release;
+      globalThis.__reviewTransport.auth.getSession = () => new Promise((resolve) => { release = resolve; });
+
+      await act(async () => {
+        fixture.triggerWindowEvent('focus');
+        await Promise.resolve();
+      });
+
+      await act(async () => {
+        fixture.simulateEvent('SIGNED_OUT', null);
+        await new Promise((r) => setTimeout(r, 30));
+      });
+      assert.equal(probe.get().session, null, 'Contexto deve estar deslogado após SIGNED_OUT');
+
+      await act(async () => {
+        release({ data: { session: oldSession } });
+        await new Promise((r) => setTimeout(r, 30));
+      });
+
+      assert.equal(probe.get().session, null, 'Foco pendente com resposta antiga não deve substituir SIGNED_OUT');
+      act(() => probe.renderer.unmount());
+    }
+
+    // 12.4 Consulta por foco pendente com SIGNED_IN de Conta B posterior: descarta snapshot antigo e preserva Conta B
+    {
+      const fixture = setupEnvironment({ user: null });
+      const probe = await mountAuthProbe(fixture);
+
+      let release;
+      globalThis.__reviewTransport.auth.getSession = () => new Promise((resolve) => { release = resolve; });
+
+      await act(async () => {
+        fixture.triggerWindowEvent('focus');
+        await Promise.resolve();
+      });
+
+      await act(async () => {
+        fixture.simulateEvent('SIGNED_IN', newSession);
+        await new Promise((r) => setTimeout(r, 30));
+      });
+      assert.equal(probe.get().session?.user?.id, 'synthetic-new-B', 'Contexto deve refletir Conta B');
+
+      await act(async () => {
+        release({ data: { session: oldSession } });
+        await new Promise((r) => setTimeout(r, 30));
+      });
+
+      assert.equal(probe.get().session?.user?.id, 'synthetic-new-B', 'Foco pendente com resposta antiga não deve substituir Conta B');
+      act(() => probe.renderer.unmount());
+    }
+
+    // 12.5 Controles positivos de retomada legítima: checkSession e foco aplicam sessão quando não há conflito
+    {
+      // 12.5.a Retomada legítima via checkSession (botão manual)
+      const fixtureA = setupEnvironment({ user: null });
+      const probeA = await mountAuthProbe(fixtureA);
+
+      globalThis.__reviewTransport.auth.getSession = async () => ({ data: { session: legitSession } });
+
+      let appliedResult;
+      await act(async () => {
+        appliedResult = await probeA.get().checkSession();
+        await new Promise((r) => setTimeout(r, 30));
+      });
+
+      assert.ok(appliedResult, 'checkSession deve retornar a sessão legítima retomada');
+      assert.equal(appliedResult.user?.id, 'legit-confirmed-C');
+      assert.equal(probeA.get().session?.user?.id, 'legit-confirmed-C', 'Contexto deve transicionar para conta confirmada');
+      act(() => probeA.renderer.unmount());
+
+      // 12.5.b Retomada legítima via evento de foco da janela
+      const fixtureB = setupEnvironment({ user: null });
+      const probeB = await mountAuthProbe(fixtureB);
+
+      globalThis.__reviewTransport.auth.getSession = async () => ({ data: { session: legitSession } });
+
+      await act(async () => {
+        fixtureB.triggerWindowEvent('focus');
+        await new Promise((r) => setTimeout(r, 30));
+      });
+
+      assert.equal(probeB.get().session?.user?.id, 'legit-confirmed-C', 'Foco da janela deve aplicar sessão legítima retomada');
+      act(() => probeB.renderer.unmount());
+    }
+
+    // 12.6 Ordem e resolução de duas consultas concorrentes: mais recente prevalece sobre consulta mais lenta
+    {
+      // Subcaso A: Consulta 1 (lenta com Sessão A) e Consulta 2 (rápida com Sessão B). Consulta 2 resolve antes.
+      const fixtureA = setupEnvironment({ user: null });
+      const probeA = await mountAuthProbe(fixtureA);
+
+      let release1, release2;
+      let queryCount = 0;
+      globalThis.__reviewTransport.auth.getSession = () => {
+        queryCount += 1;
+        if (queryCount === 1) return new Promise((r) => { release1 = r; });
+        return new Promise((r) => { release2 = r; });
+      };
+
+      let pending1, pending2;
+      await act(async () => {
+        pending1 = probeA.get().checkSession();
+        await Promise.resolve();
+      });
+      await act(async () => {
+        pending2 = probeA.get().checkSession();
+        await Promise.resolve();
+      });
+
+      // Consulta 2 resolve primeiro com Sessão B
+      let result2;
+      await act(async () => {
+        release2({ data: { session: newSession } });
+        result2 = await pending2;
+        await new Promise((r) => setTimeout(r, 30));
+      });
+      assert.equal(result2?.user?.id, 'synthetic-new-B');
+      assert.equal(probeA.get().session?.user?.id, 'synthetic-new-B');
+
+      // Consulta 1 (mais antiga) resolve depois com Sessão A: deve ser descartada
+      let result1;
+      await act(async () => {
+        release1({ data: { session: oldSession } });
+        result1 = await pending1;
+        await new Promise((r) => setTimeout(r, 30));
+      });
+      assert.equal(result1, null, 'Consulta 1 tardia deve retornar null por ser superada');
+      assert.equal(probeA.get().session?.user?.id, 'synthetic-new-B', 'Sessão B da consulta mais recente deve prevalecer');
+      act(() => probeA.renderer.unmount());
+
+      // Subcaso B: Consulta 1 (Sessão A) e Consulta 2 (Sessão B) disparadas; Consulta 1 tenta resolver antes de Consulta 2
+      const fixtureB = setupEnvironment({ user: null });
+      const probeB = await mountAuthProbe(fixtureB);
+
+      let r1, r2;
+      let countB = 0;
+      globalThis.__reviewTransport.auth.getSession = () => {
+        countB += 1;
+        if (countB === 1) return new Promise((r) => { r1 = r; });
+        return new Promise((r) => { r2 = r; });
+      };
+
+      let p1, p2;
+      await act(async () => {
+        p1 = probeB.get().checkSession();
+        await Promise.resolve();
+      });
+      await act(async () => {
+        p2 = probeB.get().checkSession();
+        await Promise.resolve();
+      });
+
+      // Consulta 1 resolve enquanto Consulta 2 já foi iniciada: como já foi superada, é descartada
+      let res1;
+      await act(async () => {
+        r1({ data: { session: oldSession } });
+        res1 = await p1;
+        await new Promise((r) => setTimeout(r, 30));
+      });
+      assert.equal(res1, null, 'Consulta 1 deve ser descartada por ter sido superada por Consulta 2');
+
+      // Consulta 2 resolve em seguida e aplica legitimamente Sessão B
+      let res2;
+      await act(async () => {
+        r2({ data: { session: newSession } });
+        res2 = await p2;
+        await new Promise((r) => setTimeout(r, 30));
+      });
+      assert.equal(res2?.user?.id, 'synthetic-new-B');
+      assert.equal(probeB.get().session?.user?.id, 'synthetic-new-B');
+      act(() => probeB.renderer.unmount());
+    }
+
+    // 12.7 Desmontagem do componente com consulta em voo descarta resposta com segurança
+    {
+      const fixture = setupEnvironment({ user: null });
+      const probe = await mountAuthProbe(fixture);
+
+      let release;
+      globalThis.__reviewTransport.auth.getSession = () => new Promise((resolve) => { release = resolve; });
+
+      let pending;
+      await act(async () => {
+        pending = probe.get().checkSession();
+        await Promise.resolve();
+      });
+
+      // Desmonta o provedor antes da resposta
+      act(() => probe.renderer.unmount());
+
+      // Libera a resposta após desmontagem
+      let res;
+      await act(async () => {
+        release({ data: { session: oldSession } });
+        res = await pending;
+        await new Promise((r) => setTimeout(r, 30));
+      });
+
+      assert.equal(res, null, 'Consulta em voo de componente desmontado deve retornar null');
+    }
+  });
+
 });
+

@@ -1,6 +1,6 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useAuth } from '../context/AuthContext';
-import { Mail, Lock, KeyRound, AlertCircle, CheckCircle2, ArrowLeft, RefreshCw } from 'lucide-react';
+import { Mail, Lock, KeyRound, AlertCircle, CheckCircle2, ArrowLeft, RefreshCw, UserCheck } from 'lucide-react';
 
 /* ────────────────────────────────────────────────────────────
    Ícone do Google (SVG oficial sem dependência externa)
@@ -58,7 +58,7 @@ function Spinner() {
 }
 
 /* ────────────────────────────────────────────────────────────
-   Tela de Login principal com suporte a Google e E-mail/Senha
+   Tela de Login principal com suporte a Convite, Google e E-mail/Senha
 ──────────────────────────────────────────────────────────── */
 export default function LoginPage() {
   const {
@@ -67,6 +67,7 @@ export default function LoginPage() {
     signUpWithPassword,
     resetPasswordForEmail,
     updateUserPassword,
+    checkSession,
     authError,
     setAuthError,
     isConfigured,
@@ -75,13 +76,33 @@ export default function LoginPage() {
   } = useAuth();
 
   // Modos de formulário: 'login' | 'register' | 'forgot_password' | 'update_password'
-  const [mode, setMode] = useState(isPasswordRecovery ? 'update_password' : 'login');
+  // Ao abrir um convite sem sessão, inicia no primeiro acesso (cadastro) conforme orientação
+  const [mode, setMode] = useState(() => {
+    if (isPasswordRecovery) return 'update_password';
+    if (pendingInviteToken) return 'register';
+    return 'login';
+  });
+
+  const lastHandledInviteTokenRef = useRef(pendingInviteToken);
 
   useEffect(() => {
     if (isPasswordRecovery) {
       setMode('update_password');
+      return;
     }
-  }, [isPasswordRecovery]);
+
+    // Quando um convite novo chega à tela já montada (ex: hashchange na mesma aba),
+    // seleciona primeiro acesso (cadastro) uma vez, preservando escolhas manuais posteriores.
+    if (pendingInviteToken && pendingInviteToken !== lastHandledInviteTokenRef.current) {
+      lastHandledInviteTokenRef.current = pendingInviteToken;
+      setMode('register');
+      setAuthError(null);
+      setInfoMessage(null);
+      setEmailConfirmationPending(false);
+    } else if (!pendingInviteToken) {
+      lastHandledInviteTokenRef.current = null;
+    }
+  }, [pendingInviteToken, isPasswordRecovery]);
 
   // Formulário em memória (senhas nunca são persistidas em storage)
   const [email, setEmail] = useState('');
@@ -89,6 +110,8 @@ export default function LoginPage() {
   const [confirmPassword, setConfirmPassword] = useState('');
   const [loading, setLoading] = useState(false);
   const [infoMessage, setInfoMessage] = useState(null);
+  const [emailConfirmationPending, setEmailConfirmationPending] = useState(false);
+  const [registeredEmail, setRegisteredEmail] = useState('');
 
   const missingConfig = !isConfigured;
 
@@ -100,6 +123,30 @@ export default function LoginPage() {
 
     const { error } = await signInWithGoogle();
     if (error) {
+      setLoading(false);
+    }
+  }
+
+  async function handleCheckSessionAfterConfirm() {
+    if (loading) return;
+    setLoading(true);
+    setAuthError(null);
+    try {
+      if (checkSession) {
+        const active = await checkSession();
+        if (active) {
+          return;
+        }
+      }
+      setInfoMessage('Se você confirmou seu e-mail em outro dispositivo ou navegador, informe sua senha para entrar e continuar.');
+      setEmailConfirmationPending(false);
+      setMode('login');
+      if (registeredEmail) {
+        setEmail(registeredEmail);
+      }
+    } catch {
+      setAuthError('Não foi possível verificar a confirmação neste momento. Tente entrar com seu e-mail e senha.');
+    } finally {
       setLoading(false);
     }
   }
@@ -132,10 +179,23 @@ export default function LoginPage() {
 
         const { data, error } = await signUpWithPassword(email, password);
         if (error) {
-          setAuthError(error.message || 'Não foi possível concluir o cadastro.');
+          const errMsg = error.message || '';
+          if (errMsg.toLowerCase().includes('already registered') || errMsg.toLowerCase().includes('already been registered')) {
+            setAuthError('Este e-mail já possui uma conta no Escala do Reino. Escolha a opção "Já tenho conta — Entrar" para acessar com sua senha ou use a recuperação de senha.');
+          } else {
+            setAuthError(errMsg || 'Não foi possível concluir o cadastro.');
+          }
         } else {
+          // Se identities for um array vazio, indica conta já cadastrada no Auth com confirmação ligada
+          if (data?.user && Array.isArray(data.user.identities) && data.user.identities.length === 0) {
+            setAuthError('Este e-mail já possui uma conta no Escala do Reino. Escolha a opção "Já tenho conta — Entrar" para acessar com sua senha ou use a recuperação de senha.');
+            return;
+          }
+
           // Se session for nula, significa que a confirmação de e-mail é exigida pelo Auth
           if (!data?.session) {
+            setRegisteredEmail(email);
+            setEmailConfirmationPending(true);
             setInfoMessage('Cadastro realizado! Enviamos um e-mail de confirmação. Por favor, confirme seu e-mail antes de acessar.');
             setPassword('');
             setConfirmPassword('');
@@ -190,9 +250,48 @@ export default function LoginPage() {
         <h1 className="login-title">Escala do Reino</h1>
         <p className="login-subtitle">Acesso e Identidade</p>
 
-        {pendingInviteToken && (
-          <div className="login-invite-badge" role="status">
-            <span>Você possui um convite em andamento. Conecte-se com o e-mail convidado.</span>
+        {/* Contexto claro do convite e escolhas visíveis */}
+        {pendingInviteToken && !isPasswordRecovery && (
+          <div className="login-invite-context">
+            <div className="login-invite-badge" role="status">
+              <span className="login-invite-badge-title">Você recebeu um convite.</span>
+              <span className="login-invite-badge-text">
+                Para continuar, use o e-mail para o qual ele foi emitido.
+              </span>
+            </div>
+
+            <div className="login-invite-choices" role="tablist" aria-label="Opções de acesso pelo convite">
+              <button
+                type="button"
+                role="tab"
+                id="btn-invite-first-access"
+                aria-selected={mode === 'register'}
+                className={`login-invite-choice ${mode === 'register' ? 'is-active' : ''}`}
+                onClick={() => {
+                  setMode('register');
+                  setAuthError(null);
+                  setInfoMessage(null);
+                  setEmailConfirmationPending(false);
+                }}
+              >
+                É meu primeiro acesso — Criar conta
+              </button>
+              <button
+                type="button"
+                role="tab"
+                id="btn-invite-existing-account"
+                aria-selected={mode === 'login'}
+                className={`login-invite-choice ${mode === 'login' ? 'is-active' : ''}`}
+                onClick={() => {
+                  setMode('login');
+                  setAuthError(null);
+                  setInfoMessage(null);
+                  setEmailConfirmationPending(false);
+                }}
+              >
+                Já tenho conta — Entrar
+              </button>
+            </div>
           </div>
         )}
 
@@ -209,8 +308,8 @@ export default function LoginPage() {
           </div>
         )}
 
-        {/* Mensagens de Sucesso / Informativas */}
-        {infoMessage && (
+        {/* Mensagens de Sucesso / Informativas (quando não estiver no card dedicado de confirmação) */}
+        {infoMessage && !emailConfirmationPending && (
           <div className="login-alert login-alert--success" role="status" aria-live="polite">
             <CheckCircle2 size={16} />
             <span>{infoMessage}</span>
@@ -312,8 +411,81 @@ export default function LoginPage() {
               <ArrowLeft size={13} /> Voltar ao login
             </button>
           </form>
+        ) : emailConfirmationPending ? (
+          /* 3. MODO: CONFIRMAÇÃO DE E-MAIL PENDENTE COM ORIENTAÇÃO DE CONTINUIDADE */
+          <div className="login-confirmation-card" role="status">
+            <div className="login-confirmation-icon" aria-hidden="true">
+              <Mail size={30} />
+            </div>
+
+            <h2 className="login-form-heading">Confirme seu e-mail para continuar</h2>
+
+            <div className="login-alert login-alert--success" role="status" aria-live="polite">
+              <CheckCircle2 size={16} />
+              <span>
+                Cadastro realizado! Enviamos um e-mail de confirmação. Por favor, confirme seu e-mail antes de acessar.
+              </span>
+            </div>
+
+            <div className="login-confirmation-details">
+              <p className="login-confirmation-email-sent">
+                Instruções enviadas para: <strong>{registeredEmail || email}</strong>
+              </p>
+
+              {pendingInviteToken ? (
+                <div className="login-confirmation-invite-guidance">
+                  <h3 className="login-confirmation-guidance-title">
+                    Próximos passos para resgatar seu convite:
+                  </h3>
+                  <ol className="login-confirmation-step-list">
+                    <li>
+                      Abra sua caixa de entrada e clique no link de confirmação recebido.
+                    </li>
+                    <li>
+                      <strong>Se a confirmação abrir uma nova aba</strong>, retorne a esta aba do convite ou reabra o link original que você recebeu.
+                    </li>
+                    <li>
+                      O convite está preservado para este e-mail e será validado assim que sua conta estiver autenticada.
+                    </li>
+                  </ol>
+                  <p className="login-confirmation-warning">
+                    <em>Atenção:</em> A criação da conta não concede acesso à igreja automaticamente. Na etapa seguinte, você revisará e confirmará os dados do convite.
+                  </p>
+                </div>
+              ) : (
+                <p className="login-confirmation-subtext">
+                  Abra sua caixa de entrada e clique no link recebido para ativar sua conta de acesso.
+                </p>
+              )}
+            </div>
+
+            <div className="login-confirmation-actions">
+              <button
+                type="button"
+                id="btn-check-confirmed-email"
+                className="btn btn-primary login-btn-submit"
+                onClick={handleCheckSessionAfterConfirm}
+                disabled={loading}
+              >
+                {loading ? <Spinner /> : 'Já confirmei meu e-mail — Continuar'}
+              </button>
+
+              <button
+                type="button"
+                className="btn btn-link login-toggle-link"
+                onClick={() => {
+                  setEmailConfirmationPending(false);
+                  setMode('login');
+                  setAuthError(null);
+                }}
+                disabled={loading}
+              >
+                <ArrowLeft size={13} /> Entrar com senha criada
+              </button>
+            </div>
+          </div>
         ) : (
-          /* 3. MODOS NORMAIS: LOGIN OU CADASTRO */
+          /* 4. MODOS NORMAIS: LOGIN OU CADASTRO */
           <>
             {/* Botão Google (Opção rápida) */}
             <button
@@ -329,13 +501,49 @@ export default function LoginPage() {
               <span>{loading ? 'Redirecionando…' : 'Entrar com Google'}</span>
             </button>
 
+            {pendingInviteToken && (
+              <p className="login-google-hint">
+                Lembre-se: sua conta Google deve usar o mesmo e-mail para o qual o convite foi emitido.
+              </p>
+            )}
+
             <div className="login-divider">
               <span>ou com e-mail e senha</span>
             </div>
 
             <form onSubmit={handleEmailPasswordSubmit} className="login-email-form">
+              {mode === 'register' && (
+                <>
+                  <h2 className="login-form-heading">
+                    {pendingInviteToken ? 'É meu primeiro acesso — Criar conta' : 'Criar Conta'}
+                  </h2>
+                  <p className="login-form-subheading">
+                    {pendingInviteToken
+                      ? 'Informe o e-mail convidado e defina sua senha de acesso:'
+                      : 'Preencha seus dados para criar sua conta:'}
+                  </p>
+
+                  {pendingInviteToken && (
+                    <div className="login-invite-scope-note">
+                      Esta conta é pessoal para o seu acesso ao Escala do Reino. Criar sua conta não cria uma nova igreja nem outro membro. O seu acesso à comunidade será validado na etapa seguinte pelo convite.
+                    </div>
+                  )}
+                </>
+              )}
+
+              {mode === 'login' && pendingInviteToken && (
+                <>
+                  <h2 className="login-form-heading">Já tenho conta — Entrar</h2>
+                  <p className="login-form-subheading">
+                    Conecte-se com sua conta para resgatar o convite recebido:
+                  </p>
+                </>
+              )}
+
               <div className="form-group">
-                <label htmlFor="login-email-input" className="form-label">E-mail:</label>
+                <label htmlFor="login-email-input" className="form-label">
+                  {pendingInviteToken ? 'E-mail convidado:' : 'E-mail:'}
+                </label>
                 <input
                   id="login-email-input"
                   type="email"
@@ -350,7 +558,9 @@ export default function LoginPage() {
 
               <div className="form-group">
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                  <label htmlFor="login-password-input" className="form-label">Senha:</label>
+                  <label htmlFor="login-password-input" className="form-label">
+                    {mode === 'register' ? (pendingInviteToken ? 'Crie sua senha:' : 'Senha:') : 'Senha:'}
+                  </label>
                   {mode === 'login' && (
                     <button
                       type="button"
@@ -370,7 +580,7 @@ export default function LoginPage() {
                   id="login-password-input"
                   type="password"
                   className="form-input"
-                  placeholder="Sua senha"
+                  placeholder={mode === 'register' ? 'Mínimo 6 caracteres' : 'Sua senha'}
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
                   disabled={loading || missingConfig}
@@ -400,14 +610,20 @@ export default function LoginPage() {
                 className="btn btn-primary login-btn-submit"
                 disabled={loading || missingConfig || !email || !password}
               >
-                {loading ? <Spinner /> : mode === 'login' ? 'Entrar com E-mail' : 'Criar Nova Conta'}
+                {loading ? (
+                  <Spinner />
+                ) : mode === 'login' ? (
+                  pendingInviteToken ? 'Entrar e Continuar' : 'Entrar com E-mail'
+                ) : (
+                  pendingInviteToken ? 'Criar Conta e Continuar' : 'Criar Nova Conta'
+                )}
               </button>
             </form>
 
             <div className="login-toggle-mode">
               {mode === 'login' ? (
                 <p>
-                  Não possui uma conta?{' '}
+                  {pendingInviteToken ? 'Primeira vez no Escala do Reino? ' : 'Não possui uma conta? '}
                   <button
                     type="button"
                     className="btn-link-mode"
@@ -415,10 +631,11 @@ export default function LoginPage() {
                       setMode('register');
                       setAuthError(null);
                       setInfoMessage(null);
+                      setEmailConfirmationPending(false);
                     }}
                     id="btn-switch-to-register"
                   >
-                    Cadastre-se
+                    {pendingInviteToken ? 'Criar conta (primeiro acesso)' : 'Cadastre-se'}
                   </button>
                 </p>
               ) : (
@@ -431,6 +648,7 @@ export default function LoginPage() {
                       setMode('login');
                       setAuthError(null);
                       setInfoMessage(null);
+                      setEmailConfirmationPending(false);
                     }}
                     id="btn-switch-to-login"
                   >
@@ -474,7 +692,7 @@ export default function LoginPage() {
           box-shadow: var(--shadow-lg);
           padding: 36px 32px;
           width: 100%;
-          max-width: 420px;
+          max-width: 440px;
           display: flex;
           flex-direction: column;
           align-items: center;
@@ -516,19 +734,97 @@ export default function LoginPage() {
           text-transform: uppercase;
         }
 
+        /* ── Bloco de Contexto e Opções do Convite ── */
+        .login-invite-context {
+          width: 100%;
+          margin-bottom: 16px;
+          display: flex;
+          flex-direction: column;
+          gap: 10px;
+        }
+
         .login-invite-badge {
           background: var(--primary-surface);
           border: 1px solid var(--primary-border);
           border-radius: var(--radius-md);
-          padding: 8px 12px;
-          font-size: 12px;
-          color: var(--primary);
+          padding: 10px 14px;
+          display: flex;
+          flex-direction: column;
+          gap: 4px;
           text-align: center;
-          margin-bottom: 16px;
-          width: 100%;
+        }
+
+        .login-invite-badge-title {
+          font-size: 13px;
+          font-weight: 700;
+          color: var(--primary);
+        }
+
+        .login-invite-badge-text {
+          font-size: 12px;
+          color: var(--text-secondary);
           line-height: 1.4;
         }
 
+        .login-invite-choices {
+          display: grid;
+          grid-template-columns: 1fr 1fr;
+          gap: 8px;
+          width: 100%;
+        }
+
+        .login-invite-choice {
+          padding: 10px 8px;
+          font-size: 12px;
+          font-weight: 600;
+          border-radius: var(--radius-md);
+          border: 1px solid var(--border-subtle);
+          background: var(--bg-surface);
+          color: var(--text-secondary);
+          cursor: pointer;
+          transition: all 0.15s ease;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          text-align: center;
+          line-height: 1.3;
+        }
+
+        .login-invite-choice:hover:not(:disabled) {
+          border-color: var(--primary);
+          color: var(--text-primary);
+        }
+
+        .login-invite-choice.is-active {
+          border-color: var(--primary);
+          background: var(--primary-surface);
+          color: var(--primary);
+          font-weight: 700;
+          box-shadow: 0 0 0 1px var(--primary-border);
+        }
+
+        .login-invite-scope-note {
+          background: var(--bg-surface);
+          border: 1px solid var(--border-subtle);
+          border-left: 3px solid var(--primary);
+          border-radius: var(--radius-md);
+          padding: 10px 12px;
+          font-size: 12px;
+          color: var(--text-secondary);
+          line-height: 1.45;
+          margin-bottom: 4px;
+          text-align: left;
+        }
+
+        .login-google-hint {
+          font-size: 11px;
+          color: var(--text-muted);
+          text-align: center;
+          margin: 6px 0 0;
+          line-height: 1.35;
+        }
+
+        /* ── Alertas e Mensagens ── */
         .login-alert {
           width: 100%;
           display: flex;
@@ -559,6 +855,92 @@ export default function LoginPage() {
           color: #065f46;
         }
 
+        /* ── Card de Confirmação Pendente ── */
+        .login-confirmation-card {
+          width: 100%;
+          display: flex;
+          flex-direction: column;
+          align-items: center;
+          text-align: center;
+          gap: 12px;
+        }
+
+        .login-confirmation-icon {
+          width: 58px;
+          height: 58px;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          background: var(--primary-surface);
+          border: 2px solid var(--primary-border);
+          border-radius: var(--radius-lg);
+          color: var(--primary);
+          margin-bottom: 4px;
+        }
+
+        .login-confirmation-details {
+          width: 100%;
+          text-align: left;
+        }
+
+        .login-confirmation-email-sent {
+          font-size: 13px;
+          color: var(--text-secondary);
+          margin: 0 0 12px;
+          text-align: center;
+        }
+
+        .login-confirmation-invite-guidance {
+          background: var(--bg-surface);
+          border: 1px solid var(--border-subtle);
+          border-radius: var(--radius-md);
+          padding: 14px;
+          font-size: 12px;
+          line-height: 1.5;
+          margin-bottom: 8px;
+        }
+
+        .login-confirmation-guidance-title {
+          font-size: 13px;
+          font-weight: 700;
+          color: var(--text-primary);
+          margin: 0 0 8px;
+        }
+
+        .login-confirmation-step-list {
+          margin: 0 0 12px;
+          padding-left: 18px;
+          color: var(--text-secondary);
+        }
+
+        .login-confirmation-step-list li {
+          margin-bottom: 6px;
+        }
+
+        .login-confirmation-warning {
+          font-size: 11px;
+          color: var(--text-muted);
+          margin: 0;
+          line-height: 1.4;
+          border-top: 1px solid var(--border-subtle);
+          padding-top: 8px;
+        }
+
+        .login-confirmation-subtext {
+          font-size: 13px;
+          color: var(--text-secondary);
+          text-align: center;
+          margin: 0 0 8px;
+        }
+
+        .login-confirmation-actions {
+          width: 100%;
+          display: flex;
+          flex-direction: column;
+          gap: 8px;
+        }
+
+        /* ── Botões e Formulários Padrão ── */
         .login-btn-google {
           width: 100%;
           display: flex;
@@ -621,8 +1003,9 @@ export default function LoginPage() {
         .login-form-subheading {
           font-size: 12px;
           color: var(--text-secondary);
-          margin: 0 0 10px;
+          margin: 0 0 6px;
           text-align: center;
+          line-height: 1.4;
         }
 
         .login-btn-submit {
