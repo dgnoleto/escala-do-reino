@@ -8,8 +8,12 @@ Projeto em definição, com piloto previsto no **Ministério Shalom**, focado em
 
 Documentação de produto consolidada em **30/09/2026**, com regras atualizadas em **02/10/2026** e novas decisões de produto aprovadas pelo responsável em **03/10/2026**: criação de nova igreja ("Criar minha igreja") com concessão atômica do primeiro administrador, administração ativa em no máximo uma igreja por conta Auth, proteção de continuidade do último administrador, reutilização de conta entre igrejas com seleção explícita de contexto e exclusão lógica recuperável.
 
-Estado de implementação registrado neste README em **03/10/2026**: a web tem login Google, consulta autorizada do próprio vínculo com tela inicial de dados reais, tela de gestão de membros (listagem paginada e cadastro com apenas o nome, com idempotência e auditoria) e fluxo completo de **Criar minha igreja** (verificação de elegibilidade, modal de criação com sugestão editável de nome, fuso IANA, endereço, mapa e política warn/block, criação atômica no servidor, limite físico de 1 administração ativa por conta e salvaguarda do último administrador). O planejamento e a condução do culto permanecem como **protótipo preservado no código**, sem integração com o banco e sem exposição no fluxo atual. A aplicação ainda não está pronta para produção. A arquitetura, a segurança e a tecnologia do aplicativo Android/iOS permanecem em definição.
+Estado de implementação registrado historicamente em **03/10/2026** e atualizado em **11/10/2026** (após integração dos PRs #8 e #9): a aplicação web contempla autenticação (Google e e-mail/senha com fluxo orientado de primeiro acesso por convite), consulta autorizada do próprio vínculo com tela inicial de dados reais, tela de gestão de membros (listagem paginada e cadastro com apenas o nome, com idempotência e auditoria), fluxo completo de **Criar minha igreja** (verificação de elegibilidade, modal de criação com sugestão editável de nome, fuso IANA, endereço, mapa e política warn/block, criação atômica no servidor, limite físico de 1 administração ativa por conta e salvaguarda do último administrador), e o fluxo completo de **convites de acesso à igreja** (emissão pelo admin com e-mail do destinatário, compartilhamento manual de link com validade de 72h, primeiro acesso com senha definida pela pessoa, orientação de confirmação de e-mail e retomada protegida, resgate com confirmação de nome ou proposta de outro nome, reemissão cancelando proposta pendente e rejeição administrativa encerrando a tentativa). O planejamento e a condução do culto permanecem como **protótipo preservado no código**, sem integração com o banco e sem exposição no fluxo atual. A aplicação ainda não está pronta para produção. A arquitetura, a segurança e a tecnologia do aplicativo Android/iOS permanecem em definição.
 
+- [Índice da documentação — organização por regras, QA e histórico](docs/README.md).
+- [Estado atual — versão de referência e entregas conhecidas](docs/ESTADO-ATUAL.md).
+- [Guia de entrada para QA — roteiro e testes de acesso](docs/qa/GUIA-ENTRADA-QA.md).
+- [Mapa de ambientes e laboratórios](docs/ambientes/LABORATORIOS.md).
 - [PRD — escopo do MVP, regras e critérios de aceite](docs/PRD.md).
 - [Arquitetura do banco e das permissões — modelo lógico, segurança e pendências](docs/ARQUITETURA-BANCO.md).
 - [Schema inicial — campos e restrições de igreja, membros e acesso](docs/SCHEMA-ACESSO.md).
@@ -17,7 +21,7 @@ Estado de implementação registrado neste README em **03/10/2026**: a web tem l
 - [Consulta autorizada do próprio acesso — contrato, scripts e limites de validação](docs/CONSULTA-ACESSO.md).
 - [Cadastro e listagem de membros na web — contratos, auditoria e idempotência](docs/CADASTRO-MEMBROS.md).
 - [Criação de igreja e salvaguardas de administração — contratos, RPCs, scripts 009/010 e testes](docs/CRIACAO-IGREJA.md).
-- [Contratos de convites de acesso e aprovação de nome — especificação para revisão](docs/CONTRATO-CONVITES-ACESSO.md).
+- [Contratos de convites de acesso e aprovação de nome — especificação e interface entregue nos PRs #8 e #9](docs/CONTRATO-CONVITES-ACESSO.md).
 - [Evolução futura — decisões preservadas e propostas adiadas](docs/EVOLUCAO-FUTURA.md).
 
 O MVP é focado no culto. Convites de participação, reservas, prazos e aceite eletrônico continuam futuros. O convite para **acessar a igreja**, com login Google ou e-mail/senha e vínculo a um membro cadastrado, faz parte da primeira versão. O convite vale 72 horas e é de uso único. Não haverá CPF. O Supabase Auth gerencia as senhas; a aplicação oferece recuperação por e-mail sem permitir ao admin definir a senha alheia. Os logins Apple e Microsoft (referido como Windows na discussão do projeto) foram descartados do escopo atual pelo responsável, em razão dos custos de configuração avaliados nesta etapa. Não há compromisso de implementá-los posteriormente.
@@ -75,16 +79,15 @@ Para iniciar o servidor de desenvolvimento na porta 3000:
 ```bash
 npm run dev
 ```
-
 ### Ferramenta Separada de Autenticação Local para Testes
 
-O laboratório local não possui OAuth do Google habilitado e a tela de login de produto ainda não implementou e-mail/senha. Para permitir a obtenção de sessão Supabase Auth real durante o desenvolvimento sem alterar rotas, telas ou botões de produto:
+Historicamente, o laboratório local não contava com OAuth do Google habilitado e a tela inicial de produto ainda não possuía e-mail/senha antes do incremento de convites. Com os PRs #8 e #9, a interface de produto passou a suportar fluxo orientado de primeiro acesso por convite com definição de senha, entrada por e-mail/senha ("Já tenho conta") e botão Google. Para fins de testes e suporte ao desenvolvimento local em ambiente controlado sem alterar rotas ou botões de produto:
 - Está disponível a ferramenta separada `tools/local-auth-test.html` (com módulo `tools/local-auth-test.js`), acessível exclusivamente via navegador durante `npm run dev` em:
   `http://127.0.0.1:3000/tools/local-auth-test.html` (ou `http://localhost:3000/tools/local-auth-test.html`).
 - **Guardas estritas:** A ferramenta exige runtime em modo DEV, página em loopback, backend Supabase em HTTP loopback na porta 54321 e chave pública configurada. Na falha de qualquer guarda, nenhuma chamada Auth é executada.
 - **Sessão real, sem concessão automática:** A ferramenta utiliza a instância centralizada de `src/lib/supabaseClient.js`, permitindo cadastrar (`signUp`) e autenticar (`signInWithPassword`) contas de teste fictícias com e-mail do domínio `@example.com` e senha digitada pelo operador. A sessão é gravada no `localStorage` compartilhado da mesma origem. A concessão do primeiro administrador e a criação da igreja permanecem exclusivas do fluxo de produto (modal e RPC atômica).
 - **Sem alteração de produto:** A ferramenta não está na pasta `public/`, não é importada pelo aplicativo de produto e não é incluída na pasta `dist/` durante `npm run build`.
-- **Ressalva importante:** A autenticação manual por este utilitário local viabiliza os testes de interface do laboratório; ela **não** valida o botão Google OAuth do piloto nem conclui a implementação do fluxo e-mail/senha de produto previsto no PRD 3.1.
+- **Ressalva importante:** A autenticação manual por este utilitário local viabiliza testes técnicos isolados no laboratório; ela **não** valida o botão Google OAuth do piloto nem substitui a validação de entrega real de e-mails via SMTP no ambiente de produção.
 
 
 ## Login e acesso à igreja
@@ -98,11 +101,11 @@ O fluxo de autenticação usa o [Supabase Auth com OAuth do Google](https://supa
 **Comportamento atual:**
 
 - Inicialização: recupera a sessão salva antes de decidir qual tela mostrar.
-- Sem sessão: exibe a tela de login, atualmente apenas com Google.
+- Sem sessão: exibe a tela de login com opção de entrada com Google e, na abertura de links de convite ou acesso existente, escolha orientada entre "Primeiro acesso — Criar conta" (definindo senha própria) e "Já tenho conta — Entrar" (e-mail e senha cadastrados), além de recuperação de senha e orientações claras para confirmação de e-mail e retomada do convite.
 - Sessão válida: consulta `public.get_my_church_access()`, sem parâmetros de identidade.
 - Vínculo elegível: exibe nome cadastrado do membro, igreja e perfil retornados pelo banco.
-- Administrador: exibe ação para acessar a tela de **Gestão de Membros** da igreja.
-- Sem vínculo elegível: exibe "Acesso à igreja ainda não liberado", com identificação da própria conta e botão "Sair".
+- Administrador: exibe ação para acessar a tela de **Gestão de Membros** da igreja, emissão de convites e moderação de solicitações de nome.
+- Sem vínculo elegível: exibe "Acesso à igreja ainda não liberado", com identificação da própria conta e botão "Sair", orientando o usuário a reabrir o link de convite caso esteja em processo de adesão.
 - Falha na consulta: exibe erro com "Tentar novamente" e "Sair"; não confunde falha com ausência de vínculo.
 - Recarga: recupera a sessão e consulta o vínculo novamente, sem montar as telas fictícias do protótipo.
 - Revalidação em segundo plano: ao retomar foco na aba ou reconectar à internet, revalida silenciosamente o acesso e atualiza a interface caso haja revogação.
@@ -116,7 +119,7 @@ Login sozinho não concede acesso. A consulta exige conta confirmada e elegível
 - **Reutilização da conta e seleção de igreja:** A mesma conta poderá ser administradora na igreja A e possuir acesso básico à igreja B por convite (sem concessão automática de administração ou liderança em B). Uma conta com múltiplos vínculos autorizados deverá escolher explicitamente a igreja consultada; consultas, dados e permissões usam esse contexto. Trocar de igreja invalida consultas antigas e impede mistura de dados. O fluxo exige escolha explícita via `SelectChurchPage` (`select_church`), sem fallback silencioso para o primeiro vínculo.
 - **Aviso sobre implantação no banco e integração:** Em 06/10/2026, mediante autorização expressa do responsável, o script permanente `009_create_my_church.sql` foi instalado com sucesso no banco de dados do piloto (projeto `jvpctgqudvjealzileib`) e verificado pelo `010_verify_create_my_church.sql` com sete indicadores verdadeiros. O ensaio `009_validate_create_my_church.sql`, que cria contas sintéticas em `auth.users`, permanece restrito ao ambiente isolado de laboratório e não foi executado no piloto. O código da aplicação web foi incorporado à branch `main` pelo merge `d372a58d600d9d7789b3aec25431542301e5c423` (PR #7, head `018e3508bb12378d3fa6d4714218e7dc87874fc8`), com a branch `feat/create-my-church` preservada. A publicação externa do frontend em ambiente de produção permanece pendente. Os fluxos subsequentes (convites com e-mail e exclusão lógica) permanecem para seus respectivos incrementos.
 
-Google e e-mail/senha continuam sendo os métodos previstos no PRD. A interface de e-mail/senha, confirmação e recuperação ainda precisa ser implementada e testada; SMTP próprio permanece pendente antes do piloto com membros.
+Google e e-mail/senha são os métodos previstos no PRD. A interface web para entrada com e-mail/senha, criação de conta com senha definida pelo usuário no primeiro acesso por convite, orientação de confirmação de e-mail e retomada protegida do convite foi entregue e verificada nos PRs #8 e #9 (detalhes em [docs/CONTRATO-CONVITES-ACESSO.md](docs/CONTRATO-CONVITES-ACESSO.md) e [docs/ESTADO-ATUAL.md](docs/ESTADO-ATUAL.md)). O envio por SMTP próprio e a validação de entrega real de e-mails de confirmação/recuperação no piloto permanecem pendentes antes do uso real com membros.
 
 ## Estado do banco e evidências
 
@@ -136,9 +139,9 @@ O incremento de **cadastro real de membros na web** e o fluxo de **Criar minha i
 - O cadastro básico de membro coleta **apenas o nome** (`display_name`), sem CPF. O e-mail do destinatário será informado posteriormente, no fluxo de emissão do convite. **Não há campo de e-mail no formulário atual de cadastro.**
 - O fluxo "Criar minha igreja" implementa validação NFC, fuso IANA, endereço, mapa estrito, política warn/block, idempotência por comando, retenção de comando em voo, reconciliação por recibo e transição segura para a igreja criada com identificador textual direto.
 - **Evidências de validação automatizada e histórico de laboratório/piloto:**
-  - Os seis arquivos versionados em `test/` totalizam **116 testes automatizados** distribuídos em **23 suítes** (100% aprovados, 0 falhas): ciclo de comandos de membros (33 testes, 6 suítes), criação de igreja, geração explícita de sessão e isolamento (35 testes, 8 suítes), componentes reais de produção com React Test Renderer 18.3.1 (7 testes, 1 suíte, incluindo três regressões de contexto M61/PRD), validação estrita da URL do Supabase e chave pública (25 testes, 5 suítes), guardas de segurança da ferramenta de autenticação local (10 testes, 1 suíte) e renderização segura DOM do utilitário local (6 testes, 2 suítes).
-  - O comando geral `npm.cmd test` executa `node --test` e registra **117 resultados em 23 suítes** porque o test runner nativo também descobre o arquivo `tools/local-auth-test.js` (terminado em `test.js`), reportando-o como resultado adicional sem falhas. A execução explícita dos arquivos de teste via `node --test (Get-ChildItem test/*.test.js)` reporta exatamente 116 testes em 23 suítes.
-  - O build de produção Vite compila com sucesso (`npm.cmd run build`), sem incluir a ferramenta de teste local em `dist/`.
+  - **Referência histórica do PR #7 (03/10/2026):** os seis arquivos de teste totalizavam 116 testes automatizados em 23 suítes (100% aprovados), cobrindo ciclo de membros, criação de igreja, URL do Supabase e guardas do utilitário local.
+  - **Referência final consolidada no fechamento do PR #9 (11/10/2026):** a suíte expandiu para **187 testes automatizados em 25 suítes** (100% aprovados, 0 falhas), incorporando testes de componentes reais de convite (`test/invitation-components-real.test.js`), ciclo de comandos de convite, primeiro acesso, contraprovas de sessão e proteções contra corridas e vazamentos em mesma aba (documentado em [docs/ESTADO-ATUAL.md](docs/ESTADO-ATUAL.md)).
+  - O build de produção Vite compila com sucesso (`npm run build`), sem incluir a ferramenta de teste local em `dist/` (aviso de bundle acima de 500 kB permanece para otimização futura).
   - Esses testes comprovam o comportamento do cliente web, contratos dos serviços e a montagem/transição real de telas no React.
   - O responsável confirmou no navegador o funcionamento do cadastro e da listagem, a preservação dos quatro membros na tela durante a falta de conexão e a retirada do aviso após a reconexão.
   - **Validações já executadas em laboratório local:**
@@ -164,7 +167,7 @@ Membro, conta Auth e vínculo de acesso são entidades distintas: o cadastro de 
 **Sequência de trabalho oficial aprovada pelo responsável:**
 1. **Documentação e alinhamento de requisitos:** Consolidação das regras e critérios de aceite.
 2. **Criação de igreja e administração (entregue no código, scripts e testes, integrado via PR #7):** Fluxo "Criar minha igreja", criação atômica, limite de 1 igreja administrada por conta Auth e continuidade do último administrador (entregues em `src/`, scripts `docs/sql/009_*.sql` e `010_*.sql`, com documentação em `docs/CRIACAO-IGREJA.md`, incorporados à branch `main` no merge `d372a58`).
-3. **Convites e seleção de igreja (etapa em preparação de contratos):** Emissão de convites informando e-mail do destinatário, compartilhamento manual do link pelo administrador no primeiro incremento, resgate seguro com confirmação de nome ou proposta de outro nome (com reemissão cancelando proposta pendente e rejeição encerrando a tentativa), seleção explícita de igreja e isolamento estrito de contexto.
+3. **Convites e seleção de igreja (entregue no código, scripts e testes, integrado via PRs #8 e #9):** Emissão de convites informando e-mail do destinatário, compartilhamento manual do link de 72 horas pelo administrador, primeiro acesso com senha definida pelo usuário, resgate seguro com confirmação de nome ou proposta de outro nome (com reemissão cancelando proposta pendente e rejeição encerrando a tentativa), orientação de confirmação e retomada protegida, seleção explícita de igreja e isolamento estrito de contexto (entregues em `src/`, suíte de 187 testes/25 suítes, scripts `docs/sql/011_*.sql` e `012_*.sql`, incorporados à branch `main` nos merges `04be37e` e `84bf20f`; documentação em [docs/CONTRATO-CONVITES-ACESSO.md](docs/CONTRATO-CONVITES-ACESSO.md) e [docs/ESTADO-ATUAL.md](docs/ESTADO-ATUAL.md)).
 4. **Exclusão lógica e recuperação:** Remoção lógica recuperável, preservação de integridade, restauro auditado e salvaguarda do último administrador.
 
 O `AppContext` e os perfis simulados continuam preservados para avaliação futura, sem montagem no fluxo real. A existência dessas telas não comprova conformidade integral com o PRD nem autoriza reutilizar suas regras de permissão.
