@@ -1,19 +1,19 @@
 # Escala do Reino — Contrato de Convites de Acesso, Aprovação de Nome e Seleção de Igreja
 
-Versão 2 · 6 de outubro de 2026
+Versão 2 (06/10/2026) · Contextualização histórica e entrega consolidada em 11/10/2026
 
 **Incremento:** Convites de acesso vinculados a membros existentes, fluxo de primeiro acesso (confirmação ou proposta de outro nome), análise administrativa de solicitações, ciclo de recibos idempotente e integração com a seleção explícita de contexto de igreja.
 
-Este documento estabelece a especificação completa de contratos de interface, modelos de estados, tratamento de concorrência, replay de comandos, auditoria e matriz de testes para subsidiar a implementação no banco de dados (`PostgreSQL` / `Supabase`) e na aplicação web (`React`). Nenhuma alteração física de código de produto, execução de SQL ou migração em banco de dados é realizada nesta etapa documental.
+**Nota de contextualização documental:** Este documento registra a especificação normativa original e as propostas técnicas formuladas durante a preparação da etapa de convites (Seções 1 a 10), bem como a **implementação factual da interface e os limites contratuais vigentes** consolidados na **Seção 11** após a integração de código e testes via PR #8 (`04be37e`, head `de97085`) e PR #9 (`84bf20f`, head `ba85259`). As propostas técnicas iniciais (Seção 2.2) permanecem identificadas em sua origem de engenharia, sem conversão retroativa em decisões normativas amplas além do código e dos contratos efetivamente verificados. Para a visão vigente do projeto, consultar também o [Índice da documentação](README.md) e o [Estado atual](ESTADO-ATUAL.md).
 
 ---
 
 ## 1. Resumo Executivo e Enquadramento da Etapa
 
-- **Branch de Trabalho:** `docs/access-invitations-contract`
-- **Base de Origem:** `origin/main` no merge do PR #7 (`d372a58d600d9d7789b3aec25431542301e5c423`), que incorporou o head `018e3508bb12378d3fa6d4714218e7dc87874fc8` (branch `feat/create-my-church` preservada).
-- **Estrutura Prévia no Piloto:** Scripts `009_create_my_church.sql` e `010_verify_create_my_church.sql` já aplicados e verificados no piloto (Ministério Shalom); não serão reaplicados.
-- **Natureza Desta Entrega:** Estritamente documental e normativa. Nomes de RPCs, assinaturas e propostas técnicas detalhadas representam alternativas de engenharia submetidas à revisão e aprovação pelo responsável, sem constituir código implementado.
+- **Origem Documental:** Branch `docs/access-invitations-contract`, elaborada em 06/10/2026 com base no merge do PR #7 (`d372a58d600d9d7789b3aec25431542301e5c423`), que incorporou o head `018e3508bb12378d3fa6d4714218e7dc87874fc8` (branch `feat/create-my-church` preservada).
+- **Sequência Histórica e Integração:** Os contratos, RPCs (scripts `011_*.sql`), componentes web em `src/` e a suíte com testes de componentes reais foram implementados e integrados à branch `main` pelo PR #8 (10/10/2026), com refinamento de primeiro acesso e proteção de sessão na mesma aba pelo PR #9 (11/10/2026).
+- **Estrutura Prévia no Piloto:** Scripts `009_create_my_church.sql` e `010_verify_create_my_church.sql` já aplicados e verificados no piloto (Ministério Shalom); não foram reaplicados.
+- **Natureza das Seções Iniciais:** As Seções 1 a 10 refletem o documento original de desenho e propostas técnicas para revisão pelo responsável. O código implementado, as rotas e os contratos de interface efetivamente integrados encontram-se documentados e delimitados na **Seção 11**.
 
 ---
 

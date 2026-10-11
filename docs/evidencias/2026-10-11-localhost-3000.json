@@ -1,0 +1,82 @@
+{
+  "checkedAtUtc": "2026-10-11T14:38:10.2740117Z",
+  "url": "http://localhost:3000/",
+  "reviewedRevision": "ba852599a5b816cfab9d44161129eb87bec1ca99",
+  "reviewedTree": "bbc4804395314f39609aa655dc0e496d5bbfdda8",
+  "localHead": "ba852599a5b816cfab9d44161129eb87bec1ca99",
+  "localTree": "bbc4804395314f39609aa655dc0e496d5bbfdda8",
+  "supabaseOrigin": "https://jvpctgqudvjealzileib.supabase.co",
+  "allMatchReviewed": true,
+  "scope": "Comparação de seis arquivos; não certifica limpeza global do checkout, funcionamento completo no piloto ou deploy.",
+  "processes": [
+    {
+      "pid": 8488,
+      "parentPid": 31448,
+      "name": "node.exe",
+      "startedAt": "2026-10-11T09:56:34.2988620Z",
+      "usesVite": true
+    }
+  ],
+  "checks": [
+    {
+      "path": "src/main.jsx",
+      "removedViteEnvPrelude": false,
+      "restoredViteDependencyImport": false,
+      "servedBlob": "47742c1b1d9f51a2f7974d5d5b25e64c81c33afa",
+      "localBlob": "47742c1b1d9f51a2f7974d5d5b25e64c81c33afa",
+      "expectedBlob": "47742c1b1d9f51a2f7974d5d5b25e64c81c33afa",
+      "matchesLocal": true,
+      "matchesReviewedRevision": true
+    },
+    {
+      "path": "src/App.jsx",
+      "removedViteEnvPrelude": false,
+      "restoredViteDependencyImport": false,
+      "servedBlob": "56d122e900906fe1667b416f2704011ad0c32329",
+      "localBlob": "56d122e900906fe1667b416f2704011ad0c32329",
+      "expectedBlob": "56d122e900906fe1667b416f2704011ad0c32329",
+      "matchesLocal": true,
+      "matchesReviewedRevision": true
+    },
+    {
+      "path": "src/components/LoginPage.jsx",
+      "removedViteEnvPrelude": false,
+      "restoredViteDependencyImport": false,
+      "servedBlob": "754166b372d17ba759d46e790b6aacd9ba9f93ca",
+      "localBlob": "754166b372d17ba759d46e790b6aacd9ba9f93ca",
+      "expectedBlob": "754166b372d17ba759d46e790b6aacd9ba9f93ca",
+      "matchesLocal": true,
+      "matchesReviewedRevision": true
+    },
+    {
+      "path": "src/context/AuthContext.jsx",
+      "removedViteEnvPrelude": false,
+      "restoredViteDependencyImport": false,
+      "servedBlob": "9abdb12acbff207bbf1cf08a857326b8ff9097c7",
+      "localBlob": "9abdb12acbff207bbf1cf08a857326b8ff9097c7",
+      "expectedBlob": "9abdb12acbff207bbf1cf08a857326b8ff9097c7",
+      "matchesLocal": true,
+      "matchesReviewedRevision": true
+    },
+    {
+      "path": "src/components/AccessPendingPage.jsx",
+      "removedViteEnvPrelude": false,
+      "restoredViteDependencyImport": false,
+      "servedBlob": "55866ff7fb4ddf7b04bc9881bd9c4312ac1c8441",
+      "localBlob": "55866ff7fb4ddf7b04bc9881bd9c4312ac1c8441",
+      "expectedBlob": "55866ff7fb4ddf7b04bc9881bd9c4312ac1c8441",
+      "matchesLocal": true,
+      "matchesReviewedRevision": true
+    },
+    {
+      "path": "src/lib/supabaseClient.js",
+      "removedViteEnvPrelude": true,
+      "restoredViteDependencyImport": true,
+      "servedBlob": "fa357c248ea770aecdc2c47c4d3d13d9dbfe47fe",
+      "localBlob": "fa357c248ea770aecdc2c47c4d3d13d9dbfe47fe",
+      "expectedBlob": "fa357c248ea770aecdc2c47c4d3d13d9dbfe47fe",
+      "matchesLocal": true,
+      "matchesReviewedRevision": true
+    }
+  ]
+}
