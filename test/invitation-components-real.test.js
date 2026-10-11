@@ -1624,6 +1624,110 @@ describe('Suíte de Testes da Interface de Convites e Aprovação de Nome (Contr
     assert.ok(rendererManualCheck.root.findByProps({ id: 'btn-email-login' }));
 
     act(() => rendererManualCheck.unmount());
+
+    // 11.8 Chegada de convite por hashchange na mesma aba com LoginPage já montada:
+    // Seleciona primeiro acesso (register) automaticamente e permite alternância para login sem retorno indevido
+    const fixtureSameTab = setupEnvironment({
+      initialUrl: 'http://localhost:3000/',
+      user: null,
+      rpcHandler: async (name, args) => {
+        if (name === 'get_invitation_details') {
+          return {
+            data: [{
+              invitation_id: 'inv-uuid-same-tab',
+              church_id: 'church-uuid-11',
+              church_name: 'Comunidade da Graça',
+              member_id: 'mem-same-tab',
+              member_display_name: 'Lucas Silva',
+              expires_at: '2026-10-14T23:59:59Z',
+              is_valid: true,
+            }],
+            error: null,
+          };
+        }
+        return { data: [], error: null };
+      },
+    });
+
+    // 1. Monta App inicialmente sem convite (modo login padrão)
+    const rendererSameTab = await mount(React.createElement(App));
+    let sameTabText = visibleText(rendererSameTab);
+    assert.match(sameTabText, /Entrar com E-mail/);
+    assert.doesNotMatch(sameTabText, /Você recebeu um convite/);
+
+    // 2. Simula navegação na mesma aba para a URL do convite (dispara hashchange sem remontar App)
+    const sameTabToken = 'SameTabToken0123456789_-InviteTokenTest2026';
+    fixtureSameTab.location.hash = `#/invite?token=${sameTabToken}`;
+    await act(async () => {
+      fixtureSameTab.triggerWindowEvent('hashchange');
+      await new Promise((r) => setTimeout(r, 30));
+    });
+
+    // 3. Verifica que LoginPage na mesma aba detectou o convite e selecionou primeiro acesso (register)
+    sameTabText = visibleText(rendererSameTab);
+    assert.match(sameTabText, /Você recebeu um convite/);
+    assert.match(sameTabText, /É meu primeiro acesso — Criar conta/);
+    assert.match(sameTabText, /Já tenho conta — Entrar/);
+
+    const firstAccessBtnSameTab = rendererSameTab.root.findByProps({ id: 'btn-invite-first-access' });
+    const existingAccBtnSameTab = rendererSameTab.root.findByProps({ id: 'btn-invite-existing-account' });
+    assert.equal(firstAccessBtnSameTab.props['aria-selected'], true, 'Primeiro acesso deve ser selecionado automaticamente após hashchange');
+    assert.equal(existingAccBtnSameTab.props['aria-selected'], false, 'Conta existente não deve ficar selecionada após chegada do convite');
+    assert.ok(rendererSameTab.root.findByProps({ id: 'btn-email-register' }), 'Formulário de cadastro deve ser exibido');
+
+    // 4. Alterna manualmente para "Já tenho conta — Entrar"
+    await act(async () => {
+      existingAccBtnSameTab.props.onClick();
+      await new Promise((r) => setTimeout(r, 20));
+    });
+
+    assert.equal(existingAccBtnSameTab.props['aria-selected'], true, 'Conta existente deve ser selecionada após clique');
+    assert.equal(firstAccessBtnSameTab.props['aria-selected'], false);
+    assert.ok(rendererSameTab.root.findByProps({ id: 'btn-email-login' }), 'Formulário de login deve ser exibido após alternância');
+
+    // 5. Renderizações subsequentes não devem reverter indevidamente para register
+    await act(async () => {
+      rendererSameTab.root.findByProps({ id: 'login-email-input' }).props.onChange({
+        target: { value: 'lucas@exemplo.com' },
+      });
+      await new Promise((r) => setTimeout(r, 20));
+    });
+
+    assert.equal(existingAccBtnSameTab.props['aria-selected'], true, 'Deve permanecer em login mesmo com re-render');
+    assert.ok(rendererSameTab.root.findByProps({ id: 'btn-email-login' }));
+
+    // 6. Pode alternar de volta para primeiro acesso se desejar
+    await act(async () => {
+      firstAccessBtnSameTab.props.onClick();
+      await new Promise((r) => setTimeout(r, 20));
+    });
+    assert.equal(firstAccessBtnSameTab.props['aria-selected'], true);
+    assert.ok(rendererSameTab.root.findByProps({ id: 'btn-email-register' }));
+
+    act(() => rendererSameTab.unmount());
+
+    // 11.9 Prioridade da recuperação de senha: se em recuperação de senha, convite posterior não sobrescreve para register
+    const fixtureRecovery = setupEnvironment({
+      initialUrl: 'http://localhost:3000/',
+      user: null,
+    });
+    const rendererRecovery = await mount(React.createElement(App));
+    await act(async () => {
+      fixtureRecovery.simulateEvent('PASSWORD_RECOVERY', null);
+      await new Promise((r) => setTimeout(r, 30));
+    });
+    assert.match(visibleText(rendererRecovery), /Definir Nova Senha/);
+
+    // Chega convite via hashchange durante recuperação
+    fixtureRecovery.location.hash = `#/invite?token=${sameTabToken}`;
+    await act(async () => {
+      fixtureRecovery.triggerWindowEvent('hashchange');
+      await new Promise((r) => setTimeout(r, 30));
+    });
+    // Deve manter o formulário de redefinição de senha com prioridade
+    assert.match(visibleText(rendererRecovery), /Definir Nova Senha/);
+    assert.ok(rendererRecovery.root.findByProps({ id: 'btn-submit-update-password' }));
+    act(() => rendererRecovery.unmount());
   });
 
   test('Cenário 12: Coordenação de consultas de sessão (checkSession e foco) contra respostas tardias, concorrência e autoridade de eventos Auth', async () => {

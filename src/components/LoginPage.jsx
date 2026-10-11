@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { Mail, Lock, KeyRound, AlertCircle, CheckCircle2, ArrowLeft, RefreshCw, UserCheck } from 'lucide-react';
 
@@ -83,11 +83,26 @@ export default function LoginPage() {
     return 'login';
   });
 
+  const lastHandledInviteTokenRef = useRef(pendingInviteToken);
+
   useEffect(() => {
     if (isPasswordRecovery) {
       setMode('update_password');
+      return;
     }
-  }, [isPasswordRecovery]);
+
+    // Quando um convite novo chega à tela já montada (ex: hashchange na mesma aba),
+    // seleciona primeiro acesso (cadastro) uma vez, preservando escolhas manuais posteriores.
+    if (pendingInviteToken && pendingInviteToken !== lastHandledInviteTokenRef.current) {
+      lastHandledInviteTokenRef.current = pendingInviteToken;
+      setMode('register');
+      setAuthError(null);
+      setInfoMessage(null);
+      setEmailConfirmationPending(false);
+    } else if (!pendingInviteToken) {
+      lastHandledInviteTokenRef.current = null;
+    }
+  }, [pendingInviteToken, isPasswordRecovery]);
 
   // Formulário em memória (senhas nunca são persistidas em storage)
   const [email, setEmail] = useState('');
