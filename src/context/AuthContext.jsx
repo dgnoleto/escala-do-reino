@@ -71,6 +71,10 @@ export function AuthProvider({ children }) {
   const sessionIdRef        = useRef(0);
   // Geração monotônica de eventos de autenticação para evitar que getSession tardio sobrescreva evento mais recente
   const authGenerationRef   = useRef(0);
+  // Sequência monotônica para impedir que consultas de sessão concorrentes sobrescrevam as mais recentes
+  const sessionQuerySeqRef  = useRef(0);
+  // Rastreia o ciclo de montagem ativo do efeito para descartar consultas em voo após desmontagem ou remontagem
+  const effectMountIdRef    = useRef(0);
   // Sequência monotônica para impedir que consulta mais lenta sobrescreva a mais recente
   const requestSeqRef       = useRef(0);
   // Timer agendado de consulta (cancelado em logout ou troca de sessão)
@@ -279,6 +283,66 @@ export function AuthProvider({ children }) {
     }
   }, [clearAccessContext]);
 
+  /**
+   * Coordena consultas assíncronas de sessão no storage (checkSession e revalidações por foco/visibilidade).
+   *
+   * Regras de coordenação:
+   * 1. Captura a geração de auth, a sequência da consulta, a identidade ativa e o ciclo de montagem
+   *    de forma síncrona ANTES de iniciar a chamada assíncrona getSession().
+   * 2. Descarta o resultado e retorna null se:
+   *    - O componente/efeito foi desmontado ou remontado;
+   *    - Uma consulta mais recente foi iniciada posteriormente (ordem de concorrência);
+   *    - Qualquer evento de autenticação (onAuthStateChange ou signOut) ocorreu em voo;
+   *    - A identidade ou sessão ativa foi alterada em voo.
+   * 3. Nunca atribui geração nova/superior a um snapshot obsoleto superado por eventos mais recentes.
+   * 4. Aplica a sessão legitimamente se e somente se nenhuma invalidação ocorreu.
+   * 5. Retorna a sessão aplicada ou null caso seja descartada ou inexistente.
+   */
+  const coordinateSessionQuery = useCallback(async () => {
+    if (!supabase || !applySessionRef.current) return null;
+
+    const startMountId = effectMountIdRef.current;
+    const startGen = authGenerationRef.current;
+    const startUserId = currentUserIdRef.current;
+    const startSessionId = sessionIdRef.current;
+    const thisQuerySeq = ++sessionQuerySeqRef.current;
+
+    try {
+      const { data: { session: resumedSession } = {} } = await supabase.auth.getSession();
+
+      // 1. Descarta se o efeito foi desmontado ou remontado
+      if (!applySessionRef.current || effectMountIdRef.current !== startMountId) {
+        return null;
+      }
+
+      // 2. Descarta se superada por uma consulta mais recente
+      if (sessionQuerySeqRef.current !== thisQuerySeq) {
+        return null;
+      }
+
+      // 3. Descarta se qualquer evento de Auth chegou durante a requisição
+      if (authGenerationRef.current !== startGen) {
+        return null;
+      }
+
+      // 4. Descarta se a identidade ou sessão foi alterada durante a requisição
+      if (currentUserIdRef.current !== startUserId || sessionIdRef.current !== startSessionId) {
+        return null;
+      }
+
+      // Se há sessão legítima e não houve conflito, aplica com nova geração atômica
+      if (resumedSession) {
+        const currentGen = ++authGenerationRef.current;
+        applySessionRef.current(resumedSession, currentGen);
+        return resumedSession;
+      }
+
+      return null;
+    } catch {
+      return null;
+    }
+  }, []);
+
   useEffect(() => {
     if (!isSupabaseConfigured()) {
       setSession(null);
@@ -286,6 +350,7 @@ export function AuthProvider({ children }) {
       return;
     }
 
+    const thisMountId = ++effectMountIdRef.current;
     let isEffectActive = true;
     let hasAuthEventArrived = false;
 
@@ -404,7 +469,8 @@ export function AuthProvider({ children }) {
 
     // 3. Revalidação ao recuperar foco da janela ou reconectar à internet
     function handleFocusOrOnline() {
-      if (document.visibilityState !== 'visible' || !navigator.onLine) return;
+      if (typeof document !== 'undefined' && document.visibilityState !== 'visible') return;
+      if (typeof navigator !== 'undefined' && !navigator.onLine) return;
 
       if (currentUserIdRef.current && churchAccessRef.current) {
         fetchChurchAccess(currentUserIdRef.current, { isBackground: true });
@@ -413,11 +479,7 @@ export function AuthProvider({ children }) {
 
       // Se a aba estava deslogada, verifica se outra aba autenticou a conta (ex: confirmação de e-mail)
       if (!currentUserIdRef.current && supabase) {
-        supabase.auth.getSession().then(({ data: { session: resumedSession } }) => {
-          if (!isEffectActive || !resumedSession) return;
-          const currentGen = ++authGenerationRef.current;
-          applySession(resumedSession, currentGen);
-        }).catch(() => {});
+        coordinateSessionQuery().catch(() => {});
       }
     }
 
@@ -440,6 +502,8 @@ export function AuthProvider({ children }) {
     return () => {
       isEffectActive = false;
       applySessionRef.current = null;
+      effectMountIdRef.current += 1;
+      sessionQuerySeqRef.current += 1;
       subscription.unsubscribe();
       window.removeEventListener('focus', handleFocusOrOnline);
       window.removeEventListener('online', handleFocusOrOnline);
@@ -450,7 +514,7 @@ export function AuthProvider({ children }) {
         scheduledTimerRef.current = null;
       }
     };
-  }, [fetchChurchAccess, clearAccessContext, clearMemberCommandStorage]);
+  }, [fetchChurchAccess, clearAccessContext, clearMemberCommandStorage, coordinateSessionQuery]);
 
   /**
    * Revalida o vínculo manualmente (botão "Tentar novamente").
@@ -531,21 +595,9 @@ export function AuthProvider({ children }) {
 
   /**
    * Consulta ativamente a sessão salva no storage (útil após confirmação de e-mail em outra aba).
+   * Compartilha a mesma coordenação unificada de sessões para evitar corridas contra eventos posteriores.
    */
-  const checkSession = useCallback(async () => {
-    if (!supabase) return null;
-    try {
-      const { data: { session: currentSession } } = await supabase.auth.getSession();
-      if (currentSession && applySessionRef.current) {
-        const currentGen = ++authGenerationRef.current;
-        applySessionRef.current(currentSession, currentGen);
-        return currentSession;
-      }
-      return null;
-    } catch {
-      return null;
-    }
-  }, []);
+  const checkSession = coordinateSessionQuery;
 
   /**
    * Inicia o fluxo OAuth com o Google.

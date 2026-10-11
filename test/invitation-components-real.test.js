@@ -121,6 +121,9 @@ function setupEnvironment(options = {}) {
   const clipboardCalls = [];
   let clipboardShouldFail = Boolean(options.clipboardShouldFail);
 
+  const windowListeners = new Map();
+  const documentListeners = new Map();
+
   globalThis.window = {
     sessionStorage: storage,
     location: locationObj,
@@ -136,14 +139,22 @@ function setupEnvironment(options = {}) {
         }
       },
     },
-    addEventListener() {},
-    removeEventListener() {},
+    addEventListener(name, callback) {
+      windowListeners.set(name, callback);
+    },
+    removeEventListener(name) {
+      windowListeners.delete(name);
+    },
   };
 
   globalThis.document = {
     visibilityState: 'visible',
-    addEventListener() {},
-    removeEventListener() {},
+    addEventListener(name, callback) {
+      documentListeners.set(name, callback);
+    },
+    removeEventListener(name) {
+      documentListeners.delete(name);
+    },
   };
 
   Object.defineProperty(globalThis, 'navigator', {
@@ -241,6 +252,16 @@ function setupEnvironment(options = {}) {
     setClipboardShouldFail: (val) => { clipboardShouldFail = val; },
     getAuthListener: () => authListener,
     simulateEvent: (ev, s) => globalThis.__reviewTransport.auth.simulateEvent(ev, s),
+    handlers: windowListeners,
+    documentHandlers: documentListeners,
+    triggerWindowEvent: (name) => {
+      const fn = windowListeners.get(name);
+      if (fn) fn();
+    },
+    triggerDocumentEvent: (name) => {
+      const fn = documentListeners.get(name);
+      if (fn) fn();
+    },
   };
 }
 
@@ -1603,6 +1624,298 @@ describe('Suíte de Testes da Interface de Convites e Aprovação de Nome (Contr
     assert.ok(rendererManualCheck.root.findByProps({ id: 'btn-email-login' }));
 
     act(() => rendererManualCheck.unmount());
+  });
+
+  test('Cenário 12: Coordenação de consultas de sessão (checkSession e foco) contra respostas tardias, concorrência e autoridade de eventos Auth', async () => {
+    const oldSession = { user: { id: 'synthetic-old-A', email: 'old-a@review.test' } };
+    const newSession = { user: { id: 'synthetic-new-B', email: 'new-b@review.test' } };
+    const legitSession = { user: { id: 'legit-confirmed-C', email: 'legit-c@review.test' } };
+
+    async function mountAuthProbe(fixture) {
+      let authCtx = null;
+      function Probe() {
+        authCtx = useAuth();
+        return null;
+      }
+      const renderer = await mount(React.createElement(AuthProvider, null, React.createElement(Probe)));
+      await act(async () => {
+        await new Promise((r) => setTimeout(r, 20));
+      });
+      return {
+        renderer,
+        get: () => authCtx,
+      };
+    }
+
+    // 12.1 checkSession pendente com SIGNED_OUT posterior: descarta snapshot antigo e mantém estado deslogado
+    {
+      const fixture = setupEnvironment({ user: null });
+      const probe = await mountAuthProbe(fixture);
+
+      let release;
+      globalThis.__reviewTransport.auth.getSession = () => new Promise((resolve) => { release = resolve; });
+
+      let pending;
+      await act(async () => {
+        pending = probe.get().checkSession();
+        await Promise.resolve();
+      });
+
+      await act(async () => {
+        fixture.simulateEvent('SIGNED_OUT', null);
+        await new Promise((r) => setTimeout(r, 30));
+      });
+      assert.equal(probe.get().session, null, 'Contexto deve estar deslogado após SIGNED_OUT');
+
+      let checkResult;
+      await act(async () => {
+        release({ data: { session: oldSession } });
+        checkResult = await pending;
+        await new Promise((r) => setTimeout(r, 30));
+      });
+
+      assert.equal(checkResult, null, 'checkSession deve retornar null quando descartado');
+      assert.equal(probe.get().session, null, 'Sessão antiga de Conta A não deve substituir SIGNED_OUT posterior');
+      act(() => probe.renderer.unmount());
+    }
+
+    // 12.2 checkSession pendente com SIGNED_IN de Conta B posterior: descarta snapshot antigo e preserva Conta B
+    {
+      const fixture = setupEnvironment({ user: null });
+      const probe = await mountAuthProbe(fixture);
+
+      let release;
+      globalThis.__reviewTransport.auth.getSession = () => new Promise((resolve) => { release = resolve; });
+
+      let pending;
+      await act(async () => {
+        pending = probe.get().checkSession();
+        await Promise.resolve();
+      });
+
+      await act(async () => {
+        fixture.simulateEvent('SIGNED_IN', newSession);
+        await new Promise((r) => setTimeout(r, 30));
+      });
+      assert.equal(probe.get().session?.user?.id, 'synthetic-new-B', 'Contexto deve estar na Conta B após SIGNED_IN');
+
+      let checkResult;
+      await act(async () => {
+        release({ data: { session: oldSession } });
+        checkResult = await pending;
+        await new Promise((r) => setTimeout(r, 30));
+      });
+
+      assert.equal(checkResult, null, 'checkSession deve retornar null quando descartado');
+      assert.equal(probe.get().session?.user?.id, 'synthetic-new-B', 'Sessão antiga de Conta A não deve substituir Conta B');
+      act(() => probe.renderer.unmount());
+    }
+
+    // 12.3 Consulta por foco pendente com SIGNED_OUT posterior: descarta snapshot antigo e mantém deslogado
+    {
+      const fixture = setupEnvironment({ user: null });
+      const probe = await mountAuthProbe(fixture);
+
+      let release;
+      globalThis.__reviewTransport.auth.getSession = () => new Promise((resolve) => { release = resolve; });
+
+      await act(async () => {
+        fixture.triggerWindowEvent('focus');
+        await Promise.resolve();
+      });
+
+      await act(async () => {
+        fixture.simulateEvent('SIGNED_OUT', null);
+        await new Promise((r) => setTimeout(r, 30));
+      });
+      assert.equal(probe.get().session, null, 'Contexto deve estar deslogado após SIGNED_OUT');
+
+      await act(async () => {
+        release({ data: { session: oldSession } });
+        await new Promise((r) => setTimeout(r, 30));
+      });
+
+      assert.equal(probe.get().session, null, 'Foco pendente com resposta antiga não deve substituir SIGNED_OUT');
+      act(() => probe.renderer.unmount());
+    }
+
+    // 12.4 Consulta por foco pendente com SIGNED_IN de Conta B posterior: descarta snapshot antigo e preserva Conta B
+    {
+      const fixture = setupEnvironment({ user: null });
+      const probe = await mountAuthProbe(fixture);
+
+      let release;
+      globalThis.__reviewTransport.auth.getSession = () => new Promise((resolve) => { release = resolve; });
+
+      await act(async () => {
+        fixture.triggerWindowEvent('focus');
+        await Promise.resolve();
+      });
+
+      await act(async () => {
+        fixture.simulateEvent('SIGNED_IN', newSession);
+        await new Promise((r) => setTimeout(r, 30));
+      });
+      assert.equal(probe.get().session?.user?.id, 'synthetic-new-B', 'Contexto deve refletir Conta B');
+
+      await act(async () => {
+        release({ data: { session: oldSession } });
+        await new Promise((r) => setTimeout(r, 30));
+      });
+
+      assert.equal(probe.get().session?.user?.id, 'synthetic-new-B', 'Foco pendente com resposta antiga não deve substituir Conta B');
+      act(() => probe.renderer.unmount());
+    }
+
+    // 12.5 Controles positivos de retomada legítima: checkSession e foco aplicam sessão quando não há conflito
+    {
+      // 12.5.a Retomada legítima via checkSession (botão manual)
+      const fixtureA = setupEnvironment({ user: null });
+      const probeA = await mountAuthProbe(fixtureA);
+
+      globalThis.__reviewTransport.auth.getSession = async () => ({ data: { session: legitSession } });
+
+      let appliedResult;
+      await act(async () => {
+        appliedResult = await probeA.get().checkSession();
+        await new Promise((r) => setTimeout(r, 30));
+      });
+
+      assert.ok(appliedResult, 'checkSession deve retornar a sessão legítima retomada');
+      assert.equal(appliedResult.user?.id, 'legit-confirmed-C');
+      assert.equal(probeA.get().session?.user?.id, 'legit-confirmed-C', 'Contexto deve transicionar para conta confirmada');
+      act(() => probeA.renderer.unmount());
+
+      // 12.5.b Retomada legítima via evento de foco da janela
+      const fixtureB = setupEnvironment({ user: null });
+      const probeB = await mountAuthProbe(fixtureB);
+
+      globalThis.__reviewTransport.auth.getSession = async () => ({ data: { session: legitSession } });
+
+      await act(async () => {
+        fixtureB.triggerWindowEvent('focus');
+        await new Promise((r) => setTimeout(r, 30));
+      });
+
+      assert.equal(probeB.get().session?.user?.id, 'legit-confirmed-C', 'Foco da janela deve aplicar sessão legítima retomada');
+      act(() => probeB.renderer.unmount());
+    }
+
+    // 12.6 Ordem e resolução de duas consultas concorrentes: mais recente prevalece sobre consulta mais lenta
+    {
+      // Subcaso A: Consulta 1 (lenta com Sessão A) e Consulta 2 (rápida com Sessão B). Consulta 2 resolve antes.
+      const fixtureA = setupEnvironment({ user: null });
+      const probeA = await mountAuthProbe(fixtureA);
+
+      let release1, release2;
+      let queryCount = 0;
+      globalThis.__reviewTransport.auth.getSession = () => {
+        queryCount += 1;
+        if (queryCount === 1) return new Promise((r) => { release1 = r; });
+        return new Promise((r) => { release2 = r; });
+      };
+
+      let pending1, pending2;
+      await act(async () => {
+        pending1 = probeA.get().checkSession();
+        await Promise.resolve();
+      });
+      await act(async () => {
+        pending2 = probeA.get().checkSession();
+        await Promise.resolve();
+      });
+
+      // Consulta 2 resolve primeiro com Sessão B
+      let result2;
+      await act(async () => {
+        release2({ data: { session: newSession } });
+        result2 = await pending2;
+        await new Promise((r) => setTimeout(r, 30));
+      });
+      assert.equal(result2?.user?.id, 'synthetic-new-B');
+      assert.equal(probeA.get().session?.user?.id, 'synthetic-new-B');
+
+      // Consulta 1 (mais antiga) resolve depois com Sessão A: deve ser descartada
+      let result1;
+      await act(async () => {
+        release1({ data: { session: oldSession } });
+        result1 = await pending1;
+        await new Promise((r) => setTimeout(r, 30));
+      });
+      assert.equal(result1, null, 'Consulta 1 tardia deve retornar null por ser superada');
+      assert.equal(probeA.get().session?.user?.id, 'synthetic-new-B', 'Sessão B da consulta mais recente deve prevalecer');
+      act(() => probeA.renderer.unmount());
+
+      // Subcaso B: Consulta 1 (Sessão A) e Consulta 2 (Sessão B) disparadas; Consulta 1 tenta resolver antes de Consulta 2
+      const fixtureB = setupEnvironment({ user: null });
+      const probeB = await mountAuthProbe(fixtureB);
+
+      let r1, r2;
+      let countB = 0;
+      globalThis.__reviewTransport.auth.getSession = () => {
+        countB += 1;
+        if (countB === 1) return new Promise((r) => { r1 = r; });
+        return new Promise((r) => { r2 = r; });
+      };
+
+      let p1, p2;
+      await act(async () => {
+        p1 = probeB.get().checkSession();
+        await Promise.resolve();
+      });
+      await act(async () => {
+        p2 = probeB.get().checkSession();
+        await Promise.resolve();
+      });
+
+      // Consulta 1 resolve enquanto Consulta 2 já foi iniciada: como já foi superada, é descartada
+      let res1;
+      await act(async () => {
+        r1({ data: { session: oldSession } });
+        res1 = await p1;
+        await new Promise((r) => setTimeout(r, 30));
+      });
+      assert.equal(res1, null, 'Consulta 1 deve ser descartada por ter sido superada por Consulta 2');
+
+      // Consulta 2 resolve em seguida e aplica legitimamente Sessão B
+      let res2;
+      await act(async () => {
+        r2({ data: { session: newSession } });
+        res2 = await p2;
+        await new Promise((r) => setTimeout(r, 30));
+      });
+      assert.equal(res2?.user?.id, 'synthetic-new-B');
+      assert.equal(probeB.get().session?.user?.id, 'synthetic-new-B');
+      act(() => probeB.renderer.unmount());
+    }
+
+    // 12.7 Desmontagem do componente com consulta em voo descarta resposta com segurança
+    {
+      const fixture = setupEnvironment({ user: null });
+      const probe = await mountAuthProbe(fixture);
+
+      let release;
+      globalThis.__reviewTransport.auth.getSession = () => new Promise((resolve) => { release = resolve; });
+
+      let pending;
+      await act(async () => {
+        pending = probe.get().checkSession();
+        await Promise.resolve();
+      });
+
+      // Desmonta o provedor antes da resposta
+      act(() => probe.renderer.unmount());
+
+      // Libera a resposta após desmontagem
+      let res;
+      await act(async () => {
+        release({ data: { session: oldSession } });
+        res = await pending;
+        await new Promise((r) => setTimeout(r, 30));
+      });
+
+      assert.equal(res, null, 'Consulta em voo de componente desmontado deve retornar null');
+    }
   });
 
 });
