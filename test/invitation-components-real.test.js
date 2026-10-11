@@ -200,6 +200,12 @@ function setupEnvironment(options = {}) {
       },
       signUp: async (creds) => {
         authCalls.push({ type: 'signUp', email: creds.email, options: creds.options });
+        if (options.signUpHandler) {
+          return options.signUpHandler(creds);
+        }
+        if (options.signUpError) {
+          return { data: null, error: options.signUpError };
+        }
         if (options.signUpRequiresEmailConfirm) {
           return { data: { user: { id: 'new-uid', email: creds.email }, session: null }, error: null };
         }
@@ -1353,4 +1359,251 @@ describe('Suíte de Testes da Interface de Convites e Aprovação de Nome (Contr
     act(() => renderer.unmount());
   });
 
+  test('Cenário 11: Primeiro acesso por convite: escolhas visíveis, cadastro sem senha anterior, orientação de confirmação/outra aba e continuidade', async () => {
+    // 43 caracteres exatos Base64URL
+    const rawToken = 'AbCdEfGhIjKlMnOpQrStUvWxYz0123456789_-ABC11';
+    let userRegistered = false;
+    let authEmailConfirmed = false;
+
+    const fixture = setupEnvironment({
+      initialUrl: `http://localhost:3000/#/invite?token=${rawToken}`,
+      user: null, // Começa deslogado
+      signUpRequiresEmailConfirm: true,
+      rpcHandler: async (name, args) => {
+        if (name === 'get_invitation_details') {
+          assert.equal(args.p_raw_token, rawToken);
+          if (authEmailConfirmed) {
+            return {
+              data: [{
+                invitation_id: 'inv-uuid-11',
+                church_id: 'church-uuid-11',
+                church_name: 'Comunidade da Graça',
+                member_id: 'mem-11',
+                member_display_name: 'Fernanda Lima',
+                expires_at: '2026-10-14T23:59:59Z',
+                is_valid: true,
+              }],
+              error: null,
+            };
+          }
+          return {
+            data: [{
+              invitation_id: null,
+              church_id: null,
+              church_name: null,
+              member_id: null,
+              member_display_name: null,
+              expires_at: null,
+              is_valid: false,
+            }],
+            error: null,
+          };
+        }
+        if (name === 'get_my_church_access') {
+          // Conta isolada recém-criada sem vínculo
+          return { data: [], error: null };
+        }
+        return { data: [], error: null };
+      },
+    });
+
+    // 11.1 Ao abrir o convite deslogado, monta App e verifica URL limpa e token retido
+    let renderer = await mount(React.createElement(App));
+
+    // Token capturado no sessionStorage e URL limpa
+    assert.equal(fixture.storage.getItem('escala_invite_token_pending'), rawToken);
+
+    // Contexto claro do convite exibido
+    const initialText = visibleText(renderer);
+    assert.match(initialText, /Você recebeu um convite/);
+    assert.match(initialText, /Para continuar, use o e-mail para o qual ele foi emitido/);
+
+    // Duas escolhas visíveis: "É meu primeiro acesso — Criar conta" e "Já tenho conta — Entrar"
+    const firstAccessBtn = renderer.root.findByProps({ id: 'btn-invite-first-access' });
+    const existingAccBtn = renderer.root.findByProps({ id: 'btn-invite-existing-account' });
+    assert.ok(firstAccessBtn, 'Botão de primeiro acesso deve estar presente');
+    assert.ok(existingAccBtn, 'Botão de conta existente deve estar presente');
+    assert.equal(firstAccessBtn.props['aria-selected'], true, 'Primeiro acesso deve vir selecionado por padrão');
+
+    // Modo inicial é cadastro (sem exigir senha prévia)
+    const emailInput = renderer.root.findByProps({ id: 'login-email-input' });
+    const passwordInput = renderer.root.findByProps({ id: 'login-password-input' });
+    const confirmPasswordInput = renderer.root.findByProps({ id: 'login-confirm-password' });
+    const registerBtn = renderer.root.findByProps({ id: 'btn-email-register' });
+    assert.ok(emailInput);
+    assert.ok(passwordInput);
+    assert.ok(confirmPasswordInput);
+    assert.ok(registerBtn);
+
+    // Orienta que a conta é de acesso ao Escala do Reino, sem criar igreja ou outro membro
+    assert.match(initialText, /Esta conta é pessoal para o seu acesso ao Escala do Reino/);
+    assert.match(initialText, /Criar sua conta não cria uma nova igreja nem outro membro/);
+
+    // Google disponível com orientação sobre o mesmo e-mail convidado
+    assert.ok(renderer.root.findByProps({ id: 'btn-google-login' }));
+    assert.match(initialText, /sua conta Google deve usar o mesmo e-mail para o qual o convite foi emitido/);
+
+    // 11.2 Alternância fluida entre opções sem perda de contexto
+    await act(async () => {
+      existingAccBtn.props.onClick();
+    });
+    let loginText = visibleText(renderer);
+    assert.match(loginText, /Já tenho conta — Entrar/);
+    assert.ok(renderer.root.findByProps({ id: 'btn-email-login' }));
+
+    // Retorna para primeiro acesso
+    await act(async () => {
+      firstAccessBtn.props.onClick();
+    });
+    assert.match(visibleText(renderer), /É meu primeiro acesso — Criar conta/);
+
+    // 11.3 Preenche cadastro com e-mail convidado e senha escolhida
+    await act(async () => {
+      renderer.root.findByProps({ id: 'login-email-input' }).props.onChange({
+        target: { value: 'fernanda@exemplo.com' },
+      });
+      renderer.root.findByProps({ id: 'login-password-input' }).props.onChange({
+        target: { value: 'MinhaSenhaSegura#2026' },
+      });
+      renderer.root.findByProps({ id: 'login-confirm-password' }).props.onChange({
+        target: { value: 'MinhaSenhaSegura#2026' },
+      });
+    });
+
+    // Submete cadastro
+    await act(async () => {
+      renderer.root.findByType('form').props.onSubmit({ preventDefault() {} });
+      await new Promise((r) => setTimeout(r, 20));
+    });
+
+    // Confirmação orientada claramente (mesma aba e outra aba)
+    const confirmText = visibleText(renderer);
+    assert.match(confirmText, /Cadastro realizado! Enviamos um e-mail de confirmação/);
+    assert.match(confirmText, /Se a confirmação abrir uma nova aba/);
+    assert.match(confirmText, /retorne a esta aba do convite ou reabra o link original/);
+    assert.match(confirmText, /A criação da conta não concede acesso à igreja automaticamente/);
+
+    // Senha não foi persistida em storage
+    for (let i = 0; i < fixture.storage.length; i++) {
+      const k = fixture.storage.key(i);
+      assert.doesNotMatch(fixture.storage.getItem(k) || '', /MinhaSenhaSegura#2026/);
+    }
+
+    // Botão de checagem pós-confirmação disponível
+    const checkConfirmBtn = renderer.root.findByProps({ id: 'btn-check-confirmed-email' });
+    assert.ok(checkConfirmBtn);
+
+    // 11.4 Simula confirmação do e-mail (evento SIGNED_IN do Supabase Auth com e-mail confirmado)
+    authEmailConfirmed = true;
+    const confirmedUser = {
+      id: 'usr-11',
+      email: 'fernanda@exemplo.com',
+      email_confirmed_at: '2026-10-11T12:00:00Z',
+    };
+
+    await act(async () => {
+      fixture.simulateEvent('SIGNED_IN', { user: confirmedUser });
+      await new Promise((r) => setTimeout(r, 40));
+    });
+
+    // Retoma automaticamente o fluxo do convite com InvitationFlowPage
+    const flowText = visibleText(renderer);
+    assert.match(flowText, /Comunidade da Graça/);
+    assert.match(flowText, /Fernanda Lima/);
+    assert.ok(renderer.root.findByProps({ id: 'btn-confirm-name' }));
+    assert.ok(renderer.root.findByProps({ id: 'btn-propose-other-name' }));
+
+    act(() => renderer.unmount());
+
+    // 11.5 Confirmação em outra aba isolada sem o token: direciona para AccessPendingPage com orientações
+    const fixtureAnotherTab = setupEnvironment({
+      initialUrl: 'http://localhost:3000/',
+      user: confirmedUser,
+      rpcHandler: async (name) => {
+        if (name === 'get_my_church_access') return { data: [], error: null };
+        return { data: [], error: null };
+      },
+    });
+
+    const rendererAnotherTab = await mount(React.createElement(App));
+    const anotherTabText = visibleText(rendererAnotherTab);
+    assert.match(anotherTabText, /Acesso à igreja ainda não liberado/);
+    assert.match(anotherTabText, /Recebeu um convite para participar de uma igreja\?/);
+    assert.match(anotherTabText, /Retorne à aba original/);
+    assert.match(anotherTabText, /Reabra o link original do convite/);
+
+    act(() => rendererAnotherTab.unmount());
+
+    // 11.6 Tentativa de cadastro de conta já existente orienta login sem trocar senha
+    const fixtureExisting = setupEnvironment({
+      initialUrl: `http://localhost:3000/#/invite?token=${rawToken}`,
+      user: null,
+      signUpError: {
+        message: 'User already registered',
+      },
+    });
+
+    const rendererExisting = await mount(React.createElement(App));
+    await act(async () => {
+      rendererExisting.root.findByProps({ id: 'login-email-input' }).props.onChange({
+        target: { value: 'existente@exemplo.com' },
+      });
+      rendererExisting.root.findByProps({ id: 'login-password-input' }).props.onChange({
+        target: { value: 'OutraSenha#123' },
+      });
+      rendererExisting.root.findByProps({ id: 'login-confirm-password' }).props.onChange({
+        target: { value: 'OutraSenha#123' },
+      });
+    });
+
+    await act(async () => {
+      rendererExisting.root.findByType('form').props.onSubmit({ preventDefault() {} });
+      await new Promise((r) => setTimeout(r, 20));
+    });
+
+    const existingText = visibleText(rendererExisting);
+    assert.match(existingText, /Este e-mail já possui uma conta no Escala do Reino/);
+    assert.match(existingText, /Já tenho conta — Entrar/);
+
+    act(() => rendererExisting.unmount());
+
+    // 11.7 Botão "Já confirmei meu e-mail — Continuar": quando ainda sem sessão ativa, orienta para login com senha
+    const fixtureManualCheck = setupEnvironment({
+      initialUrl: `http://localhost:3000/#/invite?token=${rawToken}`,
+      user: null,
+      signUpRequiresEmailConfirm: true,
+    });
+
+    const rendererManualCheck = await mount(React.createElement(App));
+    await act(async () => {
+      rendererManualCheck.root.findByProps({ id: 'login-email-input' }).props.onChange({
+        target: { value: 'manual@exemplo.com' },
+      });
+      rendererManualCheck.root.findByProps({ id: 'login-password-input' }).props.onChange({
+        target: { value: 'SenhaManual#123' },
+      });
+      rendererManualCheck.root.findByProps({ id: 'login-confirm-password' }).props.onChange({
+        target: { value: 'SenhaManual#123' },
+      });
+    });
+
+    await act(async () => {
+      rendererManualCheck.root.findByType('form').props.onSubmit({ preventDefault() {} });
+      await new Promise((r) => setTimeout(r, 20));
+    });
+
+    // Clica em "Já confirmei meu e-mail — Continuar"
+    await act(async () => {
+      rendererManualCheck.root.findByProps({ id: 'btn-check-confirmed-email' }).props.onClick();
+      await new Promise((r) => setTimeout(r, 20));
+    });
+
+    const manualCheckText = visibleText(rendererManualCheck);
+    assert.match(manualCheckText, /informe sua senha para entrar e continuar/);
+    assert.ok(rendererManualCheck.root.findByProps({ id: 'btn-email-login' }));
+
+    act(() => rendererManualCheck.unmount());
+  });
+
 });
+

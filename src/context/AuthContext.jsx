@@ -61,6 +61,8 @@ export function AuthProvider({ children }) {
   });
   const [isPasswordRecovery, setIsPasswordRecovery] = useState(false);
 
+  // Ref para função viva de aplicação de sessão
+  const applySessionRef     = useRef(null);
   // Ref para confirmação viva de criação (vinculada a userId e sessionId)
   const creationConfirmationRef = useRef(null);
   // Rastreia o UID da sessão ativa
@@ -375,6 +377,9 @@ export function AuthProvider({ children }) {
       }
     }
 
+    // Registra ref para acesso externo/manual
+    applySessionRef.current = applySession;
+
     // 1. Escuta mudanças de estado do Supabase Auth (fonte autoritativa de eventos)
     const { data: { subscription } } = supabase.auth.onAuthStateChange(
       (event, newSession) => {
@@ -399,13 +404,20 @@ export function AuthProvider({ children }) {
 
     // 3. Revalidação ao recuperar foco da janela ou reconectar à internet
     function handleFocusOrOnline() {
-      if (
-        document.visibilityState === 'visible' &&
-        navigator.onLine &&
-        currentUserIdRef.current &&
-        churchAccessRef.current
-      ) {
+      if (document.visibilityState !== 'visible' || !navigator.onLine) return;
+
+      if (currentUserIdRef.current && churchAccessRef.current) {
         fetchChurchAccess(currentUserIdRef.current, { isBackground: true });
+        return;
+      }
+
+      // Se a aba estava deslogada, verifica se outra aba autenticou a conta (ex: confirmação de e-mail)
+      if (!currentUserIdRef.current && supabase) {
+        supabase.auth.getSession().then(({ data: { session: resumedSession } }) => {
+          if (!isEffectActive || !resumedSession) return;
+          const currentGen = ++authGenerationRef.current;
+          applySession(resumedSession, currentGen);
+        }).catch(() => {});
       }
     }
 
@@ -427,6 +439,7 @@ export function AuthProvider({ children }) {
 
     return () => {
       isEffectActive = false;
+      applySessionRef.current = null;
       subscription.unsubscribe();
       window.removeEventListener('focus', handleFocusOrOnline);
       window.removeEventListener('online', handleFocusOrOnline);
@@ -515,6 +528,24 @@ export function AuthProvider({ children }) {
     if (!uid) return { success: false, error: 'Usuário não autenticado.' };
     return await fetchChurchAccess(uid, { isBackground: false, preferredChurchId });
   }, [fetchChurchAccess]);
+
+  /**
+   * Consulta ativamente a sessão salva no storage (útil após confirmação de e-mail em outra aba).
+   */
+  const checkSession = useCallback(async () => {
+    if (!supabase) return null;
+    try {
+      const { data: { session: currentSession } } = await supabase.auth.getSession();
+      if (currentSession && applySessionRef.current) {
+        const currentGen = ++authGenerationRef.current;
+        applySessionRef.current(currentSession, currentGen);
+        return currentSession;
+      }
+      return null;
+    } catch {
+      return null;
+    }
+  }, []);
 
   /**
    * Inicia o fluxo OAuth com o Google.
@@ -733,6 +764,7 @@ export function AuthProvider({ children }) {
         retryAccessCheck,
         refreshAccess,
         reloadChurchAccess,
+        checkSession,
         pendingInviteToken,
         setPendingInviteToken,
         clearPendingInviteToken,
