@@ -1,10 +1,30 @@
 # Evolução futura — Escala do Reino
 
-**Consolidação:** 30/09/2026, com atualizações de governança em 03/10/2026.
+**Consolidação:** 30/09/2026, com atualizações de governança em 03/10/2026 e esclarecimentos de visão, backlog e apoio humano em 12/10/2026.
 
 As **seções 1 a 9** deste documento descrevem visões e desenhos de produto que estão **fora do escopo do MVP**. O [PRD](PRD.md) define o recorte ativo do MVP: líderes operam, membros consultam, substituições são combinadas fora do aplicativo. As seções 10 a 12 consolidam o descarte definitivo de provedores, a decisão de exclusão lógica recuperável (etapa 4 do MVP) e a sequência oficial de governança acordada com o responsável.
 
 **Decidido para evolução** preserva uma regra já expressa, sem prometer entrega. **Proposto** requer confirmação. **Pendente** requer detalhamento. Não há datas de lançamento ou tecnologia escolhida.
+
+### Ordem de execução e leitura por pessoas ou IAs
+
+**Esclarecimento do responsável em 12/10/2026:** o MVP permanece o recorte do módulo **Escala do Reino** já definido no PRD e nos contratos. As propostas adicionais do ecossistema e as melhorias fora desse recorte permanecem em backlog; seu desenvolvimento só poderá começar depois da conclusão do escopo acordado para o Escala do Reino, mediante priorização e autorização específicas. Não iniciar módulos em paralelo por inferência a partir desta visão.
+
+Registrar e esclarecer essas ideias documentalmente antes da conclusão é permitido; isso não inicia implementação, integração ou preparação técnica de módulos futuros.
+
+Essa condição não adia requisitos já integrantes do MVP, como a etapa acordada de exclusão lógica/recuperação. Concluir o módulo exige conferir seus critérios acordados, evidências e limites; não equivale apenas a concluir convites, instalar ferramentas ou incorporar um PR. Melhorias futuras não são automaticamente acrescentadas aos critérios de conclusão do módulo.
+
+A [Visão do Ecossistema](VISAO-ECOSSISTEMA.md) explica a direção estratégica; este documento preserva ideias e decisões futuras. Os nomes, a organização e os limites dos demais módulos são provisórios. Os seis pilares não representam seis produtos fechados ou uma ordem aprovada de implementação.
+
+O PRD e os contratos definem requisitos aprovados, o [Estado atual](ESTADO-ATUAL.md) e as evidências delimitam implementação/validação, e o [Guia de trabalho no GitHub](GUIA-TRABALHO-GITHUB.md) define o processo de acompanhamento. Descrições de andamento nas seções 10–12 devem ser lidas com suas referências históricas e conferidas contra essas fontes atuais; sua atualização é acompanhada separadamente pela [issue #12](https://github.com/dgnoleto/escala-do-reino/issues/12).
+
+### Apoio à liderança e elaboração manual de métricas
+
+Nas propostas futuras de frequência, ausência, participação e engajamento, pessoas autorizadas informarão os registros e a aplicação servirá para guardá-los e permitir pesquisas. O líder considera contexto e qualidade dos registros e elabora manualmente suas próprias métricas e interpretações.
+
+A aplicação não cria presença ou ausência por inferência, não presume ausência quando falta um registro e não gera por iniciativa própria pontuações de engajamento/fidelidade, diagnósticos emocionais ou espirituais, recomendações de consagração ou alertas pastorais por limiares presumidos. Consultar dados não substitui diálogo nem avaliação humana. Três faltas é exemplo de pesquisa possível pelo líder, não regra fixa nem gatilho automático aprovado.
+
+Esse limite se refere à avaliação pastoral de pessoas; não cancela requisitos operacionais do PRD, cálculos de cronômetro ou desenhos futuros de convites já preservados. Qualquer nova automação depende de proposta, regras, avaliação e autorização próprias. Em divergência documental, registrar a dúvida e consultar o responsável antes de implementar.
 
 ## 1. Disponibilidade, convites de participação e confirmação
 
@@ -75,18 +95,21 @@ Esse desenho não garante presença nem elimina conflito de alguém com função
 
 ## 4. Dashboards e aprendizado
 
-Dashboards futuros restritos a líderes e autorizados poderão comparar previsto/realizado, excedentes, antecipações, interrupções, cancelamentos e motivos; filtros mensais/trimestrais e eventual resumo compartilhável estão na visão futura. Campos, acesso e compartilhamento precisam de desenho específico.
+**Evolução futura, após a conclusão do Escala do Reino:** líderes e pessoas autorizadas poderão consultar registros de previsto/realizado, excedentes, antecipações, interrupções, cancelamentos e motivos. Filtros mensais/trimestrais e formas de visualização, inclusive dashboards, ainda dependem de desenho. Um eventual resumo compartilhável exige definição de conteúdo e permissões; a integração entre módulos não concede acesso geral aos registros.
 
-O histórico básico e os registros de execução pertencem ao MVP, com retenção de **um ano**, para viabilizar aprendizado posterior. Recolher feedback após 2–3 meses de uso não é data prometida de lançamento.
+O histórico básico e os registros de execução pertencem ao MVP, com retenção de **um ano**, para viabilizar aprendizado posterior. Recolher feedback após 2–3 meses de uso não é data prometida de lançamento e não amplia automaticamente o prazo de retenção para registros dos módulos futuros.
 
-Os relatórios futuros poderão analisar execuções interrompidas, reinícios, excesso e intervalos entre atividades a partir dos registros do MVP. Não somar apenas a última tentativa: uma execução interrompida seguida de reinício preserva o tempo de ambas. Distinguir correção de toque errado de interrupção real. Um intervalo da sequência principal não presume ociosidade das equipes de apoio.
+O líder poderá pesquisar esses registros e elaborar manualmente suas análises e métricas. A aplicação oferece informação para consulta; não atribui automaticamente falha, culpa, engajamento, fidelidade ou condição emocional/espiritual a alguém.
+
+Ao analisar execuções interrompidas, reinícios, excesso e intervalos entre atividades, considerar todos os registros pertinentes, e não apenas a última tentativa: uma execução interrompida seguida de reinício preserva o tempo de ambas. Distinguir correção de toque errado de interrupção real. Um intervalo da sequência principal não presume ociosidade das equipes de apoio.
 
 Ao interpretar dados:
 
 - Separar atraso real de início, atraso no registro e excesso de duração. Culto previsto para 19h e abertura iniciada às 19h15 tem atraso inicial, não quinze minutos de excesso da abertura. Se a abertura começou às 19h15 e só foi registrada às 19h18, a correção preserva esses dois momentos e a previsão original.
 - Não atribuir automaticamente falha técnica à pessoa.
-- Considerar quantidade de participações e precisão das marcações humanas.
-- Não criar ranking punitivo.
+- Considerar quantidade de participações, contexto e precisão das marcações humanas. Falta de registro não comprova falta da pessoa.
+- Não criar ranking punitivo ou usar os dados como classificação automática de pessoas.
+- O líder define e interpreta manualmente os indicadores que considerar úteis; consultas de ausência/participação não são gatilhos pastorais aprovados.
 
 Indicadores antigos de taxa de resposta dentro do prazo e tempo até novo aceite pertencem à evolução de convites, não ao MVP. Não há metas numéricas aprovadas.
 
@@ -129,15 +152,22 @@ A hipótese anterior de membro preencher música/link/tom foi substituída pela 
 
 ## 9. Modularização e novos módulos
 
-**Ideia futura, registrada em 02/10/2026:** avaliar a evolução do produto por módulos, preservando a Escala do Reino como foco da primeira entrega. Possibilidades a considerar posteriormente:
+**Ideia futura registrada em 02/10/2026, complementada pelos esclarecimentos do responsável em 12/10/2026:** avaliar a evolução por módulos, com a **Plataforma do Reino** como ecossistema e o **Escala do Reino** como módulo inicial. As propostas adicionais só poderão entrar em desenvolvimento após a conclusão do escopo acordado para o Escala do Reino e a decisão específica de prioridade e execução.
 
-- Cursos online disponibilizados pela igreja.
-- Simpósios pagos.
-- Gestão financeira da igreja.
+A [Visão do Ecossistema](VISAO-ECOSSISTEMA.md) organiza necessidades em pilares conceituais. Os nomes, agrupamentos e limites dos demais módulos ainda não estão confirmados. Possibilidades preservadas no backlog:
+
+- Cursos online disponibilizados pela igreja, educação cristã e inclusão digital.
+- Simpósios pagos, retiros, eventos e suas necessidades financeiras.
+- Gestão financeira da igreja, com recortes a definir.
+- Células, discipulado e consultas de frequência, ausência e participação para apoio à liderança.
+- Patrimônio, fornecedores e manutenção preventiva.
+- Outras melhorias futuras identificadas no manifesto, sem incorporá-las ao MVP por referência.
+
+Nas propostas de acompanhamento pastoral, a aplicação guarda registros informados e permite consultas; o líder elabora manualmente métricas e interpretações. Não há pontuação de fidelidade, diagnóstico, recomendação automática de consagração ou alerta pastoral por número de faltas aprovado por este backlog.
 
 Em cursos online, poderá fazer sentido permitir ao participante escolher um fuso para visualizar os horários; essa preferência não existe no MVP de escala, em que o membro herda o fuso da igreja.
 
-Não há compromisso de entrega, prioridade ou desenho aprovado desses módulos. Pagamentos, integrações, permissões e estrutura de dados serão definidos quando cada módulo for avaliado, sem antecipar sua implementação no MVP.
+Não há compromisso de entrega, prioridade, prazo ou arquitetura técnica aprovada para esses módulos. Pagamentos, integrações, permissões e estrutura de dados serão definidos quando cada frente for avaliada. A conclusão do Escala do Reino atende uma condição para a execução futura; não inicia automaticamente os demais módulos nem dispensa a decisão de prioridade e autorização.
 
 ## 10. Provedores de login (descarte definitivo de Apple e Microsoft)
 
