@@ -11,9 +11,16 @@ Este índice organiza regras, orientação operacional e histórico. Começar pe
 - [Evolução futura](EVOLUCAO-FUTURA.md): assuntos adiados; não transformá-los em requisitos do incremento atual.
 - [Visão do Ecossistema](VISAO-ECOSSISTEMA.md): manifesto estratégico e visão de longo prazo do ecossistema de saúde integral da igreja.
 
+## Rotina de trabalho no GitHub
+
+- [Guia de issues, kanban, PRs e atualização documental](GUIA-TRABALHO-GITHUB.md): processo versionado para PM, QA e agentes.
+- [Project Plataforma do Reino](https://github.com/users/dgnoleto/projects/2): acompanhamento dos módulos e entregas.
+
 ## QA e ambientes
 
 - [Guia de entrada de QA](qa/GUIA-ENTRADA-QA.md).
+- [Preparação de QA no Windows 11](qa/GUIA-SETUP-QA-WINDOWS11.md): clone, Docker, CLI, Antigravity IDE e limites da preparação local.
+- [Acessos e confidencialidade de QA](qa/ACESSOS-E-CONFIDENCIALIDADE-QA.md): autenticação, variáveis, GitHub nas ferramentas de IA e cuidados com dados.
 - [Roteiro inicial e registro de achados/resultados](qa/ROTEIRO-QA-E-REGISTRO.md).
 - [Mapa de ambientes e laboratórios](ambientes/LABORATORIOS.md).
 - [Issues](https://github.com/dgnoleto/escala-do-reino/issues): tarefas, problemas e dúvidas acompanháveis, com referências aos documentos.
