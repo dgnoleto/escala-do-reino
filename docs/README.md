@@ -9,6 +9,7 @@ Este índice organiza regras, orientação operacional e histórico. Começar pe
 - [Cadastro de membros](CADASTRO-MEMBROS.md), [criação de igreja](CRIACAO-IGREJA.md) e [consulta de acesso](CONSULTA-ACESSO.md).
 - [Acesso e auditoria](ACESSO-E-AUDITORIA.md), [arquitetura](ARQUITETURA-BANCO.md), [schema de acesso](SCHEMA-ACESSO.md) e [schema de aprovação/auditoria](SCHEMA-APROVACAO-AUDITORIA.md).
 - [Evolução futura](EVOLUCAO-FUTURA.md): assuntos adiados; não transformá-los em requisitos do incremento atual.
+- [Visão do Ecossistema](VISAO-ECOSSISTEMA.md): manifesto estratégico e visão de longo prazo do ecossistema de saúde integral da igreja.
 
 ## QA e ambientes
 
