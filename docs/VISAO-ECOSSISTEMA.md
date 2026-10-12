@@ -1,14 +1,20 @@
-# Visão do Ecossistema — Escala do Reino
-## Da Escala Litúrgica ao Sistema de Saúde Integral da Igreja (Church Health OS)
+# Visão do Ecossistema — Plataforma do Reino
+## Do "Escala do Reino" ao Ecossistema Completo de Saúde Integral da Igreja (Church Health OS)
 
+**Nome do Ecossistema:** Plataforma do Reino  
+**Módulo Inicial de Entrada (MVP):** Escala do Reino (Liturgia, Escalas e Culto ao Vivo)  
 **Autor / Concepção de Produto:** Product Manager com 14 anos de experiência em produto e 21 anos de ministério prático nos bastidores da igreja.  
 **Data de Consolidação da Visão:** 11 de outubro de 2026.  
-**Piloto Inicial:** Ministério Shalom (focado no MVP de Escalas e Culto ao Vivo).  
-**Natureza do Documento:** Manifesto de Produto, Arquitetura Funcional e Visão Estratégica de Longo Prazo.
+**Piloto Inicial:** Ministério Shalom (focado no módulo Escala do Reino).  
+**Natureza do Documento:** Manifesto de Produto, Arquitetura da Suíte Modular, Governança (GitHub Projects & Issues) e Visão Estratégica de Longo Prazo.
 
 ---
 
-## 1. O Manifesto: Por que o Escala do Reino existe?
+## 1. O Manifesto: Da "Escala do Reino" à "Plataforma do Reino"
+
+O projeto nasceu de uma dor visceral e diária: organizar o culto, as escalas e a liturgia de domingo. Essa dor gerou o **Escala do Reino**, a "cunha" de entrada perfeita. Porém, quem vive a igreja por dentro sabe que a escala é apenas uma das engrenagens de um corpo muito maior.
+
+A evolução natural do produto é a **Plataforma do Reino**: uma suíte modular completa onde cada ministério e departamento encontra soluções especializadas que se comunicam perfeitamente entre si.
 
 A maioria dos softwares de igreja no mercado trata a congregação como um cadastro de clientes e uma régua de cobrança financeira (quantos entraram, quantos saíram, quanto pagaram). Quase nenhum foi desenhado por quem realmente viveu a rotina do altar, da cabine de som, da portaria, das reuniões de célula e dos bastidores do culto.
 
@@ -19,8 +25,8 @@ Durante décadas, as igrejas aprenderam a resolver seus maiores desafios **"na r
 * Ovelhas se afastando silenciosamente em crises de depressão ou esfriamento sem que a liderança perceba a tempo;
 * Falta de critérios transparentes para reconhecer quem realmente serve com fidelidade na hora das consagrações.
 
-> **Propósito Central:**  
-> O *Escala do Reino* não existe para substituir o contato humano ou transformar a igreja em algo virtual. Ele existe para que as **atividades físicas da igreja fluam com segurança, rastreabilidade, paz e confiabilidade**, protegendo a saúde do pastor, dando clareza aos líderes e fazendo cada membro se sentir cuidado e pertencente ao Corpo.
+> **Propósito Central da Plataforma:**  
+> A *Plataforma do Reino* não existe para substituir o contato humano ou transformar a igreja em algo virtual. Ela existe para que as **atividades físicas da igreja fluam com segurança, rastreabilidade, paz e confiabilidade**, protegendo a saúde do pastor, dando clareza aos líderes e fazendo cada membro se sentir cuidado e pertencente ao Corpo.
 
 ---
 
@@ -179,6 +185,24 @@ Zelar pela infraestrutura física e equipamentos com boa mordomia dos recursos d
 
 ---
 
-## 5. Resumo da Visão
+## 5. Governança de Produto: GitHub Projects & Gestão de Issues
+
+Para que essa visão ambiciosa seja executada sem perder o controle e sem gerar débito técnico, o desenvolvimento da **Plataforma do Reino** segue a governança estruturada no GitHub:
+
+* **GitHub Projects (Visão Macro & Épicos):**
+  * Cada pilar da plataforma corresponde a um épico ou projeto dedicado no GitHub Projects;
+  * Permite priorizar as entregas de cada fase sem misturar o trabalho ativo do MVP com as discussões de módulos futuros;
+  * Visibilidade clara do status de cada funcionalidade: *Backlog ➔ Planejado ➔ Em Andamento (Antigravity/Codex) ➔ QA & Validação Manual ➔ Entregue*.
+* **Ciclo de Vida das Issues (Rigor do PRD):**
+  * Nenhuma funcionalidade é codificada sem uma issue bem definida com critérios de aceite, regras de negócio e limites de validação;
+  * As issues vinculam contratos, pull requests e testes automatizados, garantindo que nada seja dado como concluído sem validação prática da jornada do usuário.
+* **O Fluxo PM + Dual-LLM:**
+  * **O PM (14 anos):** Define o escopo da issue, os limites de aceitação, testa a experiência de ponta a ponta e aprova o merge;
+  * **Antigravity IDE:** Implementa os componentes, organiza o estado do cliente e resolve integrações locais;
+  * **Codex:** Audita contratos, valida o schema do banco, cria contraprovas e testa concorrência estrita.
+
+---
+
+## 6. Resumo da Visão
 
 > *"Não estamos construindo apenas linhas de código; estamos criando uma infraestrutura de paz e cuidado para pastores, líderes e membros. Queremos que a igreja seja forte no púlpito, organizada nos bastidores e acolhedora nas casas."*
