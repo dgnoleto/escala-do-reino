@@ -6,7 +6,25 @@
 **Autor / Concepção de Produto:** Product Manager com 14 anos de experiência em produto e 21 anos de ministério prático nos bastidores da igreja.  
 **Data de Consolidação da Visão:** 11 de outubro de 2026.  
 **Piloto Inicial:** Ministério Shalom (focado no módulo Escala do Reino).  
-**Natureza do Documento:** Manifesto de Produto, Arquitetura da Suíte Modular, Governança (GitHub Projects & Issues) e Visão Estratégica de Longo Prazo.
+**Natureza do Documento:** Manifesto de Produto e Visão Estratégica de Longo Prazo, com organização conceitual do backlog e referências à governança. Não define uma arquitetura técnica aprovada para os módulos futuros.
+
+---
+
+## 0. Como interpretar esta visão — escopo, backlog e responsabilidade humana
+
+**Esclarecimentos do responsável registrados em 12/10/2026:** o MVP permanece o recorte do módulo **Escala do Reino** já acordado no [PRD](PRD.md) e nos contratos. As propostas adicionais deste ecossistema compõem um **backlog estratégico** e só poderão entrar em desenvolvimento depois da conclusão do escopo acordado para o Escala do Reino, mediante priorização e autorização específicas do responsável. A visão não amplia o MVP nem autoriza frentes paralelas.
+
+Ideias podem ser registradas e esclarecidas documentalmente antes dessa conclusão, como ocorre neste manifesto. Esse registro não inicia implementação, integração ou preparação técnica dos módulos futuros.
+
+Concluir o Escala do Reino significa atender e conferir os critérios acordados para essa entrega, com evidências e limites registrados; não basta incorporar um PR, preparar ferramentas ou concluir apenas identidade e convites. Melhorias futuras do próprio módulo não são automaticamente acrescentadas aos critérios de conclusão.
+
+**Nomes e organização provisórios:** Plataforma do Reino é o nome adotado para o ecossistema, e Escala do Reino é seu módulo inicial. Os demais nomes, os seis pilares, seus agrupamentos e limites são referências conceituais em definição. Não representam seis produtos fechados, uma arquitetura selecionada ou ordem de implementação aprovada. Android e iOS são possibilidades de canais, não nomes de módulos ou tecnologias escolhidas.
+
+**Apoio à liderança, com análise manual:** nas propostas futuras de frequência, ausência, participação e engajamento, pessoas autorizadas informarão os registros; a aplicação servirá para guardá-los e permitir sua consulta. O líder poderá pesquisar, considerar o contexto e elaborar manualmente suas métricas e interpretações. A aplicação não criará presenças ou ausências por inferência, não produzirá por iniciativa própria avaliações de engajamento ou fidelidade e não diagnosticará estados emocionais ou espirituais.
+
+O sistema não pontuará pessoas, classificará candidatos à consagração nem iniciará alertas pastorais com base em limiares presumidos. Ausência de registro não comprova ausência da pessoa. Os exemplos de consultas, inclusive três faltas, não são gatilhos automáticos nem critérios obrigatórios aprovados. Contato, acolhimento, interpretação e decisões pastorais permanecem humanos. Qualquer automação adicional precisará de proposta, regras, avaliação e autorização próprias.
+
+**Referências para pessoas e IAs:** este manifesto explica a direção; [Evolução futura](EVOLUCAO-FUTURA.md) preserva ideias, decisões futuras e pendências; o [PRD](PRD.md) e os contratos definem o escopo aprovado; [Estado atual](ESTADO-ATUAL.md) e evidências delimitam o que foi demonstrado; o [Guia de trabalho no GitHub](GUIA-TRABALHO-GITHUB.md) define a rotina operacional. Se houver divergência, não transformar a visão em regra de implementação: registrar a dúvida e consultar o responsável.
 
 ---
 
@@ -35,7 +53,7 @@ Durante décadas, as igrejas aprenderam a resolver seus maiores desafios **"na r
 1. **Tecnologia Invisível a Serviço do Encontro Presencial:**  
    O sistema opera nos bastidores para que, no momento do culto, da célula ou do retiro, as pessoas estejam 100% presentes em comunhão e adoração, sem correrias ou imprevistos evitáveis.
 2. **Dados como Instrumento de Cuidado, Nunca de Punição:**  
-   Métricas de assiduidade e trocas de escala não existem para criar rankings punitivos ou constrangimento, mas como termômetros de saúde espiritual e emocional.
+   Registros de assiduidade, participação e trocas de escala poderão apoiar consultas da liderança. O líder considera o contexto e elabora manualmente suas métricas; o sistema não interpreta esses dados como medida de saúde espiritual ou emocional, nem cria rankings punitivos ou classificações de pessoas.
 3. **Parametrização e Modularidade Total:**  
    Nenhuma igreja é igual à outra. Uma igreja de 50 membros precisa de simplicidade e rapidez; uma igreja de 2.000 membros precisa de governança, patrimônio e múltiplos departamentos. Tudo deve ser modular e configurável por parâmetros/permissões, permitindo vender ou ativar módulos isolados ou em conjunto.
 4. **Estratégia da Cunha (Wedge Strategy):**  
@@ -45,9 +63,11 @@ Durante décadas, as igrejas aprenderam a resolver seus maiores desafios **"na r
 
 ## 3. Os 6 Pilares Modulares do Ecossistema
 
+Agrupamentos conceituais para organizar a visão e o backlog. Seus nomes e limites permanecem provisórios. O conteúdo resume tanto o módulo inicial quanto propostas futuras explicitamente separadas; somente o PRD e os contratos definem os requisitos atuais.
+
 ```
                      ┌─────────────────────────────────────────────────┐
-                     │          ESCALA DO REINO (CHURCH OS)            │
+                     │          PLATAFORMA DO REINO                   │
                      └───────────────────────┬─────────────────────────┘
                                              │
       ┌──────────────────┬───────────────────┼───────────────────┬──────────────────┐
@@ -68,9 +88,9 @@ Durante décadas, as igrejas aprenderam a resolver seus maiores desafios **"na r
 
 ---
 
-### PILAR 1: Saúde Litúrgica & Condução do Culto ao Vivo (O Core do MVP)
+### PILAR 1: Saúde Litúrgica & Condução do Culto ao Vivo (Módulo Inicial: Escala do Reino)
 
-O coração operacional do culto presencial, desenhado com respeito absoluto à dinâmica litúrgica:
+O coração operacional do culto presencial, desenhado com respeito absoluto à dinâmica litúrgica. Os tópicos abaixo apresentam a direção do módulo; seu recorte ativo permanece no PRD. Propostas adicionais não entram no MVP por estarem neste pilar:
 
 * **Console ao Vivo da Liturgia (Live Console):**
   * Cronômetro regressivo por etapa que **não avança o culto sozinho** ao zerar (o mover espiritual e as ministrações têm soberania; o sistema aponta o tempo excedido em destaque visual sem bloquear a programação);
@@ -82,7 +102,7 @@ O coração operacional do culto presencial, desenhado com respeito absoluto à 
   * Visão personalizada "Minha Escala" para cada voluntário no celular, com músicas, tom e notas de ensaio.
 * **Cultos Oficiais vs. Recorrência Perene:**
   * Cultos que nunca param independente de feriados civis (ex: cultos oficiais de quarta-feira, sábado e domingo), com geração recorrente de escalas.
-* **Botão de Apoio da Portaria / Recepção (Segurança & Intercessão):**
+* **Botão de Apoio da Portaria / Recepção (Segurança & Intercessão) — proposta futura, fora do MVP:**
   * O porteiro ou recepcionista fica na linha de frente na calçada enquanto o culto ocorre com som alto no santuário.
   * Acionamento silencioso via celular com dois destinos imediatos:
     1. 🚨 **Apoio de Segurança / Diaconia:** Aciona homens do ministério de apoio/portaria que estão no culto para descerem discretamente e desescalarem conflitos (pessoas alteradas ou embriagadas).
@@ -104,11 +124,12 @@ Cuidar de cada pessoa pelo nome, eliminando a dependência de papéis amassados 
     2. *Onde aconteceu?* (Confirmação do endereço do anfitrião);
     3. *Quantas pessoas presentes?* (Membros + visitantes).
   * **Conferência de Dízimos e Ofertas de Célula:** O líder registra o valor arrecadado no app. No domingo, a coordenação de células faz a conferência rápida do envelope físico contra o valor registrado no sistema, eliminando desvios e papéis perdidos.
-* **O Alerta Pastoral de 3 Faltas (Retenção Inteligente):**
-  * Membros realizam check-in no culto (ou são marcados na portaria/célula);
-  * Se um membro acumular **3 faltas consecutivas**, o sistema **não cobra o membro**, mas emite uma notificação de cuidado para o **seu líder direto** (líder de célula, líder de jovens ou Ministério de Capelania):
-    > *"O irmão [Nome] não compareceu aos últimos 3 cultos. Que tal enviar uma mensagem ou fazer uma visita para saber se ele e a família estão bem?"*
-  * Evita o afastamento silencioso de membros por depressão, enfermidade ou crises familiares.
+* **Consulta de Ausências para Apoio ao Cuidado Pastoral — proposta futura:**
+  * Registros de frequência poderão ser informados manualmente por pessoas autorizadas; método, permissões e contexto ainda precisam ser definidos. A aplicação não presume presença nem transforma falta de registro em ausência;
+  * O líder poderá consultar ausências e participações e decidir pessoalmente se cabe conversar ou visitar alguém;
+  * **Três faltas é apenas exemplo de uma pesquisa que o líder pode realizar**, não regra fixa de cuidado, alerta automático ou pontuação de engajamento;
+  * O sistema não deduz depressão, enfermidade, esfriamento ou crise familiar desses registros. A compreensão do contexto e o acolhimento dependem do contato humano;
+  * Exemplo de iniciativa humana após consulta: o líder verifica se os registros estão completos e, se julgar adequado, procura a pessoa para saber como ela e a família estão. Não há envio automático de mensagem ou notificação pastoral aprovado por esta visão.
 
 ---
 
@@ -117,16 +138,17 @@ Cuidar de cada pessoa pelo nome, eliminando a dependência de papéis amassados 
 Proteger o pastor do esgotamento e estabelecer uma liderança saudável e transparente:
 
 * **Alívio da Carga Mental do Pastor:**
-  * Painel executivo de saúde da igreja: o pastor não precisa caçar informações no WhatsApp; ele abre o app e vê o pulso dos ministérios, das células e dos cultos em uma única tela.
-  * Liderança de líderes: o pastor identifica se os coordenadores e líderes de departamentos estão realmente pastoreando seus liderados.
-* **Detecção Precoce de Fadiga e Inconstância:**
-  * O sistema identifica padrões: voluntários que estão trocando de escala com frequência anormal ou acumulando muitas escalas no mesmo mês.
-  * O líder é orientado a intervir pastoralmente para descanso ou alívio de função antes que o voluntário queime por exaustão.
-* **Consagração Baseada em Fidelidade e Histórico Real:**
-  * Na escolha de novos **obreiros, diáconos e presbíteros**, substitui o compadrio e o "achismo" por dados históricos de dedicação e testemunho:
-    * Histórico de assiduidade aos cultos ao longo dos anos;
-    * Confiabilidade nas escalas (cumprimento de compromissos sem furos constantes);
-    * Engajamento real nas células e eventos da igreja.
+  * Visão de consulta dos registros autorizados de ministérios, células e cultos, para reduzir a busca de informações dispersas. A apresentação não constitui uma avaliação automática de saúde da igreja.
+  * Liderança de líderes: o pastor poderá consultar os registros e conversar com coordenadores e líderes sobre seu acompanhamento. A aplicação não julga se alguém está efetivamente pastoreando seus liderados.
+* **Consulta de Participações e Trocas para Apoio à Liderança — proposta futura:**
+  * O líder poderá pesquisar os registros de escalas, participações e trocas e elaborar manualmente suas métricas;
+  * A aplicação não identifica automaticamente frequência anormal, fadiga ou inconstância. Quantidade de escalas ou trocas não comprova sobrecarga nem explica suas causas;
+  * O líder considera contexto, qualidade dos registros e diálogo com o voluntário antes de propor descanso ou ajuste de função.
+* **Histórico como Subsídio à Avaliação Humana de Lideranças — proposta futura:**
+  * Consultas de assiduidade, compromissos e participação poderão fornecer contexto ao discernimento pastoral;
+  * Dados não constituem prova de fidelidade, dedicação ou testemunho. Métricas, quando úteis, são elaboradas e interpretadas manualmente pelo líder;
+  * Escolha e consagração de **obreiros, diáconos e presbíteros** permanecem decisões humanas. O sistema não pontua, ranqueia ou recomenda candidatos;
+  * A finalidade e os acessos a esses registros precisarão de desenho e decisão específicos, sem conceder visibilidade geral a dados pastorais por estarem integrados à plataforma.
 
 ---
 
@@ -157,7 +179,7 @@ Democratizar o ensino bíblico com foco nas pessoas que têm dificuldade com tec
   * Custo zero de largura de banda e hospedagem de vídeo (utiliza infraestrutura do YouTube).
 * **Interface Exclusiva para a Terceira Idade (UX Acolhedora):**
   * Elimina a barreira de idosos se perderem no aplicativo do YouTube (com anúncios, comentários tóxicos e recomendações aleatórias).
-  * No *Escala do Reino*: tela limpa, tipografia ampla, foto do professor, título direto (*"Aula 4: A Graça Salvadora"*) e um botão grande de **Assistir Aula**, sem nenhuma distração.
+  * Na proposta futura de cursos da *Plataforma do Reino*: tela limpa, tipografia ampla, foto do professor, título direto (*"Aula 4: A Graça Salvadora"*) e um botão grande de **Assistir Aula**, sem nenhuma distração.
 
 ---
 
@@ -174,32 +196,42 @@ Zelar pela infraestrutura física e equipamentos com boa mordomia dos recursos d
 
 ---
 
-## 4. Estratégia de Plataformas & Roadmap de Entrega
+## 4. Estratégia de Plataformas & Organização do Backlog
 
-| Fase | Escopo & Entregas | Status |
+**A ordem de execução é concluir o escopo acordado do Escala do Reino antes de iniciar as propostas adicionais do ecossistema.** Após essa conclusão, o responsável avaliará prioridade, dependências, regras e autorização de cada frente. Estar no backlog não implica início automático.
+
+| Frente | Conteúdo de referência | Condição |
 |---|---|---|
-| **Fase 1 (MVP Atual)** | • Identidade, Convites Seguros (72h), Criação de Igreja e Membros.<br>• Piloto das Escalas e Liturgia ao Vivo no **Ministério Shalom**.<br>• Web SPA Responsivo (Mobile-First para celular e desktop). | Em finalização / Testes de laboratório |
-| **Fase 2 (Próximos 1-2 meses)** | • Aplicativo Android Nativo/Híbrido para consulta e operação ágil.<br>• Módulo de Cultos no Lar / Células (relatórios express e rotação de lares).<br>• Alerta pastoral de 3 faltas para líderes. | Planejado |
-| **Fase 3** | • Pipeline Financeiro de Retiros e Eventos (Inscrição + Tesouraria).<br>• Cursos e Vídeos para Terceira Idade (YouTube integrado).<br>• Botão de Apoio da Portaria (Segurança e Intercessão). | Visão Estratégica |
-| **Fase 4** | • Aplicativo iOS.<br>• Módulo de Patrimônio, Fornecedores e Manutenção Preventiva.<br>• Histórico e métricas de fidelidade para Consagrações de Obreiros. | Visão de Longo Prazo |
+| **Escala do Reino — trabalho atual** | Recorte do MVP definido no PRD, incluindo identidade, convites, igreja, membros, planejamento, escalas e condução do culto conforme os incrementos acordados. | Implementação e validação incremental. Consultar Estado atual e evidências; esta visão não declara todo o MVP concluído. |
+| **Canais Android/iOS** | Possibilidades de extensão para consulta e operação, conforme limites a detalhar. | Backlog posterior à conclusão do Escala do Reino. Sem tecnologia, data ou ordem de lançamento aprovadas neste documento. |
+| **Células, discipulado e apoio à liderança** | Registros e consultas para cuidado pastoral, participação, ausência e análise manual pelos líderes. | Backlog estratégico; nomes, regras, métricas humanas e acessos ainda serão detalhados. |
+| **Eventos, cursos e apoio da portaria** | Ideias de inscrições, tesouraria, educação e apoio operacional. | Backlog estratégico; desenho, integrações e permissões dependem de avaliação e autorização próprias. |
+| **Patrimônio e manutenção** | Ideias de inventário, fornecedores e manutenção preventiva. | Backlog estratégico; escopo e prioridade não definidos. |
+
+Os agrupamentos acima não são fases com compromisso de prazo ou sequência aprovada. O horizonte de 1–2 meses anteriormente citado não constitui data aprovada de entrega. A preferência por canais ou integrações deverá ser avaliada na frente correspondente, sem antecipar implantação ou arquitetura.
 
 ---
 
 ## 5. Governança de Produto: GitHub Projects & Gestão de Issues
 
-Para que essa visão ambiciosa seja executada sem perder o controle e sem gerar débito técnico, o desenvolvimento da **Plataforma do Reino** segue a governança estruturada no GitHub:
+A rotina vigente está no [Guia de trabalho no GitHub](GUIA-TRABALHO-GITHUB.md). Esta seção resume o processo; alterações operacionais devem manter esse guia e o resumo do Project coerentes.
 
-* **GitHub Projects (Visão Macro & Épicos):**
-  * Cada pilar da plataforma corresponde a um épico ou projeto dedicado no GitHub Projects;
-  * Permite priorizar as entregas de cada fase sem misturar o trabalho ativo do MVP com as discussões de módulos futuros;
-  * Visibilidade clara do status de cada funcionalidade: *Backlog ➔ Planejado ➔ Em Andamento (Antigravity/Codex) ➔ QA & Validação Manual ➔ Entregue*.
-* **Ciclo de Vida das Issues (Rigor do PRD):**
-  * Nenhuma funcionalidade é codificada sem uma issue bem definida com critérios de aceite, regras de negócio e limites de validação;
-  * As issues vinculam contratos, pull requests e testes automatizados, garantindo que nada seja dado como concluído sem validação prática da jornada do usuário.
-* **O Fluxo PM + Dual-LLM:**
-  * **O PM (14 anos):** Define o escopo da issue, os limites de aceitação, testa a experiência de ponta a ponta e aprova o merge;
-  * **Antigravity IDE:** Implementa os componentes, organiza o estado do cliente e resolve integrações locais;
-  * **Codex:** Audita contratos, valida o schema do banco, cria contraprovas e testa concorrência estrita.
+* **Um Project Principal — Plataforma do Reino:**
+  * O acompanhamento usa o Project principal, com labels para módulos e trabalho compartilhado. Os pilares não criam automaticamente Projects separados;
+  * Épicos, agrupamentos ou issues de discovery poderão ser usados quando houver trabalho definido, conforme decisão do responsável;
+  * A visão de backlog não autoriza implementação nem exige abrir uma issue executável para cada ideia;
+  * Status vigentes: **Backlog ➔ Pronto para iniciar ➔ Em andamento ➔ Em revisão ➔ Em QA ➔ Concluído**.
+* **Issues, PRs e Evidências:**
+  * Trabalho definido registra objetivo, critérios, regras e limites, com referências ao PRD e aos contratos;
+  * Issues e PRs organizam a execução autorizada. Não ampliam requisitos nem substituem autorização de commit, push, merge, deploy ou SQL no piloto;
+  * Conclusão depende dos critérios e da conferência adequada à entrega. Revisão documental não é declarada QA funcional; validação parcial não comprova uma jornada inteira;
+  * A seleção documental ocorre perto de cada PR, conforme o processo aprovado.
+* **Papéis, com IA de Apoio Independente do Fornecedor:**
+  * **PM/responsável:** define escopo, prioridades, critérios e material a publicar; concede autorizações específicas;
+  * **Antigravity IDE:** apoia a implementação autorizada e prepara alterações e publicação quando autorizadas;
+  * **Codex:** revisa requisitos, diff, versão e evidências, e conduz ensaios dentro do escopo autorizado;
+  * **QA:** seleciona e executa cenários combinados, registra esperado/observado, evidências e limites e confirma correções;
+  * **Outra IA de apoio:** pode variar conforme a escolha da QA. Deve seguir os documentos e autorizações do projeto, sem presumir que exemplos futuros sejam requisitos ou que uma troca de ferramenta preserve acesso e contexto.
 
 ---
 
