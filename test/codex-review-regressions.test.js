@@ -289,7 +289,7 @@ async function submitForm(renderer) {
 test('R1: emissao integrada em MembersPage deve manter o link visivel para copiar', async (t) => {
   setupEnvironment({user, rpcHandler: async(name,args) => {
     if(name==='get_my_church_access') return {data:[accessA],error:null};
-    if(name==='list_church_members') return {data:[activeMember],error:null};
+    if(name==='list_church_members_admin' || name==='list_church_members') return {data:[activeMember],error:null};
     if(name==='issue_church_invitation') return {data:[emitted(args)],error:null};
     return empty();
   }});

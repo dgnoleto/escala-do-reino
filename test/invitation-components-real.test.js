@@ -1218,7 +1218,7 @@ describe('Suíte de Testes da Interface de Convites e Aprovação de Nome (Contr
             error: null,
           };
         }
-        if (name === 'list_church_members') {
+        if (name === 'list_church_members_admin' || name === 'list_church_members') {
           return {
             data: [
               { id: 'mem-1', display_name: 'Membro Um', status: 'active', joined_at: '2026-01-01T00:00:00Z', total_count: 2 },

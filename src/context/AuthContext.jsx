@@ -577,12 +577,19 @@ export function AuthProvider({ children }) {
   }, [fetchChurchAccess, recordCreationConfirmation]);
 
   /**
-   * Getter estável da identidade e geração da sessão vigentes (fonte viva do AuthContext).
+   * Getter estável da identidade, geração da sessão e vínculo vigentes (fonte viva do AuthContext).
    */
   const getAuthSnapshot = useCallback(() => ({
     userId: currentUserIdRef.current,
     sessionId: sessionIdRef.current,
+    churchId: churchAccessRef.current?.church_id || null,
+    churchAccess: churchAccessRef.current,
   }), []);
+
+  /**
+   * Getter estável do vínculo ativo vigente por ref (para guardas síncronas pós-await).
+   */
+  const getLiveChurchAccess = useCallback(() => churchAccessRef.current, []);
 
   /**
    * Recarrega o vínculo diretamente para uma igreja sem o efeito colateral de registrar confirmação de criação.
@@ -797,6 +804,7 @@ export function AuthProvider({ children }) {
         session,
         sessionId: sessionIdRef.current,
         getAuthSnapshot,
+        getLiveChurchAccess,
         authState,
         authError,
         setAuthError,

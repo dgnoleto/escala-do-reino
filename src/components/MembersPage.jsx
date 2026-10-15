@@ -15,7 +15,10 @@ import {
   X,
   Send,
   Mail,
-  FileText
+  FileText,
+  RotateCcw,
+  Trash2,
+  Lock,
 } from 'lucide-react';
 import IssueInvitationModal from './IssueInvitationModal';
 import AdminInvitationsTab from './AdminInvitationsTab';
@@ -42,8 +45,13 @@ import {
   savePendingMemberCommand,
   loadPendingMemberCommand,
   removePendingMemberCommand,
+  loadAnyPendingMemberCommand,
+  removePendingLifecycleCommand,
   classifyReceiptCheckResult,
+  classifyLifecycleReceiptCheckResult,
   dispatchMemberCreation,
+  dispatchMemberRestoration,
+  dispatchMemberDeactivation,
   createInitialMemberListState,
   applyMemberListTransition,
   getMemberListViewState,
@@ -53,12 +61,67 @@ export { isDefinitiveServerError, isUncertainResponse };
 
 
 export default function MembersPage({ onBack }) {
-  const { session, churchAccess, authState } = useAuth();
+  const { session, churchAccess, authState, getAuthSnapshot, getLiveChurchAccess } = useAuth();
 
   const churchId     = churchAccess?.church_id;
   const churchName   = churchAccess?.church_name || 'Igreja';
   const isAdmin      = churchAccess?.is_admin || false;
   const currentUserId = session?.user?.id;
+
+  // Consulta à fonte viva por getter se disponível
+  const liveChurchAccess = typeof getLiveChurchAccess === 'function' ? getLiveChurchAccess() : churchAccess;
+  const effectiveChurchId = liveChurchAccess?.church_id ?? churchId;
+  const effectiveIsAdmin = liveChurchAccess?.is_admin ?? isAdmin;
+
+  // Rastreamento de contexto vivo para proteção estrita de operações assíncronas pós-await
+  const contextGenRef = useRef(0);
+  const liveContextRef = useRef({
+    churchId: effectiveChurchId,
+    currentUserId,
+    isAdmin: effectiveIsAdmin,
+    authState,
+    generation: 0,
+  });
+
+  if (
+    liveContextRef.current.churchId !== effectiveChurchId ||
+    liveContextRef.current.currentUserId !== currentUserId ||
+    liveContextRef.current.isAdmin !== effectiveIsAdmin ||
+    liveContextRef.current.authState !== authState
+  ) {
+    contextGenRef.current += 1;
+    liveContextRef.current = {
+      churchId: effectiveChurchId,
+      currentUserId,
+      isAdmin: effectiveIsAdmin,
+      authState,
+      generation: contextGenRef.current,
+    };
+  }
+
+  // Avalia se o contexto de execução atual ainda coincide com o contexto no qual o comando foi emitido
+  const isCurrentContext = useCallback((expectedChurchId, expectedUserId, expectedGen) => {
+    if (!isMountedRef.current) return false;
+    const cur = liveContextRef.current;
+    if (expectedChurchId && cur.churchId !== expectedChurchId) return false;
+    if (expectedUserId && cur.currentUserId !== expectedUserId) return false;
+    if (expectedGen !== undefined && cur.generation !== expectedGen) return false;
+    if (cur.authState !== 'access_granted' || !cur.isAdmin) return false;
+
+    // Também verifica a fonte viva do AuthContext por getter/ref para detectar transições imediatas
+    if (typeof getLiveChurchAccess === 'function') {
+      const live = getLiveChurchAccess();
+      if (expectedChurchId && live?.church_id !== expectedChurchId) return false;
+      if (!live?.is_admin) return false;
+    }
+    if (typeof getAuthSnapshot === 'function') {
+      const snap = getAuthSnapshot();
+      if (expectedUserId && snap?.userId !== expectedUserId) return false;
+      if (expectedChurchId && snap?.churchId && snap.churchId !== expectedChurchId) return false;
+    }
+
+    return true;
+  }, [getLiveChurchAccess, getAuthSnapshot]);
 
   // Estado da listagem e coordenação de concorrência
   const [listState, setListState]     = useState(createInitialMemberListState);
@@ -68,8 +131,19 @@ export default function MembersPage({ onBack }) {
   }
   const [page, setPage]               = useState(1);
   const pageSize                      = 10;
+  const [statusFilter, setStatusFilter] = useState('active'); // 'active' | 'inactive' | 'all'
   const [activeSection, setActiveSection] = useState('members'); // 'members' | 'invitations' | 'requests'
   const [inviteMember, setInviteMember]   = useState(null);
+
+  // Estado para modal de restauração de membro elegível
+  const [restoreModalMember, setRestoreModalMember] = useState(null);
+  const [restoring, setRestoring]                   = useState(false);
+  const [restoreError, setRestoreError]             = useState(null);
+
+  // Estado para modal de exclusão (avisando e acionando trava P0021 no servidor)
+  const [deactivateModalMember, setDeactivateModalMember] = useState(null);
+  const [deactivating, setDeactivating]                   = useState(false);
+  const [deactivateError, setDeactivateError]             = useState(null);
 
 
   // Estado do formulário de criação
@@ -98,6 +172,21 @@ export default function MembersPage({ onBack }) {
     };
   }, []);
 
+  // Reset de estados transitórios e modais ao trocar de igreja ou usuário
+  useEffect(() => {
+    setSubmitting(false);
+    setRetrying(false);
+    setReconciling(false);
+    setRestoring(false);
+    setDeactivating(false);
+    setShowCreateModal(false);
+    setRestoreModalMember(null);
+    setDeactivateModalMember(null);
+    setFormError(null);
+    setSuccessMessage(null);
+    setNameInput('');
+  }, [churchId, currentUserId]);
+
   // Monitorar conectividade
   useEffect(() => {
     function handleOnline() {
@@ -114,43 +203,61 @@ export default function MembersPage({ onBack }) {
     };
   }, []);
 
-  // Recupera comando pendente retido no storage de sessão para esta conta e igreja
+  // Recupera qualquer comando pendente (criação ou ciclo de vida) retido no storage para esta conta e igreja
   useEffect(() => {
     if (!currentUserId || !churchId || typeof window === 'undefined') {
       setUncertainCommand(null);
       return;
     }
-    const saved = loadPendingMemberCommand(window.sessionStorage, currentUserId, churchId);
+    const saved = loadAnyPendingMemberCommand(window.sessionStorage, currentUserId, churchId);
     setUncertainCommand(saved);
   }, [churchId, currentUserId]);
 
-  // Limpar lista se perder autorização ou trocar de conta
+  // Limpar lista se perder autorização ou trocar de igreja/conta
+  const previousChurchIdRef = useRef(churchId);
+  const previousUserIdRef = useRef(currentUserId);
   useEffect(() => {
     if (!churchAccess || authState !== 'access_granted') {
       if (coordinatorRef.current) coordinatorRef.current.reset();
       setListState(createInitialMemberListState());
+    } else if (
+      (previousChurchIdRef.current && previousChurchIdRef.current !== churchId) ||
+      (previousUserIdRef.current && previousUserIdRef.current !== currentUserId)
+    ) {
+      if (coordinatorRef.current) coordinatorRef.current.reset();
+      setListState(createInitialMemberListState());
     }
-  }, [churchAccess, authState]);
+    previousChurchIdRef.current = churchId;
+    previousUserIdRef.current = currentUserId;
+  }, [churchAccess, authState, churchId, currentUserId]);
 
   /**
-   * Consulta a lista paginada de membros da igreja autorizada com proteção contra concorrência.
+   * Consulta a lista paginada de membros da igreja autorizada via RPC administrativa com filtros.
    */
   const loadMembers = useCallback(async (targetPage = page, options = {}) => {
-    if (!supabase || !churchId || !isAdmin) return;
-
+    const targetChurchId = churchId;
+    const targetUserId = currentUserId;
+    if (!supabase || !targetChurchId || !isAdmin || !isCurrentContext(targetChurchId, targetUserId)) return;
     const requestId = coordinatorRef.current.getNextRequestId();
     setListState((prev) => applyMemberListTransition(prev, { type: 'FETCH_START' }));
 
     try {
       const offset = (targetPage - 1) * pageSize;
-      const { data, error } = await supabase.schema('public').rpc('list_church_members', {
-        p_church_id: churchId,
+      const effectiveFilter = options.filter || statusFilter;
+      let { data, error } = await supabase.schema('public').rpc('list_church_members_admin', {
+        p_church_id: targetChurchId,
+        p_status_filter: effectiveFilter,
         p_limit: pageSize,
         p_offset: offset,
       });
 
-      // Ignora respostas obsoletas se o componente desmontou ou se uma consulta mais recente foi disparada (Requisito 5)
-      if (!isMountedRef.current || !coordinatorRef.current.isCurrent(requestId)) {
+
+      // Ignora respostas obsoletas se o componente desmontou ou se o contexto/requisição mudou
+      if (
+        !isMountedRef.current ||
+        !coordinatorRef.current.isCurrent(requestId) ||
+        !isCurrentContext(targetChurchId, targetUserId)
+      ) {
         return;
       }
 
@@ -166,6 +273,19 @@ export default function MembersPage({ onBack }) {
         return;
       }
 
+      // Validação de página vazia após exclusão/restauração/filtro:
+      // se targetPage > 1 e items estiver vazio, reposiciona na última página válida (ou página 1 se total for zero)
+      const items = Array.isArray(data?.[0]?.items) ? data[0].items : (Array.isArray(data) ? data : []);
+      const total = Number(data?.[0]?.total_count ?? items.length);
+
+      if (targetPage > 1 && items.length === 0) {
+        const lastPage = total > 0 ? Math.max(1, Math.ceil(total / pageSize)) : 1;
+        if (lastPage < targetPage) {
+          setPage(lastPage);
+          return;
+        }
+      }
+
       setListState((prev) =>
         applyMemberListTransition(prev, {
           type: 'FETCH_SUCCESS',
@@ -173,7 +293,11 @@ export default function MembersPage({ onBack }) {
         })
       );
     } catch (err) {
-      if (!isMountedRef.current || !coordinatorRef.current.isCurrent(requestId)) {
+      if (
+        !isMountedRef.current ||
+        !coordinatorRef.current.isCurrent(requestId) ||
+        !isCurrentContext(targetChurchId, targetUserId)
+      ) {
         return;
       }
       console.error('[MembersPage] Erro inesperado ao listar membros:', err);
@@ -185,21 +309,24 @@ export default function MembersPage({ onBack }) {
         })
       );
     }
-  }, [churchId, isAdmin, page, pageSize]);
+  }, [churchId, isAdmin, page, pageSize, statusFilter]);
 
-  // Carregar dados na montagem e na troca de página
+  // Carregar dados na montagem e na troca de página, filtro ou concessão de acesso
   useEffect(() => {
-    if (churchId && isAdmin) {
+    if (churchId && isAdmin && authState === 'access_granted') {
       loadMembers(page);
     }
-  }, [churchId, isAdmin, page, loadMembers]);
+  }, [churchId, isAdmin, authState, page, statusFilter, loadMembers]);
 
   /**
    * Executa a chamada RPC de criação de membro, retendo a identidade do comando
    * antes do envio e gerenciando respostas incertas versus definitivas.
    */
   async function executeMemberCreation(commandId, normalizedName) {
-    if (!supabase || !churchId) return;
+    const targetChurchId = churchId;
+    const targetUserId = currentUserId;
+    const targetGen = liveContextRef.current.generation;
+    if (!supabase || !targetChurchId || !isCurrentContext(targetChurchId, targetUserId, targetGen)) return;
 
     const storage = typeof window !== 'undefined' ? window.sessionStorage : null;
     const rpcCaller = (params) => supabase.schema('public').rpc('create_church_member', params);
@@ -207,13 +334,15 @@ export default function MembersPage({ onBack }) {
     const result = await dispatchMemberCreation({
       storage,
       rpcCaller,
-      churchId,
-      userId: currentUserId,
+      churchId: targetChurchId,
+      userId: targetUserId,
       commandId,
       displayName: normalizedName,
+      isCurrentContext: () => isCurrentContext(targetChurchId, targetUserId, targetGen),
     });
 
-    if (!isMountedRef.current) return;
+    if (!isMountedRef.current || !isCurrentContext(targetChurchId, targetUserId, targetGen)) return;
+    if (result.status === 'CONTEXT_CHANGED') return;
 
     if (result.status === 'STORAGE_FAILED') {
       // Se o armazenamento estiver indisponível ou a gravação retornar false,
@@ -232,13 +361,13 @@ export default function MembersPage({ onBack }) {
 
     if (result.status === 'DEFINITIVE_ERROR') {
       console.error('[MembersPage] Erro definitivo retornado ao criar membro:', result.message);
-      setUncertainCommand(null);
+      setUncertainCommand((prev) => (prev?.commandId === commandId ? null : prev));
       setFormError(result.message);
       return;
     }
 
     if (result.status === 'SUCCESS') {
-      setUncertainCommand(null);
+      setUncertainCommand((prev) => (prev?.commandId === commandId ? null : prev));
       setNameInput('');
       setShowCreateModal(false);
       setSuccessMessage(result.message);
@@ -274,7 +403,7 @@ export default function MembersPage({ onBack }) {
 
     // Se há um comando incerto pendente, exigir reconciliação ou reexecução prévia
     if (uncertainCommand) {
-      setFormError('Existe um comando anterior com resposta incerta. Reconcilie o resultado antes de tentar novamente.');
+      setFormError('Existe uma operação anterior com resposta incerta. Reconcilie o resultado antes de realizar novo cadastro.');
       return;
     }
 
@@ -284,10 +413,14 @@ export default function MembersPage({ onBack }) {
     setFormError(null);
     setSuccessMessage(null);
 
+    const targetChurchId = churchId;
+    const targetUserId = currentUserId;
+    const targetGen = liveContextRef.current.generation;
+
     try {
       await executeMemberCreation(commandId, normalized);
     } finally {
-      if (isMountedRef.current) {
+      if (isMountedRef.current && isCurrentContext(targetChurchId, targetUserId, targetGen)) {
         setSubmitting(false);
       }
     }
@@ -295,10 +428,13 @@ export default function MembersPage({ onBack }) {
 
   /**
    * Reexecuta com segurança o comando retido com o mesmo command_id e os mesmos parâmetros.
-   * A função RPC idempotente devolverá o resultado original ou executará uma única criação.
+   * A função RPC idempotente devolverá o resultado original ou executará uma única operação.
    */
   async function handleRetryCommand() {
-    if (!uncertainCommand || retrying || reconciling) return;
+    const targetChurchId = churchId;
+    const targetUserId = currentUserId;
+    const targetGen = liveContextRef.current.generation;
+    if (!uncertainCommand || retrying || reconciling || !isCurrentContext(targetChurchId, targetUserId, targetGen)) return;
     if (!isOnline) {
       setFormError('Sem conexão com a internet. Verifique a rede antes de reexecutar.');
       return;
@@ -306,68 +442,340 @@ export default function MembersPage({ onBack }) {
 
     setRetrying(true);
     setFormError(null);
+
+    const retryCmd = uncertainCommand;
+
     try {
-      await executeMemberCreation(uncertainCommand.commandId, uncertainCommand.displayName);
+      if (retryCmd.action === 'restore_member') {
+        const storage = typeof window !== 'undefined' ? window.sessionStorage : null;
+        const rpcCaller = (params) => supabase.schema('public').rpc('restore_church_member', params);
+
+        const result = await dispatchMemberRestoration({
+          storage,
+          rpcCaller,
+          churchId: retryCmd.churchId,
+          userId: retryCmd.userId,
+          commandId: retryCmd.commandId,
+          memberId: retryCmd.memberId,
+          expectedUpdatedAt: retryCmd.expectedUpdatedAt, // MESMA REVISÃO ORIGINAL
+          displayName: retryCmd.displayName,
+          isCurrentContext: () => isCurrentContext(targetChurchId, targetUserId, targetGen),
+        });
+
+        if (!isMountedRef.current || !isCurrentContext(targetChurchId, targetUserId, targetGen)) return;
+        if (result.status === 'CONTEXT_CHANGED') return;
+
+        if (result.status === 'SUCCESS') {
+          setUncertainCommand((prev) => (prev?.commandId === retryCmd.commandId ? null : prev));
+          setSuccessMessage(result.message);
+          loadMembers(page);
+          return;
+        }
+
+        if (result.status === 'DEFINITIVE_ERROR') {
+          setUncertainCommand((prev) => (prev?.commandId === retryCmd.commandId ? null : prev));
+          setFormError(result.message);
+          return;
+        }
+
+        if (result.status === 'UNCERTAIN') {
+          setFormError(result.message);
+          return;
+        }
+
+        if (result.status === 'STORAGE_FAILED' || result.status === 'ABORTED') {
+          setFormError(result.message);
+          return;
+        }
+      } else if (retryCmd.action === 'deactivate_member') {
+        const storage = typeof window !== 'undefined' ? window.sessionStorage : null;
+        const rpcCaller = (params) => supabase.schema('public').rpc('deactivate_church_member', params);
+
+        const result = await dispatchMemberDeactivation({
+          storage,
+          rpcCaller,
+          churchId: retryCmd.churchId,
+          userId: retryCmd.userId,
+          commandId: retryCmd.commandId,
+          memberId: retryCmd.memberId,
+          expectedUpdatedAt: retryCmd.expectedUpdatedAt,
+          displayName: retryCmd.displayName,
+          isCurrentContext: () => isCurrentContext(targetChurchId, targetUserId, targetGen),
+        });
+
+        if (!isMountedRef.current || !isCurrentContext(targetChurchId, targetUserId, targetGen)) return;
+        if (result.status === 'CONTEXT_CHANGED') return;
+
+        if (result.status === 'SUCCESS') {
+          setUncertainCommand((prev) => (prev?.commandId === retryCmd.commandId ? null : prev));
+          setSuccessMessage(result.message);
+          loadMembers(page);
+          return;
+        }
+
+        if (result.status === 'DEFINITIVE_ERROR') {
+          setUncertainCommand((prev) => (prev?.commandId === retryCmd.commandId ? null : prev));
+          setFormError(result.message);
+          return;
+        }
+
+        if (result.status === 'UNCERTAIN') {
+          setFormError(result.message);
+          return;
+        }
+
+        if (result.status === 'STORAGE_FAILED' || result.status === 'ABORTED') {
+          setFormError(result.message);
+          return;
+        }
+      } else {
+        // Criação de membro
+        await executeMemberCreation(retryCmd.commandId, retryCmd.displayName);
+      }
     } finally {
-      if (isMountedRef.current) {
+      if (isMountedRef.current && isCurrentContext(targetChurchId, targetUserId, targetGen)) {
         setRetrying(false);
       }
     }
   }
 
   /**
-   * Reconcilia um comando com resposta incerta chamando get_create_member_receipt.
+   * Reconcilia um comando com resposta incerta chamando get_create_member_receipt ou get_member_lifecycle_receipt.
    * Falha na consulta NÃO comprova término sem gravação; o comando não é descartado.
    */
   async function handleReconcileReceipt() {
-    if (!uncertainCommand || !supabase || reconciling || retrying) return;
+    const targetChurchId = churchId;
+    const targetUserId = currentUserId;
+    const targetGen = liveContextRef.current.generation;
+    if (!uncertainCommand || !supabase || reconciling || retrying || !isCurrentContext(targetChurchId, targetUserId, targetGen)) return;
 
     setReconciling(true);
     setFormError(null);
 
+    const pending = uncertainCommand;
+    const isLifecycle = pending.action === 'restore_member' || pending.action === 'deactivate_member';
+
     try {
-      const { data, error } = await supabase.schema('public').rpc('get_create_member_receipt', {
-        p_church_id: uncertainCommand.churchId,
-        p_command_id: uncertainCommand.commandId,
-      });
+      if (isLifecycle) {
+        const { data, error } = await supabase.schema('public').rpc('get_member_lifecycle_receipt', {
+          p_command_id: pending.commandId,
+        });
 
-      if (!isMountedRef.current) return;
+        if (!isMountedRef.current || !isCurrentContext(targetChurchId, targetUserId, targetGen)) return;
 
-      const result = classifyReceiptCheckResult(error, data);
+        const result = classifyLifecycleReceiptCheckResult(error, data, {
+          commandId: pending.commandId,
+          action: pending.action,
+          churchId: pending.churchId,
+          memberId: pending.memberId,
+        });
 
-      if (result.status === 'ERROR') {
-        // Falha na consulta de recibo: NÃO comprova término sem gravação!
-        // O comando NÃO é descartado. Mantém a identidade e o storage.
-        setFormError(result.message);
-        return;
-      }
-
-      if (result.status === 'CONFIRMED') {
-        // Confirmado no servidor!
-        if (typeof window !== 'undefined' && window.sessionStorage) {
-          removePendingMemberCommand(window.sessionStorage, uncertainCommand.userId, uncertainCommand.churchId);
+        if (result.status === 'ERROR') {
+          setFormError(result.message);
+          return;
         }
-        setUncertainCommand(null);
-        setNameInput('');
-        setShowCreateModal(false);
-        setSuccessMessage(`Cadastro de "${result.member.display_name}" confirmado com sucesso no servidor!`);
-        setPage(1);
-        loadMembers(1, { hasPendingCreationSuccess: true });
-        return;
-      }
 
-      if (result.status === 'EMPTY_RECEIPT') {
-        // Recibo ainda não localizado: NÃO comprova término sem gravação!
-        // NÃO descarta o comando e autoriza reexecução com a mesma chave.
-        setFormError(result.message);
+        if (result.status === 'CONFIRMED') {
+          if (typeof window !== 'undefined' && window.sessionStorage) {
+            removePendingLifecycleCommand(
+              window.sessionStorage,
+              pending.userId,
+              pending.churchId,
+              pending.memberId,
+              pending.action,
+              pending.commandId
+            );
+          }
+          setUncertainCommand((prev) => (prev?.commandId === pending.commandId ? null : prev));
+          const name = pending.displayName || result.receipt?.result_payload?.display_name || 'selecionado';
+          const successMsg =
+            pending.action === 'restore_member'
+              ? `Restauração do membro "${name}" confirmada com sucesso no servidor!`
+              : `Operação do membro "${name}" confirmada com sucesso no servidor!`;
+          setSuccessMessage(successMsg);
+          loadMembers(page);
+          return;
+        }
+
+        if (result.status === 'EMPTY_RECEIPT') {
+          setFormError(result.message);
+        }
+      } else {
+        // Criação de membro
+        const { data, error } = await supabase.schema('public').rpc('get_create_member_receipt', {
+          p_church_id: pending.churchId,
+          p_command_id: pending.commandId,
+        });
+
+        if (!isMountedRef.current || !isCurrentContext(targetChurchId, targetUserId, targetGen)) return;
+
+        const result = classifyReceiptCheckResult(error, data);
+
+        if (result.status === 'ERROR') {
+          setFormError(result.message);
+          return;
+        }
+
+        if (result.status === 'CONFIRMED') {
+          if (typeof window !== 'undefined' && window.sessionStorage) {
+            removePendingMemberCommand(window.sessionStorage, pending.userId, pending.churchId, pending.commandId);
+          }
+          setUncertainCommand((prev) => (prev?.commandId === pending.commandId ? null : prev));
+          setNameInput('');
+          setShowCreateModal(false);
+          setSuccessMessage(`Cadastro de "${result.member.display_name}" confirmado com sucesso no servidor!`);
+          setPage(1);
+          loadMembers(1, { hasPendingCreationSuccess: true });
+          return;
+        }
+
+        if (result.status === 'EMPTY_RECEIPT') {
+          setFormError(result.message);
+        }
       }
     } catch (err) {
-      if (!isMountedRef.current) return;
-      // Exceção de rede: também NÃO descarta o comando!
+      if (!isMountedRef.current || !isCurrentContext(targetChurchId, targetUserId, targetGen)) return;
       setFormError('Erro ao consultar o servidor para reconciliação. A operação pendente foi preservada.');
     } finally {
-      if (isMountedRef.current) {
+      if (isMountedRef.current && isCurrentContext(targetChurchId, targetUserId, targetGen)) {
         setReconciling(false);
+      }
+    }
+  }
+
+  /**
+   * Executa a restauração de membro inativo sem devolver acesso.
+   * updated_at é estritamente preservado como string opaca integral.
+   */
+  async function handleRestoreMember(targetMember) {
+    const targetChurchId = churchId;
+    const targetUserId = currentUserId;
+    const targetGen = liveContextRef.current.generation;
+    if (!targetMember || restoring || !isOnline || !isCurrentContext(targetChurchId, targetUserId, targetGen)) return;
+
+    if (uncertainCommand) {
+      setRestoreError('Existe uma operação anterior com resposta incerta. Reconcilie o resultado antes de tentar restaurar.');
+      return;
+    }
+
+    const commandId = crypto.randomUUID();
+    const storage = typeof window !== 'undefined' ? window.sessionStorage : null;
+    const rpcCaller = (params) => supabase.schema('public').rpc('restore_church_member', params);
+
+    setRestoring(true);
+    setRestoreError(null);
+
+    try {
+      const result = await dispatchMemberRestoration({
+        storage,
+        rpcCaller,
+        churchId: targetChurchId,
+        userId: targetUserId,
+        commandId,
+        memberId: targetMember.member_id || targetMember.id,
+        expectedUpdatedAt: targetMember.updated_at, // OPAQUE STRING PRESERVADA SEM PARSE DE DATE
+        displayName: targetMember.display_name,
+        isCurrentContext: () => isCurrentContext(targetChurchId, targetUserId, targetGen),
+      });
+
+      if (!isMountedRef.current || !isCurrentContext(targetChurchId, targetUserId, targetGen)) return;
+      if (result.status === 'CONTEXT_CHANGED') return;
+
+      if (result.status === 'SUCCESS') {
+        setRestoreModalMember(null);
+        setSuccessMessage(result.message);
+        loadMembers(page);
+        return;
+      }
+
+      if (result.status === 'DEFINITIVE_ERROR') {
+        setRestoreError(result.message);
+        return;
+      }
+
+      if (result.status === 'UNCERTAIN') {
+        setUncertainCommand(result.pendingCmd);
+        setRestoreModalMember(null);
+        setFormError(result.message);
+        return;
+      }
+
+      if (result.status === 'STORAGE_FAILED' || result.status === 'ABORTED') {
+        setRestoreError(result.message);
+        return;
+      }
+    } finally {
+      if (isMountedRef.current && isCurrentContext(targetChurchId, targetUserId, targetGen)) {
+        setRestoring(false);
+      }
+    }
+  }
+
+  /**
+   * Solicita exclusão de membro ao servidor.
+   * O servidor valida a autorização e recusa com P0021 devido à trava de dependência litúrgica.
+   */
+  async function handleDeactivateMember(targetMember) {
+    const targetChurchId = churchId;
+    const targetUserId = currentUserId;
+    const targetGen = liveContextRef.current.generation;
+    if (!targetMember || deactivating || !isOnline || !isCurrentContext(targetChurchId, targetUserId, targetGen)) return;
+
+    if (uncertainCommand) {
+      setDeactivateError('Existe uma operação anterior com resposta incerta. Reconcilie o resultado antes de prosseguir.');
+      return;
+    }
+
+    const commandId = crypto.randomUUID();
+    const storage = typeof window !== 'undefined' ? window.sessionStorage : null;
+    const rpcCaller = (params) => supabase.schema('public').rpc('deactivate_church_member', params);
+
+    setDeactivating(true);
+    setDeactivateError(null);
+
+    try {
+      const result = await dispatchMemberDeactivation({
+        storage,
+        rpcCaller,
+        churchId: targetChurchId,
+        userId: targetUserId,
+        commandId,
+        memberId: targetMember.member_id || targetMember.id,
+        expectedUpdatedAt: targetMember.updated_at, // OPAQUE STRING PRESERVADA SEM PARSE DE DATE
+        displayName: targetMember.display_name,
+        isCurrentContext: () => isCurrentContext(targetChurchId, targetUserId, targetGen),
+      });
+
+      if (!isMountedRef.current || !isCurrentContext(targetChurchId, targetUserId, targetGen)) return;
+      if (result.status === 'CONTEXT_CHANGED') return;
+
+      if (result.status === 'DEFINITIVE_ERROR') {
+        // Servidor rejeitou com P0021 ou erro definitivo
+        setDeactivateError(result.message);
+        return;
+      }
+
+      if (result.status === 'SUCCESS') {
+        setDeactivateModalMember(null);
+        setSuccessMessage(result.message);
+        loadMembers(page);
+        return;
+      }
+
+      if (result.status === 'UNCERTAIN') {
+        setUncertainCommand(result.pendingCmd);
+        setDeactivateModalMember(null);
+        setFormError(result.message);
+        return;
+      }
+
+      if (result.status === 'STORAGE_FAILED' || result.status === 'ABORTED') {
+        setDeactivateError(result.message);
+        return;
+      }
+    } finally {
+      if (isMountedRef.current && isCurrentContext(targetChurchId, targetUserId, targetGen)) {
+        setDeactivating(false);
       }
     }
   }
@@ -400,6 +808,19 @@ export default function MembersPage({ onBack }) {
   const viewState = getMemberListViewState(listState);
   const { members, totalCount } = listState;
   const totalPages = Math.max(1, Math.ceil(totalCount / pageSize));
+
+  // Totalizador contextualizado conforme o filtro ativo
+  let totalizerText = viewState.totalizerText;
+  if (viewState.hasLoadedSuccessfully && !viewState.isStale) {
+    const count = totalCount;
+    if (statusFilter === 'active') {
+      totalizerText = count === 1 ? '1 membro ativo' : `${count} membros ativos`;
+    } else if (statusFilter === 'inactive') {
+      totalizerText = count === 1 ? '1 membro inativo' : `${count} membros inativos`;
+    } else {
+      totalizerText = count === 1 ? '1 membro cadastrado (todos)' : `${count} membros cadastrados (todos)`;
+    }
+  }
 
   return (
     <div className="members-page" role="main">
@@ -502,7 +923,11 @@ export default function MembersPage({ onBack }) {
             <div className="alert-banner-content">
               <strong>Resposta incerta do servidor:</strong>
               <p>
-                O envio de "{uncertainCommand.displayName}" foi interrompido antes da confirmação.
+                {uncertainCommand.action === 'restore_member'
+                  ? `A restauração de "${uncertainCommand.displayName || 'membro'}" foi interrompida antes da confirmação.`
+                  : uncertainCommand.action === 'deactivate_member'
+                  ? `A solicitação de exclusão de "${uncertainCommand.displayName || 'membro'}" foi interrompida antes da confirmação.`
+                  : `O envio de "${uncertainCommand.displayName || 'membro'}" foi interrompido antes da confirmação.`}{' '}
                 A identidade da operação foi retida para evitar duplicidade.
               </p>
               {formError && (
@@ -537,7 +962,13 @@ export default function MembersPage({ onBack }) {
                   ) : (
                     <RefreshCw size={14} />
                   )}
-                  <span>Reexecutar cadastro</span>
+                  <span>
+                    {uncertainCommand.action === 'restore_member'
+                      ? 'Reexecutar restauração'
+                      : uncertainCommand.action === 'deactivate_member'
+                      ? 'Reexecutar exclusão'
+                      : 'Reexecutar cadastro'}
+                  </span>
                 </button>
               </div>
             </div>
@@ -661,20 +1092,71 @@ export default function MembersPage({ onBack }) {
             <div>
               <h2 className="members-section-title">Membros Cadastrados</h2>
               <p className="members-section-subtitle">
-                {viewState.totalizerText}
+                {totalizerText}
               </p>
             </div>
 
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+              <button
+                type="button"
+                className="btn btn-secondary btn-refresh"
+                onClick={() => loadMembers(page)}
+                disabled={listState.status === 'loading'}
+                title="Atualizar lista"
+                aria-label="Atualizar lista de membros"
+              >
+                <RefreshCw size={14} className={listState.status === 'loading' ? 'spin-icon' : ''} />
+                <span>Atualizar</span>
+              </button>
+            </div>
+          </div>
+
+          {/* Filtros por Situação: Ativos, Inativos, Todos */}
+          <div className="members-filter-bar" role="tablist" aria-label="Filtrar membros por situação">
             <button
               type="button"
-              className="btn btn-secondary btn-refresh"
-              onClick={() => loadMembers(page)}
-              disabled={listState.status === 'loading'}
-              title="Atualizar lista"
-              aria-label="Atualizar lista de membros"
+              role="tab"
+              aria-selected={statusFilter === 'active'}
+              id="filter-tab-active"
+              className={`filter-tab-btn ${statusFilter === 'active' ? 'active' : ''}`}
+              onClick={() => {
+                if (statusFilter !== 'active') {
+                  setStatusFilter('active');
+                  setPage(1);
+                }
+              }}
             >
-              <RefreshCw size={14} className={listState.status === 'loading' ? 'spin-icon' : ''} />
-              <span>Atualizar</span>
+              Ativos
+            </button>
+            <button
+              type="button"
+              role="tab"
+              aria-selected={statusFilter === 'inactive'}
+              id="filter-tab-inactive"
+              className={`filter-tab-btn ${statusFilter === 'inactive' ? 'active' : ''}`}
+              onClick={() => {
+                if (statusFilter !== 'inactive') {
+                  setStatusFilter('inactive');
+                  setPage(1);
+                }
+              }}
+            >
+              Inativos
+            </button>
+            <button
+              type="button"
+              role="tab"
+              aria-selected={statusFilter === 'all'}
+              id="filter-tab-all"
+              className={`filter-tab-btn ${statusFilter === 'all' ? 'active' : ''}`}
+              onClick={() => {
+                if (statusFilter !== 'all') {
+                  setStatusFilter('all');
+                  setPage(1);
+                }
+              }}
+            >
+              Todos
             </button>
           </div>
 
@@ -699,22 +1181,33 @@ export default function MembersPage({ onBack }) {
           ) : viewState.showEmptyState ? (
             <div className="members-state-box members-state-box--empty">
               <Users size={36} color="var(--text-muted)" />
-              <h3>Nenhum membro cadastrado</h3>
+              <h3>
+                {statusFilter === 'inactive'
+                  ? 'Nenhum membro inativo'
+                  : statusFilter === 'active'
+                  ? 'Nenhum membro ativo'
+                  : 'Nenhum membro cadastrado'}
+              </h3>
               <p>
-                Esta igreja ainda não possui membros adicionais cadastrados.
-                Cadastre o primeiro membro para iniciar a organização.
+                {statusFilter === 'inactive'
+                  ? 'Não há membros inativos nesta igreja.'
+                  : statusFilter === 'active'
+                  ? 'Esta igreja ainda não possui membros ativos cadastrados. Cadastre o primeiro membro para iniciar a organização.'
+                  : 'Esta igreja ainda não possui membros cadastrados.'}
               </p>
-              <button
-                type="button"
-                className="btn btn-primary"
-                onClick={() => {
-                  setShowCreateModal(true);
-                  setFormError(null);
-                }}
-                disabled={!isOnline}
-              >
-                <UserPlus size={15} /> Cadastrar primeiro membro
-              </button>
+              {statusFilter !== 'inactive' && (
+                <button
+                  type="button"
+                  className="btn btn-primary"
+                  onClick={() => {
+                    setShowCreateModal(true);
+                    setFormError(null);
+                  }}
+                  disabled={!isOnline}
+                >
+                  <UserPlus size={15} /> Cadastrar primeiro membro
+                </button>
+              )}
             </div>
           ) : (
             <div className="members-table-wrapper">
@@ -723,7 +1216,7 @@ export default function MembersPage({ onBack }) {
                   <tr>
                     <th scope="col">Nome</th>
                     <th scope="col" style={{ width: '110px' }}>Situação</th>
-                    <th scope="col" style={{ width: '120px' }}>Ações</th>
+                    <th scope="col" style={{ width: '160px' }}>Ações</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -748,18 +1241,61 @@ export default function MembersPage({ onBack }) {
                           </span>
                         </td>
                         <td>
-                          {isActive && (
-                            <button
-                              type="button"
-                              className="btn btn-secondary btn-sm"
-                              onClick={() => setInviteMember(m)}
-                              id={`btn-invite-member-${m.member_id}`}
-                              title={`Emitir convite para ${m.display_name}`}
-                              style={{ fontSize: '0.75rem', padding: '3px 8px', display: 'inline-flex', alignItems: 'center', gap: '4px' }}
-                            >
-                              <Send size={12} /> Convidar
-                            </button>
-                          )}
+                          <div style={{ display: 'inline-flex', gap: '6px', alignItems: 'center', flexWrap: 'wrap' }}>
+                            {isActive ? (
+                              <>
+                                <button
+                                  type="button"
+                                  className="btn btn-secondary btn-sm"
+                                  onClick={() => setInviteMember(m)}
+                                  id={`btn-invite-member-${m.member_id || m.id}`}
+                                  title={`Emitir convite para ${m.display_name}`}
+                                  style={{ fontSize: '0.75rem', padding: '3px 8px', display: 'inline-flex', alignItems: 'center', gap: '4px' }}
+                                >
+                                  <Send size={12} /> Convidar
+                                </button>
+                                <button
+                                  type="button"
+                                  className="btn btn-secondary btn-sm btn-delete-member"
+                                  onClick={() => {
+                                    setDeactivateModalMember(m);
+                                    setDeactivateError(null);
+                                  }}
+                                  id={`btn-deactivate-member-${m.member_id || m.id}`}
+                                  title={`Excluir ${m.display_name}`}
+                                  style={{ fontSize: '0.75rem', padding: '3px 8px', display: 'inline-flex', alignItems: 'center', gap: '4px', color: '#dc2626' }}
+                                >
+                                  <Trash2 size={12} /> Excluir
+                                </button>
+                              </>
+                            ) : (
+                              <>
+                                {m.has_active_access ? (
+                                  <div
+                                    title="Este membro possui vínculo de acesso ativo legado nesta igreja. A restauração está bloqueada."
+                                    style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', fontSize: '0.75rem', color: '#9ca3af', cursor: 'not-allowed' }}
+                                  >
+                                    <Lock size={12} />
+                                    <span>Acesso ativo legado</span>
+                                  </div>
+                                ) : (
+                                  <button
+                                    type="button"
+                                    className="btn btn-secondary btn-sm"
+                                    onClick={() => {
+                                      setRestoreModalMember(m);
+                                      setRestoreError(null);
+                                    }}
+                                    id={`btn-restore-member-${m.member_id || m.id}`}
+                                    title={`Restaurar ${m.display_name}`}
+                                    style={{ fontSize: '0.75rem', padding: '3px 8px', display: 'inline-flex', alignItems: 'center', gap: '4px', color: 'var(--primary)' }}
+                                  >
+                                    <RotateCcw size={12} /> Restaurar
+                                  </button>
+                                )}
+                              </>
+                            )}
+                          </div>
                         </td>
                       </tr>
                     );
@@ -814,6 +1350,148 @@ export default function MembersPage({ onBack }) {
               loadMembers(page);
             }}
           />
+        )}
+
+        {/* Modal de Confirmação de Restauração de Membro */}
+        {restoreModalMember && (
+          <div className="modal-backdrop" role="dialog" aria-modal="true" aria-labelledby="modal-restore-title">
+            <div className="modal-card">
+              <div className="modal-header">
+                <div className="modal-title-row">
+                  <RotateCcw size={18} color="var(--primary)" />
+                  <h2 id="modal-restore-title">Restaurar Membro</h2>
+                </div>
+                <button
+                  type="button"
+                  className="modal-close-btn"
+                  onClick={() => {
+                    if (!restoring) setRestoreModalMember(null);
+                  }}
+                  disabled={restoring}
+                  aria-label="Fechar modal"
+                >
+                  <X size={18} />
+                </button>
+              </div>
+
+              <div style={{ margin: '12px 0', fontSize: '0.9rem', color: 'var(--text-secondary)', lineHeight: '1.5' }}>
+                <p>
+                  Deseja restaurar o cadastro de <strong>{restoreModalMember.display_name}</strong> para a situação <strong>Ativo</strong>?
+                </p>
+                {restoreModalMember.has_church_access || restoreModalMember.has_revoked_access ? (
+                  <p style={{ marginTop: '8px', padding: '10px 12px', background: '#f8fafc', borderRadius: '6px', border: '1px solid #e2e8f0', fontSize: '0.85rem' }}>
+                    <strong>Nota sobre acesso:</strong> A restauração reativa apenas o cadastro do membro nesta igreja. O acesso a esta igreja permanece revogado. A recuperação desse acesso depende de um fluxo separado, ainda não disponível nesta etapa.
+                  </p>
+                ) : (
+                  <p style={{ marginTop: '8px', fontSize: '0.85rem' }}>
+                    A restauração reativa o membro no rol da igreja para escalas. Esta operação não concede acesso ao aplicativo.
+                  </p>
+                )}
+              </div>
+
+              {restoreError && (
+                <div className="form-error-banner" role="alert" style={{ marginBottom: '16px' }}>
+                  <AlertCircle size={15} />
+                  <span>{restoreError}</span>
+                </div>
+              )}
+
+              <div className="modal-actions">
+                <button
+                  type="button"
+                  className="btn btn-secondary"
+                  onClick={() => setRestoreModalMember(null)}
+                  disabled={restoring}
+                >
+                  Cancelar
+                </button>
+                <button
+                  type="button"
+                  className="btn btn-primary"
+                  onClick={() => handleRestoreMember(restoreModalMember)}
+                  disabled={restoring || !isOnline}
+                >
+                  {restoring ? (
+                    <>
+                      <RefreshCw size={14} className="spin-icon" /> Restaurando…
+                    </>
+                  ) : (
+                    'Confirmar Restauração'
+                  )}
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Modal de Exclusão (com aviso da trava de dependência litúrgica P0021) */}
+        {deactivateModalMember && (
+          <div className="modal-backdrop" role="dialog" aria-modal="true" aria-labelledby="modal-deactivate-title">
+            <div className="modal-card">
+              <div className="modal-header">
+                <div className="modal-title-row">
+                  <Trash2 size={18} color="#dc2626" />
+                  <h2 id="modal-deactivate-title">Exclusão de Membro</h2>
+                </div>
+                <button
+                  type="button"
+                  className="modal-close-btn"
+                  onClick={() => {
+                    if (!deactivating) setDeactivateModalMember(null);
+                  }}
+                  disabled={deactivating}
+                  aria-label="Fechar modal"
+                >
+                  <X size={18} />
+                </button>
+              </div>
+
+              <div style={{ margin: '12px 0', fontSize: '0.9rem', color: 'var(--text-secondary)', lineHeight: '1.5' }}>
+                <p>
+                  Solicitação de exclusão para o membro <strong>{deactivateModalMember.display_name}</strong>.
+                </p>
+                <div style={{ marginTop: '12px', padding: '12px', background: '#fffbeb', borderRadius: '6px', border: '1px solid #fef3c7', color: '#92400e', fontSize: '0.85rem' }}>
+                  <strong>Exclusão indisponível nesta etapa:</strong>
+                  <p style={{ marginTop: '4px' }}>
+                    A exclusão de membros está indisponível nesta etapa. Ela depende da verificação de participações e liderança em eventos futuros ou em andamento. O cadastro permanece inalterado.
+                  </p>
+                </div>
+              </div>
+
+              {deactivateError && (
+                <div className="form-error-banner" role="alert" style={{ marginBottom: '16px' }}>
+                  <AlertCircle size={15} />
+                  <span>{deactivateError}</span>
+                </div>
+              )}
+
+              <div className="modal-actions">
+                <button
+                  type="button"
+                  className="btn btn-secondary"
+                  onClick={() => setDeactivateModalMember(null)}
+                  disabled={deactivating}
+                >
+                  Fechar
+                </button>
+                <button
+                  type="button"
+                  className="btn btn-danger"
+                  style={{ background: '#dc2626', color: '#fff' }}
+                  onClick={() => handleDeactivateMember(deactivateModalMember)}
+                  disabled={deactivating || !isOnline}
+                >
+                  {deactivating ? (
+                    <>
+                      <RefreshCw size={14} className="spin-icon" /> Solicitando…
+                    </>
+                  ) : (
+                    'Solicitar exclusão'
+                  )}
+                </button>
+              </div>
+            </div>
+          </div>
         )}
 
       </div>
@@ -1018,6 +1696,40 @@ export default function MembersPage({ onBack }) {
           display: inline-flex;
           align-items: center;
           gap: 6px;
+        }
+
+        /* Barra de Filtros de Membros */
+        .members-filter-bar {
+          display: flex;
+          align-items: center;
+          gap: 6px;
+          background: var(--bg-surface);
+          padding: 4px;
+          border-radius: var(--radius-md);
+          border: 1px solid var(--border-subtle);
+          width: fit-content;
+        }
+
+        .filter-tab-btn {
+          border: none;
+          background: transparent;
+          color: var(--text-secondary);
+          padding: 5px 14px;
+          border-radius: var(--radius-sm);
+          font-size: 12px;
+          font-weight: 600;
+          cursor: pointer;
+          transition: all var(--transition-fast);
+        }
+
+        .filter-tab-btn:hover {
+          color: var(--text-primary);
+        }
+
+        .filter-tab-btn.active {
+          background: var(--bg-card);
+          color: var(--primary);
+          box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
         }
 
         /* Tabela */

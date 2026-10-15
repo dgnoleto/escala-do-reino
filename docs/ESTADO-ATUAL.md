@@ -25,10 +25,11 @@ Não há deploy do novo frontend demonstrado por esta entrega. PR #9 não altera
 ## Organização documental e trabalho pendente
 
 - [Issue #10](https://github.com/dgnoleto/escala-do-reino/issues/10): alinhar declarações de andamento no README, PRD e contrato, organizar guia de QA, mapa de ambientes e evidências portáveis.
+- [Issue #18](https://github.com/dgnoleto/escala-do-reino/issues/18): Ciclo de Vida de Membros (Listagem com Filtros, Restauração Elegível sem Devolver Acesso, Recibo Idempotente e Trava Litúrgica P0021). Status: **implementação local em revisão, sem validação em banco**. Artefatos SQL 013/014 especificados, integração da interface e serviços de comando ajustados, 39 testes locais de cliente aprovados (`test/member-lifecycle-cycle.test.js`) e build concluído com sucesso. Nenhum comando SQL foi executado contra banco de dados físico (piloto ou laboratório) e nenhuma fixture foi criada. A issue permanece aberta; E20/E21 e etapa 4 integral não estão concluídas.
 - Os guias iniciais foram aprovados pelo responsável para publicação. Essa aprovação não significa execução ou aprovação dos 12 cenários propostos, concessão de acesso à QA ou conclusão de toda a issue.
 - Confirmar os critérios da issue no PR documental; se algum ficar pendente, manter seu acompanhamento explícito. Não fechar automaticamente apenas porque arquivos foram adicionados.
 - Para a entrada da QA, combinar acesso GitHub e computador/ambiente de trabalho. O repositório é privado e não houve concessão de acesso nesta preparação.
-- Exclusão lógica/recuperação continuam um incremento futuro. Não inferir CPF, envio automático de convites ou novos privilégios.
+- Exclusão lógica/recuperação continuam um incremento com trava P0021 e restauração sem acesso. Não inferir CPF, envio automático de convites ou novos privilégios.
 
 ## Próximo passo de leitura
 

@@ -111,3 +111,54 @@ Conforme informado pelo responsável pelo projeto, a aplicação dos scripts em 
     - O estado de resposta incerta durante a criação no navegador (interrupção física durante a chamada RPC `create_church_member` com retenção do comando pendente no `sessionStorage` e acionamento da reconciliação de recibo) ainda não foi exercitado no navegador real.
     - Comprovação operacional de cancelamento por timeout de 5 segundos via API HTTP sob transações lentas.
     - Concorrência massiva real entre múltiplas conexões simultâneas disputando o bloqueio consultivo transacional `pg_advisory_xact_lock`.
+
+---
+
+## 5. Incremento de Ciclo de Vida de Membros (Issue #18)
+
+> [!IMPORTANT]
+> **Status de Governança e Limite de Execução:**
+> A especificação dos scripts SQL (`docs/sql/013_member_lifecycle.sql`, `docs/sql/013_validate_member_lifecycle.sql`, `docs/sql/014_verify_member_lifecycle.sql`) e a implementação correspondente na interface (`src/components/MembersPage.jsx`, `src/utils/memberCommandService.js`) encontram-se em **implementação local em revisão, sem validação em banco**.
+> **Nenhum comando SQL foi executado contra o banco de dados físico (piloto ou laboratório), nenhuma fixture foi criada e nenhum teste de banco foi aplicado.** A issue #18 permanece aberta; as etapas E20/E21 e a etapa 4 integral não estão concluídas.
+
+### 5.1 Endpoints do Ciclo de Vida (Especificação 013/014)
+
+1. **Listagem Administrativa com Filtros:** `public.list_church_members_admin(p_church_id uuid, p_status_filter text, p_limit integer, p_offset integer)`
+   - **Filtros suportados:** `'active'`, `'inactive'` e `'all'` (padrão `'active'`).
+   - **Retorno:** Tabela contendo `items jsonb` e `total_count bigint`. Cada item inclui `member_id`, `display_name`, `status`, `updated_at` (string ISO opaca UTC com microsegundos), `has_active_access`, `has_church_access` e `has_revoked_access`.
+   - **Autorização:** Estritamente restrita a administradores ativos e confirmados da igreja via `church_access` (`42501`).
+
+2. **Restauração Elegível de Membro Inativo:** `public.restore_church_member(p_church_id uuid, p_command_id uuid, p_member_id uuid, p_expected_updated_at text)`
+   - **Objetivo:** Restaurar cadastro inativo de membro no rol da igreja sem conceder ou alterar acessos.
+   - **Controle de concorrência:** Validação de concorrência otimista via string opaca `p_expected_updated_at` contra `updated_at` da tabela `app_private.members` (gatilho monotônico). Rejeita com `P0019` se houver divergência.
+   - **Guarda de acesso legado:** Se o membro possuir vínculo com `status = 'active'` em `church_access`, recusa a restauração com código `P0018`.
+   - **Invariância de vínculo revogado:** Se o membro possuir vínculo com `status = 'revoked'` em `church_access`, esse registro permanece **estritamente inalterado** como `'revoked'`. Nenhum login, convite ou permissão de acesso é concedido. O payload do recibo retorna `has_revoked_access = true`.
+   - **Atomicidade e Auditoria:** Atualização de `members` (`status = 'active'`), auditoria em `app_private.audit_entries` (schema 003: `church_id`, `action = 'restore_member'`, `actor_user_id`, `actor_source = 'application'`, `details`, `occurred_at`) e gravação do recibo em `app_private.command_receipts` ocorrem rigorosamente na mesma transação atômica. Falha em auditoria desfaz toda a operação (`ROLLBACK`).
+   - **Idempotência e Replay Seguro:** Reexecução com a mesma chave e mesmos parâmetros devolve o recibo prévio com o payload da restauração original sem duplicar auditoria ou alterar dados.
+
+3. **Consulta de Recibo de Ciclo de Vida:** `public.get_member_lifecycle_receipt(p_command_id uuid)`
+   - Retorna o recibo registrado em `app_private.command_receipts` para a reconciliação segura após respostas incertas.
+
+4. **Trava de Dependência Litúrgica (Exclusão):** `public.deactivate_church_member(p_church_id uuid, p_command_id uuid, p_member_id uuid, p_expected_updated_at text)`
+   - Revalida autorização administrativa (`42501`) e recusa a operação com código `P0021` em razão de a validação de dependências litúrgicas e histórico de escalas pertencer ao módulo de escalas ainda não integrado ao banco. Nenhuma exclusão efetiva ou bypass manual é permitido.
+
+### 5.2 Implementação no Cliente Web e Resposta Incerta
+
+- **Retenção Prévia Obrigatória:** Comandos de restauração e exclusão gravam previamente sua intenção com identidade única (`commandId`), igreja, membro, ação e a revisão original opaca `expectedUpdatedAt` em `window.sessionStorage` antes do envio de rede. Falha de persistência interrompe o fluxo antes da RPC.
+- **Tolerância a Falhas de Storage:** Falhas de leitura (`getItem`) ou exceções de análise sintática JSON no storage **não apagam a chave** pendente. Conteúdo corrompido bloqueia novos envios sem ser sobrescrito.
+- **Proteção contra Sobrescrita e Alteração de Parâmetros:** Comandos com `commandId` diferente são bloqueados caso já exista pendência no mesmo escopo. Alterações de parâmetros para o mesmo `commandId` são recusadas; reenvios idênticos são preservados.
+- **Remoção Segura por CommandId:** A remoção de pendências compara estritamente o `commandId` esperado antes de apagar a chave, impedindo que respostas atrasadas apaguem comandos novos.
+- **Recuperação em F5 e Inicialização:** A função `loadAnyPendingMemberCommand` recupera comandos pendentes retidos (criação ou ciclo de vida) e monta o banner de resposta incerta FORA de qualquer modal.
+- **Reconciliação e Reexecução:** A tela oferece botões dedicados de "Verificar confirmação" (via `get_member_lifecycle_receipt`) e "Reexecutar restauração" (usando a mesma chave, membro, igreja e a revisão original opaca `expectedUpdatedAt`).
+- **Aviso Exato sobre Vínculo Revogado:** No modal de restauração de membro com histórico de acesso revogado, a aplicação exibe rigorosamente:
+  > *"A restauração reativa apenas o cadastro do membro nesta igreja. O acesso a esta igreja permanece revogado. A recuperação desse acesso depende de um fluxo separado, ainda não disponível nesta etapa."*
+  Sem promessa de novos convites e sem alegações sobre revogação de login global.
+- **Aviso Exato de Exclusão:** No modal de exclusão, a mensagem informa expressamente:
+  > *"A exclusão de membros está indisponível nesta etapa. Ela depende da verificação de participações e liderança em eventos futuros ou em andamento. O cadastro permanece inalterado."*
+- **Reposicionamento de Paginação:** Caso uma página superior retorne vazia com total de membros igual a zero, a paginação reposiciona automaticamente para a página 1.
+- **Proteção de Contexto Vivo Pós-Await:** Todas as operações assíncronas avaliam a identidade, igreja e geração vigentes por ref/getter após await, protegendo UI, refresh, catch/finally e storage contra alterações em contexto desatualizado.
+
+### 5.3 Testes Automatizados Locais de Cliente
+
+- Suíte `test/member-lifecycle-cycle.test.js` cobrindo classificação de erros, isolamento de comandos, ciclo de despacho, reconciliação estrita, validação de retornos por operação, tolerância a falhas no storage, integridade pós-await com troca de igreja e testes reais de componente de `MembersPage` com `react-test-renderer`.
+- Planejamento do laboratório de concorrência com duas sessões detalhado em `docs/sql/013_concurrency_rehearsal_guide.md` (não executado).
