@@ -80,6 +80,7 @@ export function calculateManifestFingerprint(manifest = REHEARSAL_013_FIXTURE_MA
  * Cria estrutura inicial do journal de execução atômico durável (C1)
  */
 export function createInitialJournal({
+  runId = null,
   target = {
     container: AUTHORIZED_TARGET_CONTAINER,
     host: AUTHORIZED_TARGET_HOST,
@@ -90,10 +91,13 @@ export function createInitialJournal({
   installerSha256 = CANONICAL_013_INSTALLER_SHA256,
   manifest = REHEARSAL_013_FIXTURE_MANIFEST
 } = {}) {
+  const generatedRunId = runId || `run_${Date.now()}_${crypto.randomBytes(4).toString('hex')}`;
   return {
     formatVersion: '1.0',
+    runId: generatedRunId,
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString(),
+    recordedSessions: [],
     target: {
       container: target.container || AUTHORIZED_TARGET_CONTAINER,
       host: target.host || AUTHORIZED_TARGET_HOST,
@@ -1166,7 +1170,9 @@ export class PsqlCommandTransport {
     user = 'postgres',
     database = AUTHORIZED_TARGET_DATABASE,
     execFn = null,
-    timeoutMs = 30000
+    timeoutMs = 30000,
+    runId = null,
+    recordedSessions = []
   } = {}) {
     this.targetContainer = targetContainer;
     this.targetPort = targetPort;
@@ -1175,6 +1181,35 @@ export class PsqlCommandTransport {
     this.execFn = execFn;
     this.timeoutMs = timeoutMs;
     this.activeSessions = new Map();
+    this.runId = runId;
+    this.recordedSessions = Array.isArray(recordedSessions) ? [...recordedSessions] : [];
+  }
+
+  recordSession({ id, pid, backend_start, application_name } = {}) {
+    if (!this.recordedSessions) {
+      this.recordedSessions = [];
+    }
+    const idx = this.recordedSessions.findIndex(s =>
+      (id && s.id === id) ||
+      (application_name && s.application_name === application_name) ||
+      (pid && s.pid === Number(pid))
+    );
+    if (idx >= 0) {
+      this.recordedSessions[idx] = {
+        ...this.recordedSessions[idx],
+        ...(id ? { id } : {}),
+        ...(pid ? { pid: Number(pid) } : {}),
+        ...(backend_start ? { backend_start } : {}),
+        ...(application_name ? { application_name } : {})
+      };
+    } else {
+      this.recordedSessions.push({
+        id: id || (application_name ? application_name : `session_${this.recordedSessions.length + 1}`),
+        pid: pid ? Number(pid) : null,
+        backend_start: backend_start || null,
+        application_name: application_name || null
+      });
+    }
   }
 
   assertAuthorizedTarget() {
@@ -1203,7 +1238,9 @@ export class PsqlCommandTransport {
       let isAborted = false;
       let isClosed = false;
 
-      const envArgs = sessionId ? ['-e', `PGAPPNAME=rehearsal_013_${sessionId}`] : [];
+      const normSession = sessionId ? sessionId.replace(/_013$/, '') : '';
+      const appName = options.appName || (sessionId ? (this.runId ? `rehearsal_013_${this.runId}_${normSession}` : `rehearsal_013_${normSession}`) : null);
+      const envArgs = appName ? ['-e', `PGAPPNAME=${appName}`] : [];
       const cmdArgs = [
         'exec',
         '-i',
@@ -1226,6 +1263,7 @@ export class PsqlCommandTransport {
 
       const sessionHandle = {
         id: sessionId,
+        appName,
         proc,
         status: 'running',
         abort: () => {
@@ -1245,6 +1283,12 @@ export class PsqlCommandTransport {
 
       if (sessionId) {
         this.activeSessions.set(sessionId, sessionHandle);
+        if (appName) {
+          this.recordSession({
+            id: sessionId,
+            application_name: appName
+          });
+        }
       }
 
       let timer = null;
@@ -1546,50 +1590,137 @@ export class PsqlCommandTransport {
   }
 
   async confirmBackendSessionsClosed() {
-    const checkSql = `
-SELECT pid, application_name
-FROM pg_catalog.pg_stat_activity
-WHERE datname = '${this.database}'
-  AND (
-    application_name IN ('rehearsal_013_session_a', 'rehearsal_013_session_b')
-    OR (
-      to_regclass('app_private.rehearsal_coordination') IS NOT NULL
-      AND pid IN (SELECT pid FROM app_private.rehearsal_coordination WHERE session_role IN ('session_a_013', 'session_b_013'))
-    )
-  )
-  AND pid <> pg_backend_pid();
-`.trim();
+    const targetAppNames = this.runId
+      ? [
+          `rehearsal_013_${this.runId}_session_a`,
+          `rehearsal_013_${this.runId}_session_b`
+        ]
+      : ['rehearsal_013_session_a', 'rehearsal_013_session_b'];
 
-    const termSql = `
-SELECT pg_catalog.pg_terminate_backend(pid)
+    if (this.recordedSessions && this.recordedSessions.length > 0) {
+      for (const s of this.recordedSessions) {
+        if (s.application_name && !targetAppNames.includes(s.application_name)) {
+          if (this.runId && s.application_name.startsWith(`rehearsal_013_${this.runId}_`)) {
+            targetAppNames.push(s.application_name);
+          }
+        }
+      }
+    }
+
+    const checkSql = `
+SELECT pid, application_name, backend_start
 FROM pg_catalog.pg_stat_activity
 WHERE datname = '${this.database}'
-  AND (
-    application_name IN ('rehearsal_013_session_a', 'rehearsal_013_session_b')
-    OR (
-      to_regclass('app_private.rehearsal_coordination') IS NOT NULL
-      AND pid IN (SELECT pid FROM app_private.rehearsal_coordination WHERE session_role IN ('session_a_013', 'session_b_013'))
-    )
-  )
+  AND application_name IN (${targetAppNames.map(n => `'${n}'`).join(', ')})
+  AND backend_start IS NOT NULL
   AND pid <> pg_backend_pid();
 `.trim();
 
     try {
       const res = await this._runProcess(['-t', '-A', '-c', checkSql], '', { timeoutMs: Math.min(this.timeoutMs, 1000) });
-      const lines = (res?.stdout || '').trim().split('\n').map(l => l.trim()).filter(Boolean);
-      if (lines.length > 0) {
-        // Sessões ativas encontradas no backend! Terminar especificamente essas sessões:
-        await this._runProcess(['-t', '-A', '-c', termSql], '', { timeoutMs: Math.min(this.timeoutMs, 1000) });
-        // Re-verificar se foram encerradas
-        const recheck = await this._runProcess(['-t', '-A', '-c', checkSql], '', { timeoutMs: Math.min(this.timeoutMs, 1000) });
-        const remaining = (recheck?.stdout || '').trim().split('\n').map(l => l.trim()).filter(Boolean);
-        if (remaining.length > 0) {
-          return {
-            confirmed: false,
-            error: `Sessões backend no PostgreSQL ainda ativas após tentativa de término: ${remaining.join(', ')}`
-          };
+      const rawLines = (res?.stdout || '').trim().split('\n').map(l => l.trim()).filter(Boolean);
+
+      if (rawLines.length === 0) {
+        return { confirmed: true };
+      }
+
+      const foundSessions = [];
+      for (const line of rawLines) {
+        const parts = line.split('|');
+        if (parts.length >= 2) {
+          foundSessions.push({
+            pid: parseInt(parts[0], 10),
+            application_name: parts[1],
+            backend_start: parts.slice(2).join('|').trim()
+          });
         }
       }
+
+      // Regra 1: Sem runId comprovável no journal, sessões com nomes compartilhados não podem ser terminadas!
+      if (!this.runId) {
+        return {
+          confirmed: false,
+          error: `Falta de identidade comprovável da execução no journal: encerramento de sessões não autorizado (${foundSessions.map(s => `${s.pid}:${s.application_name}`).join(', ')}).`
+        };
+      }
+
+      const sessionsToTerminate = [];
+      const untrustedSessions = [];
+
+      for (const fs of foundSessions) {
+        if (!fs.application_name || !fs.application_name.startsWith(`rehearsal_013_${this.runId}_`)) {
+          untrustedSessions.push({ ...fs, reason: 'Identidade da aplicação não pertence a este runId' });
+          continue;
+        }
+
+        if (this.recordedSessions && this.recordedSessions.length > 0) {
+          const rec = this.recordedSessions.find(r =>
+            r.application_name === fs.application_name ||
+            (r.pid && r.pid === fs.pid)
+          );
+
+          if (rec) {
+            // Proteção estrita contra reutilização de PID: backend_start divergente
+            if (rec.pid && rec.pid === fs.pid && rec.backend_start && fs.backend_start && rec.backend_start !== fs.backend_start) {
+              untrustedSessions.push({
+                ...fs,
+                reason: `PID reutilizado: backend_start divergente (gravado: ${rec.backend_start}, ativo: ${fs.backend_start})`
+              });
+              continue;
+            }
+
+            // PID divergente para a mesma sessão registrada
+            if (rec.pid && rec.pid !== fs.pid && rec.application_name === fs.application_name) {
+              untrustedSessions.push({
+                ...fs,
+                reason: `PID divergente da sessão registrada (gravado: ${rec.pid}, ativo: ${fs.pid})`
+              });
+              continue;
+            }
+          }
+        }
+
+        sessionsToTerminate.push(fs);
+      }
+
+      if (sessionsToTerminate.length === 0 && untrustedSessions.length > 0) {
+        return {
+          confirmed: false,
+          error: `Sessões ativas no servidor não pertencem comprovadamente a esta execução ou possuem PID reciclado: ${untrustedSessions.map(s => `${s.pid}:${s.application_name}`).join(', ')}`
+        };
+      }
+
+      // Termina exclusivamente as sessões comprovadamente próprias com escopo atômico estrito
+      for (const s of sessionsToTerminate) {
+        const specificTermSql = `
+SELECT pg_catalog.pg_terminate_backend(${s.pid})
+FROM pg_catalog.pg_stat_activity
+WHERE datname = '${this.database}'
+  AND pid = ${s.pid}
+  AND application_name = '${s.application_name}'
+  AND backend_start = '${s.backend_start}'
+  AND pid <> pg_backend_pid();
+`.trim();
+        await this._runProcess(['-t', '-A', '-c', specificTermSql], '', { timeoutMs: Math.min(this.timeoutMs, 1000) });
+      }
+
+      const recheck = await this._runProcess(['-t', '-A', '-c', checkSql], '', { timeoutMs: Math.min(this.timeoutMs, 1000) });
+      const remainingLines = (recheck?.stdout || '').trim().split('\n').map(l => l.trim()).filter(Boolean);
+
+      if (remainingLines.length > 0) {
+        return {
+          confirmed: false,
+          error: `Sessões backend no PostgreSQL ainda ativas após tentativa de término: ${remainingLines.join(', ')}`
+        };
+      }
+
+      if (untrustedSessions.length > 0) {
+        return {
+          confirmed: false,
+          error: `Sessões de outra execução ou com suspeita de reciclagem permaneceram ativas: ${untrustedSessions.map(s => s.pid).join(', ')}`
+        };
+      }
+
       return { confirmed: true };
     } catch (err) {
       return {
@@ -1658,6 +1789,7 @@ export class RehearsalOrchestrator013 {
           uncertainCommit: false,
           concurrencyAttempted: false
         };
+        this.runId = null;
       } else {
         this.persistedBaselineSnapshot = this.journal.baselineSnapshot || null;
         this.provenOwnership = {
@@ -1668,6 +1800,7 @@ export class RehearsalOrchestrator013 {
           concurrencyAttempted: false,
           ...(this.journal.provenOwnership || {})
         };
+        this.runId = this.journal.runId || null;
       }
     } else {
       this.persistedBaselineSnapshot = null;
@@ -1678,17 +1811,40 @@ export class RehearsalOrchestrator013 {
         uncertainCommit: false,
         concurrencyAttempted: false
       };
+      this.journal = createInitialJournal();
+      this.runId = this.journal.runId;
+    }
+
+    if (this.transport) {
+      if (this.runId && !this.transport.runId) {
+        this.transport.runId = this.runId;
+      }
+      if (this.journal && Array.isArray(this.journal.recordedSessions) && this.journal.recordedSessions.length > 0) {
+        if (!this.transport.recordedSessions || this.transport.recordedSessions.length === 0) {
+          this.transport.recordedSessions = JSON.parse(JSON.stringify(this.journal.recordedSessions));
+        }
+      }
     }
   }
 
   _saveJournal(updates = {}) {
     if (!this.journalPath || this.isJournalRejected) return;
     if (!this.journal) {
-      this.journal = createInitialJournal({ journalPath: this.journalPath });
+      this.journal = createInitialJournal({ journalPath: this.journalPath, runId: this.runId });
+      if (!this.runId && this.journal.runId) {
+        this.runId = this.journal.runId;
+        if (this.transport && !this.transport.runId) {
+          this.transport.runId = this.runId;
+        }
+      }
     }
     this.journal = {
       ...this.journal,
       ...updates,
+      runId: this.journal.runId || this.runId,
+      recordedSessions: (this.transport && this.transport.recordedSessions && this.transport.recordedSessions.length > 0)
+        ? this.transport.recordedSessions
+        : (this.journal.recordedSessions || []),
       provenOwnership: {
         ...this.journal.provenOwnership,
         ...(updates.provenOwnership || this.provenOwnership)
@@ -1709,6 +1865,16 @@ export class RehearsalOrchestrator013 {
     }
 
     const ownership = options.provenOwnership || this.provenOwnership;
+    if (ownership.collisionDetected || this.provenOwnership?.collisionDetected) {
+      return {
+        attempted: false,
+        success: false,
+        error: 'Recuperação cancelada: colisão com objetos de outra execução detectada. Zero mutações permitidas.',
+        fixtureCleanupExecuted: false,
+        reversalExecuted: false
+      };
+    }
+
     const baselineSnapshot = options.baselineSnapshot || this.persistedBaselineSnapshot || this.journal?.baselineSnapshot;
 
     const result = {
@@ -1745,6 +1911,51 @@ export class RehearsalOrchestrator013 {
       return result;
     }
 
+    // Condição comum obrigatória: confirmação positiva de encerramento de sessões no servidor antes de qualquer mutação
+    let closureConfirmed = false;
+    let closureError = 'Mecanismo de confirmação de encerramento de sessões ausente no transporte.';
+    if (this.transport && typeof this.transport.close === 'function') {
+      try {
+        const closeRes = await this.transport.close();
+        if (closeRes && closeRes.confirmed === true) {
+          closureConfirmed = true;
+          closureError = null;
+        } else {
+          closureConfirmed = false;
+          closureError = closeRes?.error || 'Encerramento de sessões no servidor não pôde ser confirmado.';
+        }
+      } catch (err) {
+        closureConfirmed = false;
+        closureError = err.message;
+      }
+    } else if (this.transport && typeof this.transport.confirmBackendSessionsClosed === 'function') {
+      try {
+        const confRes = await this.transport.confirmBackendSessionsClosed();
+        if (confRes && confRes.confirmed === true) {
+          closureConfirmed = true;
+          closureError = null;
+        } else {
+          closureConfirmed = false;
+          closureError = confRes?.error || 'Encerramento de sessões no servidor não pôde ser confirmado.';
+        }
+      } catch (err) {
+        closureConfirmed = false;
+        closureError = err.message;
+      }
+    }
+
+    if (!closureConfirmed) {
+      result.attempted = false;
+      result.success = false;
+      result.error = `Limpeza bloqueada: ${closureError}`;
+      this._saveJournal({
+        status: 'unconfirmed_session_termination',
+        error: result.error,
+        provenOwnership: ownership
+      });
+      return result;
+    }
+
     // Suporte a transporte legado ou mock customizado com executeCleanupAndReversal
     if (typeof this.transport.executeCleanupAndReversal === 'function') {
       try {
@@ -1764,7 +1975,9 @@ export class RehearsalOrchestrator013 {
     // inspeciona o snapshot para verificar se fixtures foram criadas nesta execução.
     let needsFixtureCleanup = Boolean(ownership.fixturesCreated);
     if (!needsFixtureCleanup && (ownership.concurrencyAttempted || ownership.uncertainCommit || ownership.installed013)) {
-      if (typeof this.transport.captureSnapshot === 'function') {
+      if (ownership.collisionDetected || this.provenOwnership?.collisionDetected) {
+        needsFixtureCleanup = false;
+      } else if (typeof this.transport.captureSnapshot === 'function') {
         try {
           const preInspection = await this.transport.captureSnapshot();
           const baseCount = baselineSnapshot?.residual_fixtures_count || 0;
@@ -1774,7 +1987,12 @@ export class RehearsalOrchestrator013 {
             needsFixtureCleanup = true;
             ownership.fixturesCreated = true;
           }
-        } catch (_) {}
+        } catch (inspectErr) {
+          result.attempted = false;
+          result.success = false;
+          result.error = `Recuperação interrompida: inspeção de propriedade inconclusiva (${inspectErr.message}). Estado preservado sem mutações.`;
+          return result;
+        }
       }
     }
 
@@ -1892,6 +2110,8 @@ export class RehearsalOrchestrator013 {
       this.provenOwnership.baselineCaptured = true;
     }
 
+    let recoveryPerformed = false;
+
     const report = {
       mode: this.isDryRun ? 'simulated' : 'physical',
       stage,
@@ -1980,7 +2200,11 @@ export class RehearsalOrchestrator013 {
             return report;
           }
 
+          recoveryPerformed = true;
           const rec = await this.performRecovery(options);
+          report.cleanupAttempted = rec.attempted;
+          report.cleanupSuccess = rec.success;
+          report.cleanupError = rec.error;
           if (!rec.success) {
             report.error = rec.error || 'Falha na recuperação de rollback.';
             report.success = false;
@@ -2147,42 +2371,52 @@ export class RehearsalOrchestrator013 {
         return report;
       }
 
-      // [Fase 7] Limpeza Cirúrgica de Fixtures Sintéticas
-      report.phasesExecuted.push('phase_7_fixture_cleanup');
+      // [Fases 7, 8, 9] Desmonte e Verificação Pós-Reversão
       if (!this.isDryRun) {
-        await this.transport.executeSql(EXACT_FIXTURE_CLEANUP_013_SQL);
-      }
-      this.provenOwnership.fixturesCreated = false;
-      this._saveJournal({ provenOwnership: this.provenOwnership });
+        recoveryPerformed = true;
+        const rec = await this.performRecovery({ baselineSnapshot });
+        report.cleanupAttempted = rec.attempted;
+        report.cleanupSuccess = rec.success;
+        report.cleanupError = rec.error;
+        if (!rec.success) {
+          report.error = rec.error || 'Falha na recuperação de encerramento.';
+          report.success = false;
+          return report;
+        }
+        if (rec.fixtureCleanupExecuted) report.phasesExecuted.push('phase_7_fixture_cleanup');
+        if (rec.reversalExecuted) report.phasesExecuted.push('phase_8_exact_reversal');
+        report.phasesExecuted.push('phase_9_post_reversal_comparison');
+        report.snapshots.postReversal = rec.postSnapshot;
 
-      // [Fase 8] Reversão Exata do Catálogo (Desinstalação de 013)
-      report.phasesExecuted.push('phase_8_exact_reversal');
-      if (!this.isDryRun) {
-        await this.transport.executeSql(EXACT_REVERSAL_013_SQL);
-      }
-      this.provenOwnership.installed013 = false;
-      this._saveJournal({ provenOwnership: this.provenOwnership });
+        report.success = true;
+        this._saveJournal({
+          status: 'completed',
+          postReversalSnapshot: rec.postSnapshot,
+          phasesCompleted: [...report.phasesExecuted]
+        });
+        return report;
+      } else {
+        report.phasesExecuted.push('phase_7_fixture_cleanup');
+        this.provenOwnership.fixturesCreated = false;
+        report.phasesExecuted.push('phase_8_exact_reversal');
+        this.provenOwnership.installed013 = false;
+        report.phasesExecuted.push('phase_9_post_reversal_comparison');
+        const postReversalSnapshot = createSimulatedPostReversalSnapshot();
+        const comparison = compareSnapshots(baselineSnapshot, postReversalSnapshot);
+        if (!comparison.matches) {
+          report.error = `Snapshot pós-reversão divergiu do baseline: ${comparison.differences.join('; ')}`;
+          return report;
+        }
+        report.snapshots.postReversal = postReversalSnapshot;
 
-      // [Fase 9] Snapshot Pós-Reversão e Conferência Estrita contra Baseline
-      report.phasesExecuted.push('phase_9_post_reversal_comparison');
-      const postReversalSnapshot = this.isDryRun
-        ? createSimulatedPostReversalSnapshot()
-        : await this.transport.captureSnapshot();
-
-      const comparison = compareSnapshots(baselineSnapshot, postReversalSnapshot);
-      if (!comparison.matches) {
-        report.error = `Snapshot pós-reversão divergiu do baseline: ${comparison.differences.join('; ')}`;
+        report.success = true;
+        this._saveJournal({
+          status: 'completed',
+          postReversalSnapshot,
+          phasesCompleted: [...report.phasesExecuted]
+        });
         return report;
       }
-      report.snapshots.postReversal = postReversalSnapshot;
-
-      report.success = true;
-      this._saveJournal({
-        status: 'completed',
-        postReversalSnapshot,
-        phasesCompleted: [...report.phasesExecuted]
-      });
-      return report;
     } catch (err) {
       report.error = `Exceção durante a execução do plano: ${err.message}`;
       return report;
@@ -2192,48 +2426,21 @@ export class RehearsalOrchestrator013 {
         return report;
       }
 
-      // C3: Confirmar encerramento de ambas as sessões próprias antes de iniciar desmontagem
-      let sessionsConfirmed = true;
-      let sessionCloseError = null;
-      if (this.transport && typeof this.transport.close === 'function') {
-        try {
-          const closeRes = await this.transport.close();
-          if (closeRes && closeRes.confirmed === false) {
-            sessionsConfirmed = false;
-            sessionCloseError = closeRes.error || 'Encerramento de sessões no servidor não pôde ser confirmado.';
-          }
-        } catch (closeErr) {
-          sessionsConfirmed = false;
-          sessionCloseError = closeErr.message;
-        }
-      }
-
-      if (!sessionsConfirmed) {
-        // Bloquear limpeza se encerramento das sessões no backend não foi confirmado
-        report.cleanupAttempted = false;
-        report.cleanupSuccess = false;
-        report.cleanupError = `Limpeza bloqueada: ${sessionCloseError}`;
-        if (!report.error) {
-          report.error = sessionCloseError;
-        } else if (!report.error.includes(sessionCloseError)) {
-          report.error += ` | ${sessionCloseError}`;
-        }
-        this._saveJournal({
-          status: 'unconfirmed_session_termination',
-          error: report.cleanupError,
-          provenOwnership: this.provenOwnership
-        });
-        return report;
-      }
-
       // C2: Recuperação cirúrgica unificada baseada em PROPRIEDADE REAL comprovada
-      if (!report.success && (this.provenOwnership.installed013 || this.provenOwnership.fixturesCreated || this.provenOwnership.uncertainCommit || this.provenOwnership.concurrencyAttempted)) {
-        report.cleanupAttempted = true;
+      // Executada caso o plano tenha falhado antes do desmonte normal e a recuperação ainda não tenha sido acionada
+      if (!report.success && !recoveryPerformed && (this.provenOwnership.installed013 || this.provenOwnership.fixturesCreated || this.provenOwnership.uncertainCommit || this.provenOwnership.concurrencyAttempted)) {
+        recoveryPerformed = true;
         const rec = await this.performRecovery({
           baselineSnapshot: report.snapshots.baseline || this.persistedBaselineSnapshot || this.journal?.baselineSnapshot
         });
+        report.cleanupAttempted = rec.attempted;
         report.cleanupSuccess = rec.success;
         report.cleanupError = rec.error;
+        if (!report.error) {
+          report.error = rec.error;
+        } else if (rec.error && !report.error.includes(rec.error)) {
+          report.error += ` | ${rec.error}`;
+        }
         if (rec.postSnapshot) {
           report.snapshots.postReversal = rec.postSnapshot;
         }

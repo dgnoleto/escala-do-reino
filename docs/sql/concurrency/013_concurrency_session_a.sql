@@ -15,9 +15,19 @@
 --    sem tocar nos membros, usuários ou igrejas preexistentes do laboratório.
 -- 5. Interrupção imediata em caso de erro (\set ON_ERROR_STOP on).
 -- ============================================================================
-
 \set ON_ERROR_STOP on
-set application_name = 'rehearsal_013_session_a';
+
+-- Preserva a identidade única da conexão atribuída pelo executor (PGAPPNAME),
+-- definindo o nome padrão apenas em execuções manuais avulsas sem identidade configurada.
+do $set_app_name$
+begin
+  if current_setting('application_name', true) is null
+     or current_setting('application_name', true) in ('', 'psql', '[unknown]')
+     or current_setting('application_name', true) not like 'rehearsal_013_%' then
+    perform set_config('application_name', 'rehearsal_013_session_a', false);
+  end if;
+end
+$set_app_name$;
 
 -- GUARDA ANTECIPADA: Bloqueio estrito contra execução em piloto, produção ou base remota
 do $guard_target$

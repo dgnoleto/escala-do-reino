@@ -236,7 +236,7 @@ test('12. R1: Falha de limpeza/rollback com transporte injetado produz erro estr
     executeCleanupAndReversal: async () => {
       throw new Error('SIMULATED_DATABASE_TIMEOUT: Lock timeout 5s expired during trigger disable');
     },
-    close: async () => {}
+    close: async () => ({ confirmed: true })
   };
 
   const orchestrator = new RehearsalOrchestrator013({ dryRun: false, transport: failingTransport });
@@ -407,7 +407,8 @@ test('17. B1: Modo físico governa decisão com 014 real e exige execução dos 
         success: true,
         scenarios: ['c1a', 'c1b1', 'c1b2', 'c2', 'c3']
       };
-    }
+    },
+    close: async () => ({ confirmed: true })
   };
 
   const orchestrator = new RehearsalOrchestrator013({ dryRun: false, transport: spyTransport });
@@ -651,7 +652,8 @@ test('25. C1: Retomada em nova instância/processo via journal atômico durável
     const postReversalSnap = createSimulatedPostReversalSnapshot();
     const transport2 = {
       executeSql: async (sql) => { executedSqls2.push(sql); return { success: true }; },
-      captureSnapshot: async () => postReversalSnap
+      captureSnapshot: async () => postReversalSnap,
+      close: async () => ({ confirmed: true })
     };
 
     const orchestrator2 = new RehearsalOrchestrator013({
@@ -761,7 +763,8 @@ test('26. C1: Falha após seed de fixtures sem edição manual do journal reconc
       executeConcurrency: async () => {
         fixturesSeeded = true; // Fixtures commitadas
         throw new Error('SIMULATED_POWER_LOSS_OR_CRASH: Concurrency run interrupted after fixtures committed');
-      }
+      },
+      close: async () => ({ confirmed: true })
     };
 
     const orchestrator1 = new RehearsalOrchestrator013({
@@ -801,7 +804,8 @@ test('26. C1: Falha após seed de fixtures sem edição manual do journal reconc
           snap.residual_fixtures_count = 1;
         }
         return snap;
-      }
+      },
+      close: async () => ({ confirmed: true })
     };
 
     // Journal gravado pelo orquestrador antes da queda (com concurrencyAttempted registrado duravelmente)
@@ -1110,7 +1114,8 @@ test('29. C1: Interrupção abrupta de subprocesso em fronteira externa persiste
           else if (sql === EXACT_FIXTURE_CLEANUP_013_SQL) recoveryCalls.push('fixture_cleanup');
           return { success: true };
         },
-        captureSnapshot: async () => baseline
+        captureSnapshot: async () => baseline,
+        close: async () => ({ confirmed: true })
       }
     });
 
@@ -1185,14 +1190,23 @@ test('30. C3: Término não confirmado de sessões no PostgreSQL bloqueia limpez
 });
 
 test('31. C3: PsqlCommandTransport executa comando de verificação e término no servidor via pg_stat_activity', async () => {
-  const transport = new PsqlCommandTransport({ timeoutMs: 500 });
+  const runId = 'test_run_31';
+  const transport = new PsqlCommandTransport({ timeoutMs: 500, runId });
+  const appName = `rehearsal_013_${runId}_session_a`;
+  const backendStart = '2026-10-16 10:00:00+00';
+  transport.recordSession({
+    id: 'session_a',
+    pid: 12345,
+    backend_start: backendStart,
+    application_name: appName
+  });
   const processCalls = [];
 
   transport._runProcess = async (args = [], inputSql = '', options = {}) => {
     processCalls.push({ args, inputSql });
-    // Primeira chamada: checkSql -> simula encontrar uma sessão ativa no servidor
+    // Primeira chamada: checkSql -> simula encontrar uma sessão ativa no servidor pertencente à execução
     if (processCalls.length === 1) {
-      return { stdout: '12345|rehearsal_013_session_a', stderr: '', code: 0 };
+      return { stdout: `12345|${appName}|${backendStart}`, stderr: '', code: 0 };
     }
     // Segunda chamada: termSql -> simula sucesso no terminate_backend
     if (processCalls.length === 2) {
@@ -1209,9 +1223,10 @@ test('31. C3: PsqlCommandTransport executa comando de verificação e término n
   assert.equal(res.confirmed, true);
   assert.equal(processCalls.length, 3, 'Deve ter feito check, terminate e recheck');
 
-  // Verifica que os comandos contêm pg_stat_activity e pg_terminate_backend
+  // Verifica que os comandos contêm pg_stat_activity e pg_terminate_backend com escopo estrito
   assert.ok(processCalls[0].args.some(a => String(a).includes('pg_stat_activity')));
   assert.ok(processCalls[1].args.some(a => String(a).includes('pg_terminate_backend')));
+  assert.ok(processCalls[1].args.some(a => String(a).includes(appName)));
   assert.ok(processCalls[2].args.some(a => String(a).includes('pg_stat_activity')));
 });
 
