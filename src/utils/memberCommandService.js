@@ -28,10 +28,20 @@ export function isDefinitiveServerError(error) {
   // 23505 = violação de unicidade / parâmetros divergentes para mesmo command_id
   // P0002 = igreja não encontrada ou inativa
   // P0004 = limite de requisições excedido
+  // P0015 = último administrador ativo protegido
+  // P0016 = autoexclusão recusada
   // P0018 = vínculo ativo legado nesta igreja (restauração bloqueada)
   // P0019 = conflito de estado/revisão (membro já ativo ou modificado por outro operador)
+  // P0020 = membro não possui aptidão homologada para a função
   // P0021 = funcionalidade indisponível (módulo de escalas / liturgia pendente)
-  if (['42501', '23514', '22004', '23505', 'P0002', 'P0004', 'P0018', 'P0019', 'P0021'].includes(code)) {
+  // P0022 = membro lidera ministério ativo
+  // P0023 = membro lidera liturgia em evento ativo
+  // P0024 = membro alocado ou nominalmente responsável em evento ativo
+  // P0025 = evento expirado sem encerramento formal registrado
+  if ([
+    '42501', '23514', '22004', '23505', 'P0002', 'P0004', 'P0015', 'P0016',
+    'P0018', 'P0019', 'P0020', 'P0021', 'P0022', 'P0023', 'P0024', 'P0025'
+  ].includes(code)) {
     return true;
   }
 
@@ -49,15 +59,30 @@ export function isDefinitiveServerError(error) {
     msg.includes('obrigatório') ||
     msg.includes('não encontrada ou inativa') ||
     msg.includes('limite de requisições excedido') ||
+    msg.includes('último administrador') ||
+    msg.includes('p0015') ||
+    msg.includes('autoexclusão') ||
+    msg.includes('p0016') ||
     msg.includes('vínculo ativo legado') ||
     msg.includes('acesso ativo legado') ||
     msg.includes('p0018') ||
     msg.includes('modificado por outro operador') ||
     msg.includes('já se encontra ativo') ||
     msg.includes('p0019') ||
+    msg.includes('aptidão ativa homologada') ||
+    msg.includes('p0020') ||
     msg.includes('módulo de escalas') ||
     msg.includes('exclusão indisponível') ||
-    msg.includes('p0021')
+    msg.includes('p0021') ||
+    msg.includes('lidera ministério ativo') ||
+    msg.includes('p0022') ||
+    msg.includes('líder da liturgia') ||
+    msg.includes('p0023') ||
+    msg.includes('escalas ativas') ||
+    msg.includes('responsável nominal') ||
+    msg.includes('p0024') ||
+    msg.includes('sem encerramento formal') ||
+    msg.includes('p0025')
   ) {
     return true;
   }
@@ -1157,12 +1182,25 @@ export async function dispatchMemberDeactivation({
     };
   }
 
-  // 4. Rejeição definitiva pelo servidor (P0021 ou 42501/22004/P0002)
+  // 4. Rejeição definitiva pelo servidor
   if (rpcError) {
     removePendingLifecycleCommand(storage, userId, churchId, memberId, 'deactivate_member', commandId);
     let message = rpcError.message || 'Falha na operação de exclusão.';
-    if (rpcError.code === 'P0021' || String(rpcError.message || '').includes('P0021')) {
+    const code = String(rpcError.code || '');
+    if (code === 'P0015' || String(rpcError.message || '').includes('P0015')) {
+      message = 'Operação recusada: este membro é o último administrador ativo da igreja. É obrigatório conceder acesso administrativo a outro membro ativo antes de excluí-lo.';
+    } else if (code === 'P0016' || String(rpcError.message || '').includes('P0016')) {
+      message = 'Operação recusada: autoexclusão não permitida. Você não pode desativar seu próprio cadastro.';
+    } else if (code === 'P0021' || String(rpcError.message || '').includes('P0021')) {
       message = 'A exclusão de membros está indisponível nesta etapa. Ela depende da verificação de participações e liderança em eventos futuros ou em andamento. O cadastro permanece inalterado.';
+    } else if (code === 'P0022' || String(rpcError.message || '').includes('P0022')) {
+      message = 'Operação recusada: este membro lidera um ou mais ministérios ativos. É obrigatório transferir a liderança da equipe antes de excluir o membro.';
+    } else if (code === 'P0023' || String(rpcError.message || '').includes('P0023')) {
+      message = 'Operação recusada: este membro está designado como líder da liturgia em um culto futuro ou em andamento. Reatribua a liturgia ou encerre o culto antes de excluí-lo.';
+    } else if (code === 'P0024' || String(rpcError.message || '').includes('P0024')) {
+      message = 'Operação recusada: este membro possui escalas ativas ou responsabilidade nominal em cultos futuros ou em andamento. Remova ou substitua as escalas antes de excluí-lo.';
+    } else if (code === 'P0025' || String(rpcError.message || '').includes('P0025')) {
+      message = 'Operação recusada: existe culto agendado com horário expirado sem encerramento formal. Conclua ou cancele o culto formalmente antes de inativar membros escalados.';
     }
     return {
       status: 'DEFINITIVE_ERROR',
