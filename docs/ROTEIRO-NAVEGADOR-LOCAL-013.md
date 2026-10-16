@@ -1,8 +1,8 @@
 # Escala do Reino — Roteiro de Ensaio em Navegador Real com Backend Local (013)
 
-**Incremento:** 013 — Ciclo de Vida de Membros (Listagem Administrativa com Filtros, Restauração Elegível e Tratamento de Respostas)  
-**Documento Normativo:** `docs/ROTEIRO-NAVEGADOR-LOCAL-013.md`  
-**Referência do Frontend:** `src/components/MembersPage.jsx` e `src/utils/memberCommandService.js`  
+**Incremento:** 013 — Ciclo de Vida de Membros (Listagem Administrativa com Filtros, Restauração Elegível e Tratamento de Respostas)
+**Documento Normativo:** `docs/ROTEIRO-NAVEGADOR-LOCAL-013.md`
+**Referência do Frontend:** `src/components/MembersPage.jsx` e `src/utils/memberCommandService.js`
 **Referência do Backend:** `docs/sql/013_member_lifecycle.sql` e `docs/sql/014_verify_member_lifecycle.sql`
 
 ---
@@ -32,9 +32,12 @@
 # Execução na raiz do repositório (d:\Github\escala-do-reino)
 # Sobrescreve as variáveis de ambiente em tempo de execução sem alterar o arquivo .env:
 $env:VITE_SUPABASE_URL = "http://127.0.0.1:55331"
-$env:VITE_SUPABASE_ANON_KEY = "<CHAVE_ANON_PUBLICA_DO_LAB>"
+$env:VITE_SUPABASE_PUBLISHABLE_KEY = "<CHAVE_ANON_PUBLICA_DO_LAB>"
 npx vite --port 3001 --strictPort
 ```
+
+> [!NOTE]
+> `src/lib/supabaseClient.js` lê explicitamente a variável de ambiente `VITE_SUPABASE_PUBLISHABLE_KEY` (comportamento canônico do cliente). A chave pública do laboratório local deve ser atribuída a essa variável.
 
 O operador acessa via navegador: `http://localhost:3001`.
 
@@ -42,21 +45,34 @@ O operador acessa via navegador: `http://localhost:3001`.
 
 ## 3. Preparação de Dados Fictícios Delimitados para a Jornada
 
-O inventário conferido em 16/10/2026 possui **7 membros ativos e 0 inativos**. Para testar a listagem com filtros e a restauração, **NÃO inativar membros existentes da igreja por conveniência**.
+O inventário conferido em 16/10/2026 possui **7 membros ativos e 0 inativos**. Para testar a listagem com filtros, paginação e a restauração, **NÃO inativar membros existentes da igreja por conveniência**.
 
-Sob autorização expressa, insere-se na igreja de laboratório um conjunto mínimo e identificado de dados fictícios para a jornada do navegador:
-1. **Membro Fictício 1 (Elegível para Restauração):**  
-   - `display_name = 'Membro Teste Elegivel'`
-   - `status = 'inactive'`
-   - Sem vínculo em `church_access`.
-2. **Membro Fictício 2 (Com Acesso Previamente Revogado):**  
-   - `display_name = 'Membro Teste Acesso Revogado'`
-   - `status = 'inactive'`
-   - Vínculo em `church_access` com `status = 'revoked'`.
-3. **Membro Fictício 3 (Inconsistência de Acesso Ativo Legado - Guarda P0018):**  
-   - `display_name = 'Membro Teste Legado Ativo'`
-   - `status = 'inactive'`
-   - Vínculo em `church_access` com `status = 'active'` (simulando inconsistência para provar a guarda).
+Como o tamanho de página configurado na aplicação é `pageSize = 10` (`MembersPage.jsx:133`), a validação de paginação e reposicionamento automático (J2) requer volume de dados suficiente para ultrapassar uma página (mínimo de 11 inativos).
+
+### Delimitação Estrita de Volume para J2 (Exatamente 11 Inativos no Filtro)
+> [!IMPORTANT]
+> Se fixtures de diferentes cenários forem inseridas simultaneamente sem controle de volume, o filtro de inativos atingirá 13 registros (11 de paginação + 1 revogado + 1 legado ativo). Nesse caso, restaurar o 11º item deixará ainda 2 itens na Página 2, **não ocorrendo o reposicionamento automático para a Página 1**.
+>
+> Para que o teste de reposicionamento J2 seja determinístico, o volume total de membros inativos na congregação durante J2 deve ser de **EXATAMENTE 11 registros**:
+> - **9 membros preenchedores da Página 1:** `display_name = 'Membro Teste Inativo 01'` até `'09'`.
+> - **1 membro inativo com vínculo revogado:** `display_name = 'Membro Teste Acesso Revogado'` (10º item da Página 1, aproveitado subsequentemente no teste J5).
+> - **1 membro isolado na Página 2:** `display_name = 'Membro Teste Inativo 11'` (único registro na Página 2; ao ser restaurado, a Página 2 zera e aciona o reposicionamento automático para a Página 1).
+> - **Membro com Vínculo Legado Ativo (J6):** Só deve ser inserido no banco **APÓS a conclusão da validação de J2**, preservando o volume estrito de 11 registros durante o teste de paginação.
+
+### Manifesto de Identificadores e Procedimento de Limpeza do Navegador
+As fixtures de ensaio de navegador utilizam UUIDs dedicados no espaço `013b0000-0000-4000-8000-0000000000xx`:
+- Preenchedores (J2): `013b0000-0000-4000-8000-000000000001` a `...0009`
+- Acesso Revogado (J2/J5): `013b0000-0000-4000-8000-000000000010` (church_access: `013b0000-0000-4000-8000-00000000ac10`, status: revoked, revoked_at: '2026-10-15T10:00:00Z', reason: 'rehearsal_j5')
+- Alvo de Reposicionamento (J2): `013b0000-0000-4000-8000-000000000011`
+- Legado Ativo (J6, inserido pós-J2): `013b0000-0000-4000-8000-000000000012` (church_access: `013b0000-0000-4000-8000-00000000ac12`, status: active)
+
+```sql
+-- Script de Limpeza e Reversão Exata das Fixtures de Navegador (Executar pós-jornada):
+delete from app_private.command_receipts where church_id = '01300000-0000-4000-8000-0000000000c1' and command_id::text like '013b%';
+delete from app_private.audit_entries where church_id = '01300000-0000-4000-8000-0000000000c1' and user_id::text like '013b%';
+delete from app_private.church_access where id in ('013b0000-0000-4000-8000-00000000ac10', '013b0000-0000-4000-8000-00000000ac12');
+delete from app_private.members where id between '013b0000-0000-4000-8000-000000000001' and '013b0000-0000-4000-8000-000000000012';
+```
 
 ---
 
@@ -64,21 +80,21 @@ Sob autorização expressa, insere-se na igreja de laboratório um conjunto mín
 
 | Passo | Caso de Teste | Ação no Navegador | Comportamento Esperado na Interface | Camadas de Evidência e Prova |
 | :---: | :--- | :--- | :--- | :--- |
-| **J1** | **Filtros Administrativos: Ativos / Inativos / Todos** | 1. Autenticar como administrador.<br>2. Acessar a tela de Gestão de Membros.<br>3. Alternar entre as abas: "Ativos", "Inativos" e "Todos". | - Aba "Ativos": exibe apenas membros com badge verde "Ativo" (botão "Restaurar" ausente).<br>- Aba "Inativos": exibe os membros com badge cinza "Inativo" e o botão "Restaurar" disponível.<br>- Aba "Todos": exibe a contagem consolidada e todos os cadastros. | **HTTP:** Chamada POST a `/rest/v1/rpc/list_church_members_admin` com `p_status_filter = 'active'/'inactive'/'all'`.<br>**Componente:** Transição de estado em `applyMemberListTransition`.<br>**Navegador:** Renderização condicional dos badges e botões de ação na tabela. |
-| **J2** | **Paginação e Reposicionamento Automático** | 1. Com filtro "Inativos" ativo, navegar para uma página com registros.<br>2. Executar restauração do último membro inativo da página. | - O item restaurado sai da lista de inativos.<br>- Se a página atual ficar sem registros, o componente reposiciona automaticamente o usuário na última página válida (ou página 1). | **Componente:** `MembersPage.jsx` (linhas 277-287 - cálculo de `lastPage`).<br>**Navegador:** Atualização visual imediata do número de página e da tabela sem quebrar o layout. |
-| **J3** | **Restauração Elegível Ordinária** | 1. Localizar "Membro Teste Elegivel" na aba "Inativos".<br>2. Clicar em "Restaurar".<br>3. No modal de confirmação, conferir texto explicativo:<br>*"A restauração reativa o membro no rol da igreja para escalas. Esta operação não concede acesso ao aplicativo."*<br>4. Clicar em "Confirmar Restauração". | - Botão exibe spinner com texto "Restaurando…".<br>- Modal fecha automaticamente.<br>- Exibe banner de sucesso verde: *"Membro \"Membro Teste Elegivel\" restaurado com sucesso!"*.<br>- Lista recarrega e o membro agora aparece na aba "Ativos". | **SQL:** Transação atômica em `restore_church_member`, `audit_entries` (action: `restore_member`) e `command_receipts`.<br>**HTTP:** Status 200 OK com payload estruturado.<br>**Navegador:** Fechamento do modal, toast/banner de sucesso e atualização de dados. |
+| **J1** | **Filtros Administrativos: Ativos / Inativos / Todos** | 1. Autenticar com conta de administrador nativo.<br>2. Acessar a tela de Gestão de Membros.<br>3. Alternar entre as abas: "Ativos", "Inativos" e "Todos". | - Aba "Ativos": exibe apenas membros com badge verde "Ativo" (botão "Restaurar" ausente).<br>- Aba "Inativos": exibe os membros com badge cinza "Inativo" e o botão "Restaurar" disponível para os elegíveis.<br>- Aba "Todos": exibe a contagem consolidada e todos os cadastros. | **HTTP:** Chamada POST a `/rest/v1/rpc/list_church_members_admin` com `p_status_filter = 'active'/'inactive'/'all'`.<br>**Componente:** Transição de estado em `applyMemberListTransition`.<br>**Navegador:** Renderização condicional dos badges e botões de ação na tabela. |
+| **J2** | **Paginação e Reposicionamento Automático (pageSize=10 com Exatamente 11 Inativos)** | 1. Com filtro "Inativos" ativo e exatamente 11 membros inativos, navegar para a Página 2.<br>2. Observar a exibição isolada de "Membro Teste Inativo 11" (único registro na página).<br>3. Clicar em "Restaurar" nesse único membro da página e confirmar no modal. | - O item restaurado sai da lista de inativos.<br>- Como a Página 2 fica com 0 registros, o componente recalcula `lastPage` e reposiciona automaticamente o usuário na Página 1.<br>- A Página 1 recarrega exibindo os 10 itens restantes. | **Componente:** `MembersPage.jsx` (cálculo de `lastPage` e reposicionamento automático).<br>**Navegador:** Atualização visual imediata do número de página ativo (de 2 para 1) e da tabela sem quebrar o layout. |
+| **J3** | **Restauração Elegível Ordinária** | 1. Localizar "Membro Teste Inativo 01" na aba "Inativos".<br>2. Clicar em "Restaurar".<br>3. No modal de confirmação, conferir texto explicativo:<br>*"A restauração reativa o membro no rol da igreja para escalas. Esta operação não concede acesso ao aplicativo."*<br>4. Clicar em "Confirmar Restauração". | - Botão exibe spinner com texto "Restaurando…".<br>- Modal fecha automaticamente.<br>- Exibe banner de sucesso verde: *"Membro \"Membro Teste Inativo 01\" restaurado com sucesso!"*.<br>- Lista recarrega e o membro agora aparece na aba "Ativos". | **SQL:** Transação atômica em `restore_church_member`, `audit_entries` (action: `restore_member`) e `command_receipts`.<br>**HTTP:** Status 200 OK com payload estruturado.<br>**Navegador:** Fechamento do modal, toast/banner de sucesso e atualização de dados. |
 | **J4** | **Persistência dos Dados Após Recarga (F5)** | 1. Após a restauração do passo J3, pressionar F5 no navegador para recarregar a página por completo. | - O membro permanece na situação "Ativo".<br>- Não há retorno indevido para o estado inativo (prova que a mutação é durável no banco físico e não apenas estado volátil em memória). | **SQL:** Consulta direta em `members` confirma `status = 'active'`.<br>**Navegador:** Estado recarregado via requisição fresca de listagem ao servidor. |
 | **J5** | **Nota Explicativa de Vínculo de Acesso Revogado** | 1. Na aba "Inativos", clicar em "Restaurar" para "Membro Teste Acesso Revogado".<br>2. Observar o conteúdo do modal de confirmação. | - O modal exibe com destaque o quadro explicativo:<br>**Nota sobre acesso:** *"A restauração reativa apenas o cadastro do membro nesta igreja. O acesso a esta igreja permanece revogado. A recuperação desse acesso depende de um fluxo separado, ainda não disponível nesta etapa."*<br>3. Confirmar a restauração. | **SQL:** Membro passa a `status = 'active'`. A tabela `church_access` permanece estritamente com `status = 'revoked'`. O recibo retorna `has_revoked_access: true`.<br>**Componente:** `MembersPage.jsx` renderiza o aviso de segurança.<br>**Navegador:** Clareza total para o operador de que a liderança/acesso NÃO foram devolvidos. |
-| **J6** | **Guarda de Bloqueio de Acesso Legado Ativo (P0018)** | 1. Na aba "Inativos", tentar restaurar "Membro Teste Legado Ativo".<br>2. Clicar em "Confirmar Restauração". | - A operação é bloqueada pelo servidor (P0018).<br>- O modal exibe banner vermelho de erro específico:<br>*"Este membro possui um vínculo de acesso ativo legado nesta igreja. A restauração foi bloqueada para proteger a integridade do acesso."*<br>- O modal não fecha; nenhuma alteração de status ocorre. | **SQL:** Erro P0018 disparado no passo 4 da RPC `restore_church_member`. Zero mutação.<br>**HTTP:** Status 400 com código P0018 no corpo JSON.<br>**Componente:** Mapeamento de P0018 em mensagem compreensível.<br>**Navegador:** Exibição do banner de erro em vermelho no modal. |
-| **J7** | **Perda e Reconciliação de Resposta (Interrupção de Rede)** | 1. Abrir DevTools do navegador (F12) -> aba Network -> selecionar modo "Offline".<br>2. Clicar em "Confirmar Restauração" em um membro inativo.<br>3. O comando não obtém resposta do servidor.<br>4. Reativar a rede ("Online").<br>5. Observar o banner de recuperação / incerteza exibido na interface. | - A interface retém a identidade da operação no `sessionStorage` (`savePendingLifecycleCommand`).<br>- Exibe aviso de resposta incerta.<br>- Botão de reenvio/verificação segura permite reenviar o mesmo `command_id` sem duplicar a ação. | **Componente:** `isUncertainResponse`, armazenamento em `sessionStorage`.<br>**HTTP:** Timeout/NetworkError -> POST subsequente com replay seguro.<br>**Navegador:** Recuperação de interface sem perda do estado de trabalho. |
-| **J8** | **Isolamento de Contexto e Conta** | 1. Disparar uma requisição de restauração ou listagem.<br>2. Alternar imediatamente de igreja no seletor ou clicar em "Sair" (logout) antes da resposta chegar. | - A resposta da requisição anterior é descartada silenciosamente (`isCurrentContext` retorna false).<br>- Nenhum dado da igreja anterior é injetado na nova tela.<br>- Previne mutação cruzada entre congregações. | **Componente:** Guardas `isMountedRef` e `isCurrentContext(targetChurchId, targetUserId)`.<br>**Navegador:** Ausência de alertas espúrios ou telas inconsistentes. |
+| **J6** | **Guarda de Bloqueio de Acesso Legado Ativo (UI + P0018)** | 1. Inserir a fixture de J6 (`Membro Teste Legado Ativo`).<br>2. Na aba "Inativos", localizar "Membro Teste Legado Ativo".<br>3. Observar a coluna de ações da tabela.<br>4. (Opcional/API) Disparar a chamada `restore_church_member` via console DevTools para o mesmo membro. | - **Na UI:** O botão "Restaurar" NÃO é renderizado. Em seu lugar, a interface exibe o indicador bloqueado `<Lock /> Acesso ativo legado` com title explicativo.<br>- **Na API / Backend:** A chamada direta à RPC é rejeitada pelo passo 4 com erro `P0018` (HTTP 400), comprovando defesa em profundidade (trava de UI + guarda no banco). | **Componente:** `MembersPage.jsx` (linhas 1273–1280) substitui o botão pelo indicador de trava.<br>**SQL / HTTP:** Código P0018 retornado se a RPC for chamada por fora da interface. Zero mutação no cadastro. |
+| **J7** | **Tratamento de Rede: Offline Preventivo vs Resposta Perdida Pós-Commit** | **Etapa A (Offline Preventivo):**<br>1. Abrir DevTools (F12) -> Network -> selecionar "Offline".<br>2. Abrir modal de restauração de membro inativo.<br>3. Verificar estado do botão "Confirmar Restauração".<br><br>**Etapa B (Resposta Perdida Pós-Commit via Interceptor):**<br>1. No Console DevTools, injetar o interceptor que descarta a resposta após receber o HTTP 200:<br>`const origFetch = window.fetch; window.fetch = async (...args) => { const r = await origFetch(...args); if (args[0]?.toString().includes('restore_church_member')) { window.fetch = origFetch; throw new TypeError('Failed to fetch (simulated lost response after commit)'); } return r; };`<br>2. Clicar em "Confirmar Restauração".<br>3. Observar disparo do erro simulado no console após o commit do PostgreSQL.<br>4. Reenviar o comando seguro via banner de incerteza da UI. | **Etapa A:** O botão fica desabilitado (`disabled={restoring \|\| !isOnline}`), impedindo envio às cegas.<br><br>**Etapa B:**<br>- O comando retém o `commandId` no `sessionStorage`.<br>- A interface exibe o banner de resposta incerta.<br>- O reenvio seguro com o mesmo `commandId` (idempotência C3) recupera o recibo já gravado no servidor, sem duplicar efeitos. | **Componente:** `isOnline`, `isUncertainResponse`, retenção em `sessionStorage`.<br>**SQL:** 1 único registro em `command_receipts` e 1 única auditoria em `audit_entries`.<br>**Navegador:** Reconciliação transparente sem perda de trabalho comprovada no cliente web. |
+| **J8** | **Isolamento de Contexto de Congregação no Cliente (Conta Multi-Igreja)** | 1. **Pré-requisito:** Verificar via SQL que a conta nativa possui papel admin ativo em ambas as igrejas:<br>`select count(*) from app_private.church_access where user_id = '<ID_CONTA_NATIVA>' and status = 'active' and role = 'admin';` (deve retornar 2).<br>2. Disparar uma requisição de listagem ou restauração na Igreja 1.<br>3. Alternar imediatamente para a Igreja 2 no seletor de congregação antes da chegada da resposta. | - A resposta pendente da Igreja 1 é descartada no cliente (`isCurrentContext` retorna false).<br>- Nenhum dado da Igreja 1 é renderizado na tela da Igreja 2.<br>- **Nota de Rigor:** O descarte no cliente protege a interface contra mistura visual de congregações; a garantia de isolamento transacional decorre do RLS e validações no servidor. | **Componente:** Guardas `isMountedRef` e `isCurrentContext(targetChurchId, targetUserId)`.<br>**Navegador:** Ausência de alertas espúrios ou telas inconsistentes na alternância entre igrejas autorizadas. |
 
 ---
 
 ## 5. Matriz de Separação de Camadas de Evidência
 
 > [!CAUTION]
-> **Regra de Rigor Científico:**  
+> **Regra de Rigor Científico:**
 > **Não declarar uma classe de evidência comprovada por outra**. Cada camada deve ser comprovada com seus próprios artefatos concretos:
 > - Teste unitário em Node.js (jsdom/react-test-renderer) **não comprova** renderização real em navegador.
 > - Sucesso de chamada SQL no psql **não comprova** usabilidade, acessibilidade ou contrato de interface web.
