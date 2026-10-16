@@ -409,10 +409,10 @@ begin
 
   -- 6. Transação única: atualização do membro, auditoria e recibo de comando
   -- NUNCA modifica church_access, auth ou papéis durante restauração!
-  update app_private.members
+  update app_private.members as m
   set status = 'active'
-  where id = p_member_id and church_id = p_church_id
-  returning updated_at into v_new_updated_at;
+  where m.id = p_member_id and m.church_id = p_church_id
+  returning m.updated_at into v_new_updated_at;
 
   v_new_updated_at_str := to_char(v_new_updated_at at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"');
   v_created_at := statement_timestamp();
