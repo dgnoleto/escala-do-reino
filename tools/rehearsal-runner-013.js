@@ -17,6 +17,7 @@
 import fs from 'fs';
 import path from 'path';
 import crypto from 'crypto';
+import { spawn } from 'child_process';
 import { fileURLToPath } from 'url';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -188,8 +189,7 @@ SELECT json_build_object(
       FROM pg_catalog.pg_trigger tr
       JOIN pg_catalog.pg_class c ON c.oid = tr.tgrelid
       JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
-      WHERE n.nspname = 'app_private'
-        AND c.relname IN ('members', 'church_access')
+      WHERE n.nspname in ('public', 'app_private')
         AND not tr.tgisinternal
     ),
     'app_private_functions', (
@@ -201,16 +201,53 @@ SELECT json_build_object(
       JOIN pg_catalog.pg_namespace n ON n.oid = p.pronamespace
       WHERE n.nspname = 'app_private'
     ),
+    'schema_acls', (
+      SELECT md5(coalesce(string_agg(
+        concat_ws('|', n.nspname, coalesce(array_to_string(n.nspacl, ','), 'default')),
+        ';' order by n.nspname
+      ), 'none'))
+      FROM pg_catalog.pg_namespace n
+      WHERE n.nspname in ('public', 'app_private')
+    ),
+    'table_acls', (
+      SELECT md5(coalesce(string_agg(
+        concat_ws('|', n.nspname, c.relname, coalesce(array_to_string(c.relacl, ','), 'default')),
+        ';' order by n.nspname, c.relname
+      ), 'none'))
+      FROM pg_catalog.pg_class c
+      JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+      WHERE n.nspname in ('public', 'app_private')
+        AND c.relkind in ('r', 'v')
+    ),
+    'function_acls', (
+      SELECT md5(coalesce(string_agg(
+        concat_ws('|', n.nspname, p.proname, coalesce(array_to_string(p.proacl, ','), 'default')),
+        ';' order by n.nspname, p.proname, p.oid
+      ), 'none'))
+      FROM pg_catalog.pg_proc p
+      JOIN pg_catalog.pg_namespace n ON n.oid = p.pronamespace
+      WHERE n.nspname in ('public', 'app_private')
+    ),
     'rls_policies', (
       SELECT md5(coalesce(string_agg(
-        concat_ws('|', c.relname, c.relrowsecurity, pol.polname, pol.polcmd, pol.polpermissive),
-        ';' order by c.relname, pol.polname
+        concat_ws('|',
+          n.nspname,
+          c.relname,
+          c.relrowsecurity,
+          coalesce(pol.polname, 'none'),
+          coalesce(pol.polcmd::text, 'none'),
+          coalesce(pol.polpermissive::text, 'none'),
+          coalesce(pol.polroles::text, 'none'),
+          coalesce(pg_get_expr(pol.polqual, pol.polrelid), 'none'),
+          coalesce(pg_get_expr(pol.polwithcheck, pol.polrelid), 'none')
+        ),
+        ';' order by n.nspname, c.relname, coalesce(pol.polname, '')
       ), 'none'))
       FROM pg_catalog.pg_class c
       JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
       LEFT JOIN pg_catalog.pg_policy pol ON pol.polrelid = c.oid
-      WHERE n.nspname = 'app_private'
-        AND c.relname IN ('members', 'church_access', 'command_receipts', 'audit_entries')
+      WHERE n.nspname in ('public', 'app_private')
+        AND c.relkind = 'r'
     ),
     'has_coordination_table', (to_regclass('app_private.rehearsal_coordination') is not null)
   ),
@@ -609,7 +646,7 @@ export function validateSnapshotSchema(snapshot, label = 'snapshot') {
   if (!snapshot.catalogue_fingerprints || typeof snapshot.catalogue_fingerprints !== 'object') {
     errors.push(`${label}: 'catalogue_fingerprints' obrigatório.`);
   } else {
-    for (const key of ['triggers', 'app_private_functions', 'rls_policies']) {
+    for (const key of ['triggers', 'app_private_functions', 'schema_acls', 'table_acls', 'function_acls', 'rls_policies']) {
       const val = snapshot.catalogue_fingerprints[key];
       if (typeof val !== 'string' || !val.trim()) {
         errors.push(`${label}: catalogue_fingerprints.${key} ausente ou inválido.`);
@@ -794,6 +831,9 @@ export function createSimulatedBaselineSnapshot() {
     catalogue_fingerprints: {
       triggers: 'tr_base_md5_001001001001001001001001',
       app_private_functions: 'fn_base_md5_001001001001001001001001',
+      schema_acls: 'schema_base_md5_001001001001001001001001',
+      table_acls: 'table_base_md5_001001001001001001001001',
+      function_acls: 'func_base_md5_001001001001001001001001',
       rls_policies: 'rls_base_md5_001001001001001001001001',
       has_coordination_table: false
     },
@@ -832,6 +872,9 @@ export function createSimulatedPostReversalSnapshot() {
     catalogue_fingerprints: {
       triggers: 'tr_base_md5_001001001001001001001001',
       app_private_functions: 'fn_base_md5_001001001001001001001001',
+      schema_acls: 'schema_base_md5_001001001001001001001001',
+      table_acls: 'table_base_md5_001001001001001001001001',
+      function_acls: 'func_base_md5_001001001001001001001001',
       rls_policies: 'rls_base_md5_001001001001001001001001',
       has_coordination_table: false
     },
@@ -985,42 +1028,188 @@ export class PsqlCommandTransport {
     targetContainer = AUTHORIZED_TARGET_CONTAINER,
     targetPort = AUTHORIZED_TARGET_PORT,
     user = 'postgres',
-    database = 'postgres',
-    execFn = null
+    database = AUTHORIZED_TARGET_DATABASE,
+    execFn = null,
+    timeoutMs = 30000
   } = {}) {
     this.targetContainer = targetContainer;
     this.targetPort = targetPort;
     this.user = user;
     this.database = database;
     this.execFn = execFn;
+    this.timeoutMs = timeoutMs;
+  }
+
+  assertAuthorizedTarget() {
+    if (this.targetContainer !== AUTHORIZED_TARGET_CONTAINER) {
+      throw new Error(`ALVO NÃO AUTORIZADO: Container '${this.targetContainer}' difere do container autorizado '${AUTHORIZED_TARGET_CONTAINER}'.`);
+    }
+    if (this.database !== AUTHORIZED_TARGET_DATABASE) {
+      throw new Error(`ALVO NÃO AUTORIZADO: Banco '${this.database}' difere de '${AUTHORIZED_TARGET_DATABASE}'. Proibido executar em base compartilhada/remota.`);
+    }
+    if (this.user !== 'postgres') {
+      throw new Error(`ALVO NÃO AUTORIZADO: Usuário '${this.user}' inválido para manutenção local.`);
+    }
+    if (this.targetPort !== AUTHORIZED_TARGET_PORT) {
+      throw new Error(`ALVO NÃO AUTORIZADO: Porta '${this.targetPort}' difere da porta local autorizada ${AUTHORIZED_TARGET_PORT}.`);
+    }
+  }
+
+  async _runProcess(args = [], inputSql = '') {
+    this.assertAuthorizedTarget();
+
+    return new Promise((resolve, reject) => {
+      let isTimedOut = false;
+      const cmdArgs = [
+        'exec',
+        '-i',
+        this.targetContainer,
+        'psql',
+        '-U', this.user,
+        '-d', this.database,
+        '-v', 'ON_ERROR_STOP=1',
+        '-P', 'pager=off',
+        ...args
+      ];
+
+      const proc = spawn('docker', cmdArgs, {
+        stdio: ['pipe', 'pipe', 'pipe']
+      });
+
+      let stdout = '';
+      let stderr = '';
+
+      const timer = setTimeout(() => {
+        isTimedOut = true;
+        proc.kill('SIGKILL');
+        reject(new Error(`TIMEOUT (${this.timeoutMs}ms) excedido na execução do processo psql contra ${this.targetContainer}`));
+      }, this.timeoutMs);
+
+      proc.stdout.on('data', (data) => {
+        stdout += data.toString('utf8');
+      });
+
+      proc.stderr.on('data', (data) => {
+        stderr += data.toString('utf8');
+      });
+
+      proc.on('error', (err) => {
+        clearTimeout(timer);
+        reject(err);
+      });
+
+      proc.on('close', (code) => {
+        clearTimeout(timer);
+        if (isTimedOut) return;
+        if (code !== 0) {
+          const errMsg = stderr.trim() || stdout.trim() || `Processo encerrou com código ${code}`;
+          reject(new Error(`Falha na execução de comando psql (código ${code}): ${errMsg}`));
+        } else {
+          resolve({ stdout, stderr, code });
+        }
+      });
+
+      if (inputSql) {
+        proc.stdin.write(inputSql);
+      }
+      proc.stdin.end();
+    });
   }
 
   async executeSql(sql) {
     if (typeof this.execFn === 'function') {
       return await this.execFn({ type: 'sql', sql });
     }
-    throw new Error(`Transporte físico requer runner de processos configurado para o container '${this.targetContainer}'.`);
+    const res = await this._runProcess([], sql);
+    return { success: true, output: res.stdout };
   }
 
   async executeFile(filePath) {
     if (typeof this.execFn === 'function') {
       return await this.execFn({ type: 'file', filePath });
     }
-    throw new Error(`Transporte físico requer runner de processos configurado para o container '${this.targetContainer}'.`);
+    if (!fs.existsSync(filePath)) {
+      throw new Error(`Arquivo não encontrado para execução: ${filePath}`);
+    }
+    const sql = fs.readFileSync(filePath, 'utf8');
+    const res = await this._runProcess([], sql);
+    return { success: true, output: res.stdout };
   }
 
   async captureSnapshot() {
     if (typeof this.execFn === 'function') {
       return await this.execFn({ type: 'snapshot' });
     }
-    throw new Error('Transporte físico requer runner de processos configurado para captura de snapshot.');
+    const res = await this._runProcess(['-t', '-A'], BASELINE_SNAPSHOT_013_SQL);
+    try {
+      const parsed = JSON.parse(res.stdout.trim());
+      return parsed;
+    } catch (e) {
+      throw new Error(`Falha ao converter snapshot psql em JSON: ${e.message}. Saída: ${res.stdout.slice(0, 150)}`);
+    }
+  }
+
+  async executeVerify014(filePath = path.join(rootDir, 'docs', 'sql', '014_verify_member_lifecycle.sql')) {
+    if (typeof this.execFn === 'function') {
+      return await this.execFn({ type: 'verify_014', filePath });
+    }
+    if (!fs.existsSync(filePath)) {
+      throw new Error(`Arquivo 014 não encontrado: ${filePath}`);
+    }
+    const verifySql = fs.readFileSync(filePath, 'utf8');
+    const wrappedSql = `SELECT row_to_json(v.*) FROM (${verifySql.replace(/;\s*$/, '')}) v;`;
+    const res = await this._runProcess(['-t', '-A'], wrappedSql);
+    try {
+      const parsed = JSON.parse(res.stdout.trim());
+      return [parsed];
+    } catch (e) {
+      throw new Error(`Falha ao interpretar saída JSON de 014: ${e.message}. Saída: ${res.stdout.slice(0, 150)}`);
+    }
+  }
+
+  async executeConcurrency({
+    sessionAPath = path.join(rootDir, 'docs', 'sql', 'concurrency', '013_concurrency_session_a.sql'),
+    sessionBPath = path.join(rootDir, 'docs', 'sql', 'concurrency', '013_concurrency_session_b.sql')
+  } = {}) {
+    if (typeof this.execFn === 'function') {
+      return await this.execFn({ type: 'concurrency', sessionAPath, sessionBPath });
+    }
+    if (!fs.existsSync(sessionAPath)) {
+      throw new Error(`Script de Conexão A não encontrado: ${sessionAPath}`);
+    }
+    if (!fs.existsSync(sessionBPath)) {
+      throw new Error(`Script de Conexão B não encontrado: ${sessionBPath}`);
+    }
+
+    const sqlA = fs.readFileSync(sessionAPath, 'utf8');
+    const sqlB = fs.readFileSync(sessionBPath, 'utf8');
+
+    const procAPromise = this._runProcess([], sqlA);
+    await new Promise(r => setTimeout(r, 250));
+    const procBPromise = this._runProcess([], sqlB);
+
+    const [resA, resB] = await Promise.all([procAPromise, procBPromise]);
+
+    const scenarios = ['c1a', 'c1b1', 'c1b2', 'c2', 'c3'];
+    return {
+      success: true,
+      scenarios,
+      sessionAOutput: resA.stdout,
+      sessionBOutput: resB.stdout
+    };
   }
 
   async executeCleanupAndReversal() {
     if (typeof this.execFn === 'function') {
       return await this.execFn({ type: 'cleanup_and_reversal' });
     }
-    throw new Error('Transporte físico requer runner de processos configurado para limpeza e reversão.');
+    await this.executeSql(EXACT_FIXTURE_CLEANUP_013_SQL);
+    await this.executeSql(EXACT_REVERSAL_013_SQL);
+    return { success: true };
+  }
+
+  async close() {
+    // Liberação limpa de recursos se aplicável
   }
 }
 
@@ -1035,13 +1224,19 @@ export class RehearsalOrchestrator013 {
     this.isDryRun = dryRun;
     this.transport = transport;
     this.coordinator = new ConcurrencyCoordinator();
+    this.persistedBaselineSnapshot = null;
+    this.provenOwnership = {
+      baselineCaptured: false,
+      installed013: false,
+      fixturesCreated: false
+    };
   }
 
-  async rollback() {
-    return await this.executePlan('rollback');
+  async rollback(options = {}) {
+    return await this.executePlan('rollback', options);
   }
 
-  async cleanup() {
+  async cleanup(options = {}) {
     if (!this.isDryRun && !this.transport) {
       return { success: false, error: 'Modo físico requer transporte configurado para limpeza.' };
     }
@@ -1053,19 +1248,37 @@ export class RehearsalOrchestrator013 {
         const res = await this.transport.executeCleanupAndReversal();
         return res;
       }
-      await this.transport.executeSql(EXACT_FIXTURE_CLEANUP_013_SQL);
-      await this.transport.executeSql(EXACT_REVERSAL_013_SQL);
+      const ownership = options.provenOwnership || this.provenOwnership;
+      if (!ownership.fixturesCreated && !ownership.installed013) {
+        return { success: false, error: 'Limpeza física cancelada: nenhuma alteração ou fixture com propriedade comprovada desta execução.' };
+      }
+      if (ownership.fixturesCreated) {
+        await this.transport.executeSql(EXACT_FIXTURE_CLEANUP_013_SQL);
+        ownership.fixturesCreated = false;
+      }
+      if (ownership.installed013) {
+        await this.transport.executeSql(EXACT_REVERSAL_013_SQL);
+        ownership.installed013 = false;
+      }
       return { success: true };
     } catch (err) {
       return { success: false, error: err.message };
     }
   }
 
-  async runRehearsalPlan(stage = 'all') {
-    return await this.executePlan(stage);
+  async runRehearsalPlan(stage = 'all', options = {}) {
+    return await this.executePlan(stage, options);
   }
 
-  async executePlan(stage = 'all') {
+  async executePlan(stage = 'all', options = {}) {
+    if (options.provenOwnership) {
+      this.provenOwnership = { ...this.provenOwnership, ...options.provenOwnership };
+    }
+    if (options.baselineSnapshot) {
+      this.persistedBaselineSnapshot = options.baselineSnapshot;
+      this.provenOwnership.baselineCaptured = true;
+    }
+
     const report = {
       mode: this.isDryRun ? 'simulated' : 'physical',
       stage,
@@ -1101,12 +1314,11 @@ export class RehearsalOrchestrator013 {
 
       // Etapa rollback isolada:
       if (stage === 'rollback') {
-        report.phasesExecuted.push('phase_7_fixture_cleanup');
-        report.phasesExecuted.push('phase_8_exact_reversal');
-        report.phasesExecuted.push('phase_9_post_reversal_comparison');
-
         if (this.isDryRun) {
-          const baselineMock = createSimulatedBaselineSnapshot();
+          report.phasesExecuted.push('phase_7_fixture_cleanup');
+          report.phasesExecuted.push('phase_8_exact_reversal');
+          report.phasesExecuted.push('phase_9_post_reversal_comparison');
+          const baselineMock = options.baselineSnapshot || this.persistedBaselineSnapshot || createSimulatedBaselineSnapshot();
           const postReversalMock = createSimulatedPostReversalSnapshot();
           const comparison = compareSnapshots(baselineMock, postReversalMock);
           if (!comparison.matches) {
@@ -1118,15 +1330,45 @@ export class RehearsalOrchestrator013 {
           report.success = true;
           return report;
         } else {
-          await this.transport.executeSql(EXACT_FIXTURE_CLEANUP_013_SQL);
-          await this.transport.executeSql(EXACT_REVERSAL_013_SQL);
+          // B2: Modo físico estrito — Exigir baseline real e propriedade comprovada; zero mutações caso ausentes.
+          const baselineSnapshot = options.baselineSnapshot || this.persistedBaselineSnapshot || report.snapshots.baseline;
+          if (!baselineSnapshot) {
+            report.error = 'Rollback físico requer baseline real persistido da execução. Operação cancelada com zero mutações.';
+            report.success = false;
+            return report;
+          }
+          const valBase = validateSnapshotSchema(baselineSnapshot, 'baseline');
+          if (!valBase.valid) {
+            report.error = `Baseline fornecido para rollback físico é inválido: ${valBase.errors.join('; ')}`;
+            report.success = false;
+            return report;
+          }
+          const ownership = options.provenOwnership || this.provenOwnership;
+          if (!ownership || (!ownership.installed013 && !ownership.fixturesCreated)) {
+            report.error = 'Rollback físico requer comprovação de propriedade das alterações (installed013 ou fixturesCreated). Zero mutações executadas.';
+            report.success = false;
+            return report;
+          }
+
+          if (ownership.fixturesCreated) {
+            report.phasesExecuted.push('phase_7_fixture_cleanup');
+            await this.transport.executeSql(EXACT_FIXTURE_CLEANUP_013_SQL);
+            ownership.fixturesCreated = false;
+          }
+          if (ownership.installed013) {
+            report.phasesExecuted.push('phase_8_exact_reversal');
+            await this.transport.executeSql(EXACT_REVERSAL_013_SQL);
+            ownership.installed013 = false;
+          }
+          report.phasesExecuted.push('phase_9_post_reversal_comparison');
           const postSnapshot = await this.transport.captureSnapshot();
-          const baselineSnapshot = report.snapshots.baseline || createSimulatedBaselineSnapshot();
           const comparison = compareSnapshots(baselineSnapshot, postSnapshot);
           if (!comparison.matches) {
             report.error = `Snapshot físico pós-reversão divergiu: ${comparison.differences.join('; ')}`;
+            report.success = false;
             return report;
           }
+          report.snapshots.baseline = baselineSnapshot;
           report.snapshots.postReversal = postSnapshot;
           report.success = true;
           return report;
@@ -1144,7 +1386,16 @@ export class RehearsalOrchestrator013 {
       const baselineSnapshot = this.isDryRun
         ? createSimulatedBaselineSnapshot()
         : await this.transport.captureSnapshot();
+
+      const baseSchema = validateSnapshotSchema(baselineSnapshot, 'baseline');
+      if (!baseSchema.valid) {
+        report.error = `Baseline capturado é inválido: ${baseSchema.errors.join('; ')}`;
+        return report;
+      }
+
       report.snapshots.baseline = baselineSnapshot;
+      this.persistedBaselineSnapshot = baselineSnapshot;
+      this.provenOwnership.baselineCaptured = true;
 
       if (stage === 'baseline') {
         report.success = true;
@@ -1152,16 +1403,28 @@ export class RehearsalOrchestrator013 {
       }
 
       // [Fase 4] Instalação 013 com COMMIT
-      report.phasesExecuted.push('phase_4_install_013');
       if (!this.isDryRun) {
         await this.transport.executeFile(path.join(rootDir, 'docs', 'sql', '013_member_lifecycle.sql'));
       }
+      report.phasesExecuted.push('phase_4_install_013');
+      this.provenOwnership.installed013 = true;
 
-      // [Fase 5] Verificação 014 Real
+      // [Fase 5] Verificação 014 Real Governa a Decisão (B1)
       report.phasesExecuted.push('phase_5_verify_014');
-      const allTrue014 = {};
-      VERIFY_014_INDICATORS.forEach(ind => { allTrue014[ind] = true; });
-      const verify014Result = validateVerify014Result([allTrue014]);
+      let verifyRows;
+      if (this.isDryRun) {
+        const allTrue014 = {};
+        VERIFY_014_INDICATORS.forEach(ind => { allTrue014[ind] = true; });
+        verifyRows = [allTrue014];
+      } else if (typeof this.transport.executeVerify014 === 'function') {
+        verifyRows = await this.transport.executeVerify014();
+      } else {
+        const verifySql = fs.readFileSync(path.join(rootDir, 'docs', 'sql', '014_verify_member_lifecycle.sql'), 'utf8');
+        const vRes = await this.transport.executeSql(verifySql);
+        verifyRows = vRes?.rows || vRes?.output || [];
+      }
+
+      const verify014Result = validateVerify014Result(verifyRows);
       if (!verify014Result.success) {
         report.error = `Verificação 014 falhou: ${verify014Result.errors.join('; ')}`;
         return report;
@@ -1178,28 +1441,53 @@ export class RehearsalOrchestrator013 {
         return report;
       }
 
-      // [Fase 6] Concorrência Coordenada C1.A, C1.B.1, C1.B.2, C2, C3
-      report.phasesExecuted.push('phase_6_concurrency_rehearsal');
-      const sessionA = new MockSessionTransport({ name: 'session_a_013', pid: 101 });
-      const sessionB = new MockSessionTransport({ name: 'session_b_013', pid: 202 });
-      this.coordinator.registerSessions(sessionA, sessionB);
+      // [Fase 6] Concorrência Coordenada C1.A, C1.B.1, C1.B.2, C2, C3 (B1)
+      if (this.isDryRun) {
+        report.phasesExecuted.push('phase_6_concurrency_rehearsal');
+        const sessionA = new MockSessionTransport({ name: 'session_a_013', pid: 101 });
+        const sessionB = new MockSessionTransport({ name: 'session_b_013', pid: 202 });
+        this.coordinator.registerSessions(sessionA, sessionB);
 
-      const scenarios = ['c1a', 'c1b1', 'c1b2', 'c2', 'c3'];
-      for (const sc of scenarios) {
-        await this.coordinator.runScenario(sc);
+        const scenarios = ['c1a', 'c1b1', 'c1b2', 'c2', 'c3'];
+        for (const sc of scenarios) {
+          await this.coordinator.runScenario(sc);
+        }
+        this.provenOwnership.fixturesCreated = true;
+      } else if (typeof this.transport.executeConcurrency === 'function') {
+        const sessionAPath = path.join(rootDir, 'docs', 'sql', 'concurrency', '013_concurrency_session_a.sql');
+        const sessionBPath = path.join(rootDir, 'docs', 'sql', 'concurrency', '013_concurrency_session_b.sql');
+        const concRes = await this.transport.executeConcurrency({ sessionAPath, sessionBPath });
+        if (!concRes || concRes.success !== true) {
+          report.error = `Ensaio de concorrência física falhou: ${concRes?.error || 'Erro desconhecido'}`;
+          return report;
+        }
+        const reqScenarios = ['c1a', 'c1b1', 'c1b2', 'c2', 'c3'];
+        const compScenarios = concRes.scenarios || [];
+        const missing = reqScenarios.filter(s => !compScenarios.includes(s));
+        if (missing.length > 0) {
+          report.error = `Cenários de concorrência não comprovados: ${missing.join(', ')}`;
+          return report;
+        }
+        report.phasesExecuted.push('phase_6_concurrency_rehearsal');
+        this.provenOwnership.fixturesCreated = true;
+      } else {
+        report.error = 'Transporte físico não implementa executeConcurrency para ensaio multi-sessão.';
+        return report;
       }
 
-      // [Fase 7] Limpeza Cirúrgica de Fixtures Sintéticas com Desativação Controlada
+      // [Fase 7] Limpeza Cirúrgica de Fixtures Sintéticas
       report.phasesExecuted.push('phase_7_fixture_cleanup');
       if (!this.isDryRun) {
         await this.transport.executeSql(EXACT_FIXTURE_CLEANUP_013_SQL);
       }
+      this.provenOwnership.fixturesCreated = false;
 
       // [Fase 8] Reversão Exata do Catálogo (Desinstalação de 013)
       report.phasesExecuted.push('phase_8_exact_reversal');
       if (!this.isDryRun) {
         await this.transport.executeSql(EXACT_REVERSAL_013_SQL);
       }
+      this.provenOwnership.installed013 = false;
 
       // [Fase 9] Snapshot Pós-Reversão e Conferência Estrita contra Baseline
       report.phasesExecuted.push('phase_9_post_reversal_comparison');
@@ -1220,8 +1508,8 @@ export class RehearsalOrchestrator013 {
       report.error = `Exceção durante a execução do plano: ${err.message}`;
       return report;
     } finally {
-      // Garantia de recuperação e limpeza após falha
-      if (!report.success && report.phasesExecuted.includes('phase_4_install_013')) {
+      // B2: Recuperação cirúrgica baseada em PROPRIEDADE REAL comprovada
+      if (!report.success && (this.provenOwnership.installed013 || this.provenOwnership.fixturesCreated)) {
         report.cleanupAttempted = true;
         if (this.isDryRun) {
           report.cleanupSuccess = true;
@@ -1236,9 +1524,35 @@ export class RehearsalOrchestrator013 {
             report.cleanupSuccess = false;
             report.cleanupError = cleanErr.message;
           }
+        } else if (this.transport) {
+          try {
+            if (this.provenOwnership.fixturesCreated) {
+              await this.transport.executeSql(EXACT_FIXTURE_CLEANUP_013_SQL);
+              this.provenOwnership.fixturesCreated = false;
+            }
+            if (this.provenOwnership.installed013) {
+              await this.transport.executeSql(EXACT_REVERSAL_013_SQL);
+              this.provenOwnership.installed013 = false;
+            }
+            if (this.provenOwnership.baselineCaptured && report.snapshots.baseline) {
+              const postSnap = await this.transport.captureSnapshot();
+              const comp = compareSnapshots(report.snapshots.baseline, postSnap);
+              if (!comp.matches) {
+                report.cleanupSuccess = false;
+                report.cleanupError = `Limpeza física concluiu com divergência no snapshot: ${comp.differences.join('; ')}`;
+              } else {
+                report.cleanupSuccess = true;
+              }
+            } else {
+              report.cleanupSuccess = true;
+            }
+          } catch (cleanErr) {
+            report.cleanupSuccess = false;
+            report.cleanupError = cleanErr.message;
+          }
         } else {
           report.cleanupSuccess = false;
-          report.cleanupError = 'Transporte indisponível para executar e verificar a limpeza física de recuperação.';
+          report.cleanupError = 'Transporte indisponível para executar a limpeza física de recuperação.';
         }
       }
     }
@@ -1382,8 +1696,27 @@ export async function runCli(argv = process.argv.slice(2)) {
       console.error('\n[ERRO DE SEGURANÇA] Execução física cancelada: a flag obrigatória --confirm-local não foi fornecida.');
       return 1;
     }
-    console.error(`\n[AVISO DE GOVERNANÇA] Execução contra banco físico no container '${AUTHORIZED_TARGET_CONTAINER}' requer autorização formal explícita nesta rodada.`);
-    return 1;
+    console.log(`\n--- [MODO FÍSICO / LOCAL] INICIANDO EXECUÇÃO CONTRA CONTAINER '${AUTHORIZED_TARGET_CONTAINER}' ---`);
+    console.log(`Etapa solicitada: '${stage}' | Alvo: ${AUTHORIZED_TARGET_CONTAINER} (${AUTHORIZED_TARGET_DATABASE})`);
+    const transport = new PsqlCommandTransport({
+      targetContainer: AUTHORIZED_TARGET_CONTAINER,
+      targetPort: AUTHORIZED_TARGET_PORT,
+      user: 'postgres',
+      database: AUTHORIZED_TARGET_DATABASE
+    });
+    const orchestrator = new RehearsalOrchestrator013({ dryRun: false, transport });
+    const result = await orchestrator.executePlan(stage);
+    if (result.success) {
+      console.log(`\n[PASS / FÍSICO] Execução do plano de laboratório 013/014 concluída com sucesso no banco local.`);
+      console.log(`Fases executadas: ${result.phasesExecuted.join(' -> ')}`);
+      return 0;
+    } else {
+      console.error(`\n[FAIL / FÍSICO] Erro na execução física: ${result.error}`);
+      if (result.cleanupAttempted) {
+        console.error(`Limpeza de recuperação: ${result.cleanupSuccess ? 'BEM-SUCEDIDA' : 'FALHOU (' + result.cleanupError + ')'}`);
+      }
+      return 1;
+    }
   }
 
   console.error('\n[ERRO] Nenhum comando fornecido. Utilize --help, --plan, --check ou --dry-run.');

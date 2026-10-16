@@ -45,7 +45,10 @@ O operador acessa via navegador: `http://localhost:3001`.
 
 ## 3. Preparação de Dados Fictícios Delimitados para a Jornada
 
-O inventário conferido em 16/10/2026 possui **7 membros ativos e 0 inativos**. Para testar a listagem com filtros, paginação e a restauração, **NÃO inativar membros existentes da igreja por conveniência**.
+> [!IMPORTANT]
+> **Distinção entre Igrejas do Laboratório:**
+> - **Igreja Efêmera do Ensaio SQL (`01300000-0000-4000-8000-0000000000c1`):** Criada e destruída exclusivamente pelos scripts automatizados de concorrência (`013_concurrency_session_a.sql` e `session_b.sql`). Não deve ser confundida com a base de ensaio no navegador.
+> - **Igreja Persistente do Navegador (`<LAB_CHURCH_PERSISTENT_ID>`):** Congregação do laboratório local onde a conta nativa do operador possui acesso administrativo legítimo (`is_admin = true`). O inventário conferido em 16/10/2026 possui **7 membros ativos e 0 inativos**. Para testar a listagem com filtros, paginação e a restauração, **NÃO inativar membros existentes da igreja por conveniência**.
 
 Como o tamanho de página configurado na aplicação é `pageSize = 10` (`MembersPage.jsx:133`), a validação de paginação e reposicionamento automático (J2) requer volume de dados suficiente para ultrapassar uma página (mínimo de 11 inativos).
 
@@ -60,18 +63,57 @@ Como o tamanho de página configurado na aplicação é `pageSize = 10` (`Member
 > - **Membro com Vínculo Legado Ativo (J6):** Só deve ser inserido no banco **APÓS a conclusão da validação de J2**, preservando o volume estrito de 11 registros durante o teste de paginação.
 
 ### Manifesto de Identificadores e Procedimento de Limpeza do Navegador
-As fixtures de ensaio de navegador utilizam UUIDs dedicados no espaço `013b0000-0000-4000-8000-0000000000xx`:
+As fixtures de ensaio de navegador utilizam UUIDs dedicados no espaço `013b0000-0000-4000-8000-0000000000xx`, vinculados à igreja persistente (`<LAB_CHURCH_PERSISTENT_ID>`):
 - Preenchedores (J2): `013b0000-0000-4000-8000-000000000001` a `...0009`
-- Acesso Revogado (J2/J5): `013b0000-0000-4000-8000-000000000010` (church_access: `013b0000-0000-4000-8000-00000000ac10`, status: revoked, revoked_at: '2026-10-15T10:00:00Z', reason: 'rehearsal_j5')
+- Acesso Revogado (J2/J5): `013b0000-0000-4000-8000-000000000010` (church_access: `013b0000-0000-4000-8000-00000000ac10`, status: 'revoked', revoked_at: '2026-10-15T10:00:00Z', reason: 'rehearsal_j5')
 - Alvo de Reposicionamento (J2): `013b0000-0000-4000-8000-000000000011`
-- Legado Ativo (J6, inserido pós-J2): `013b0000-0000-4000-8000-000000000012` (church_access: `013b0000-0000-4000-8000-00000000ac12`, status: active)
+- Legado Ativo (J6, inserido pós-J2): `013b0000-0000-4000-8000-000000000012` (church_access: `013b0000-0000-4000-8000-00000000ac12`, status: 'active')
 
 ```sql
 -- Script de Limpeza e Reversão Exata das Fixtures de Navegador (Executar pós-jornada):
-delete from app_private.command_receipts where church_id = '01300000-0000-4000-8000-0000000000c1' and command_id::text like '013b%';
-delete from app_private.audit_entries where church_id = '01300000-0000-4000-8000-0000000000c1' and user_id::text like '013b%';
-delete from app_private.church_access where id in ('013b0000-0000-4000-8000-00000000ac10', '013b0000-0000-4000-8000-00000000ac12');
-delete from app_private.members where id between '013b0000-0000-4000-8000-000000000001' and '013b0000-0000-4000-8000-000000000012';
+-- Deleta recibos e auditorias EXCLUSIVAMENTE vinculados aos membros restaurados nesta jornada
+-- (sem assumir prefixo fictício em command_id nem usar coluna inexistente user_id em audit_entries)
+delete from app_private.command_receipts
+where church_id = '<LAB_CHURCH_PERSISTENT_ID>'
+  and action = 'restore_member'
+  and result_member_id in (
+    '013b0000-0000-4000-8000-000000000001',
+    '013b0000-0000-4000-8000-000000000010',
+    '013b0000-0000-4000-8000-000000000011'
+  );
+
+delete from app_private.audit_entries
+where church_id = '<LAB_CHURCH_PERSISTENT_ID>'
+  and action = 'restore_member'
+  and target_id in (
+    '013b0000-0000-4000-8000-000000000001',
+    '013b0000-0000-4000-8000-000000000010',
+    '013b0000-0000-4000-8000-000000000011'
+  );
+
+delete from app_private.church_access
+where id in (
+  '013b0000-0000-4000-8000-00000000ac10',
+  '013b0000-0000-4000-8000-00000000ac12'
+);
+
+-- Deleção estrita dos 12 membros da jornada por lista de IDs exatos do manifesto (sem faixa ou range genérico)
+delete from app_private.members
+where church_id = '<LAB_CHURCH_PERSISTENT_ID>'
+  and id in (
+    '013b0000-0000-4000-8000-000000000001',
+    '013b0000-0000-4000-8000-000000000002',
+    '013b0000-0000-4000-8000-000000000003',
+    '013b0000-0000-4000-8000-000000000004',
+    '013b0000-0000-4000-8000-000000000005',
+    '013b0000-0000-4000-8000-000000000006',
+    '013b0000-0000-4000-8000-000000000007',
+    '013b0000-0000-4000-8000-000000000008',
+    '013b0000-0000-4000-8000-000000000009',
+    '013b0000-0000-4000-8000-000000000010',
+    '013b0000-0000-4000-8000-000000000011',
+    '013b0000-0000-4000-8000-000000000012'
+  );
 ```
 
 ---
@@ -87,7 +129,7 @@ delete from app_private.members where id between '013b0000-0000-4000-8000-000000
 | **J5** | **Nota Explicativa de Vínculo de Acesso Revogado** | 1. Na aba "Inativos", clicar em "Restaurar" para "Membro Teste Acesso Revogado".<br>2. Observar o conteúdo do modal de confirmação. | - O modal exibe com destaque o quadro explicativo:<br>**Nota sobre acesso:** *"A restauração reativa apenas o cadastro do membro nesta igreja. O acesso a esta igreja permanece revogado. A recuperação desse acesso depende de um fluxo separado, ainda não disponível nesta etapa."*<br>3. Confirmar a restauração. | **SQL:** Membro passa a `status = 'active'`. A tabela `church_access` permanece estritamente com `status = 'revoked'`. O recibo retorna `has_revoked_access: true`.<br>**Componente:** `MembersPage.jsx` renderiza o aviso de segurança.<br>**Navegador:** Clareza total para o operador de que a liderança/acesso NÃO foram devolvidos. |
 | **J6** | **Guarda de Bloqueio de Acesso Legado Ativo (UI + P0018)** | 1. Inserir a fixture de J6 (`Membro Teste Legado Ativo`).<br>2. Na aba "Inativos", localizar "Membro Teste Legado Ativo".<br>3. Observar a coluna de ações da tabela.<br>4. (Opcional/API) Disparar a chamada `restore_church_member` via console DevTools para o mesmo membro. | - **Na UI:** O botão "Restaurar" NÃO é renderizado. Em seu lugar, a interface exibe o indicador bloqueado `<Lock /> Acesso ativo legado` com title explicativo.<br>- **Na API / Backend:** A chamada direta à RPC é rejeitada pelo passo 4 com erro `P0018` (HTTP 400), comprovando defesa em profundidade (trava de UI + guarda no banco). | **Componente:** `MembersPage.jsx` (linhas 1273–1280) substitui o botão pelo indicador de trava.<br>**SQL / HTTP:** Código P0018 retornado se a RPC for chamada por fora da interface. Zero mutação no cadastro. |
 | **J7** | **Tratamento de Rede: Offline Preventivo vs Resposta Perdida Pós-Commit** | **Etapa A (Offline Preventivo):**<br>1. Abrir DevTools (F12) -> Network -> selecionar "Offline".<br>2. Abrir modal de restauração de membro inativo.<br>3. Verificar estado do botão "Confirmar Restauração".<br><br>**Etapa B (Resposta Perdida Pós-Commit via Interceptor):**<br>1. No Console DevTools, injetar o interceptor que descarta a resposta após receber o HTTP 200:<br>`const origFetch = window.fetch; window.fetch = async (...args) => { const r = await origFetch(...args); if (args[0]?.toString().includes('restore_church_member')) { window.fetch = origFetch; throw new TypeError('Failed to fetch (simulated lost response after commit)'); } return r; };`<br>2. Clicar em "Confirmar Restauração".<br>3. Observar disparo do erro simulado no console após o commit do PostgreSQL.<br>4. Reenviar o comando seguro via banner de incerteza da UI. | **Etapa A:** O botão fica desabilitado (`disabled={restoring \|\| !isOnline}`), impedindo envio às cegas.<br><br>**Etapa B:**<br>- O comando retém o `commandId` no `sessionStorage`.<br>- A interface exibe o banner de resposta incerta.<br>- O reenvio seguro com o mesmo `commandId` (idempotência C3) recupera o recibo já gravado no servidor, sem duplicar efeitos. | **Componente:** `isOnline`, `isUncertainResponse`, retenção em `sessionStorage`.<br>**SQL:** 1 único registro em `command_receipts` e 1 única auditoria em `audit_entries`.<br>**Navegador:** Reconciliação transparente sem perda de trabalho comprovada no cliente web. |
-| **J8** | **Isolamento de Contexto de Congregação no Cliente (Conta Multi-Igreja)** | 1. **Pré-requisito:** Verificar via SQL que a conta nativa possui papel admin ativo em ambas as igrejas:<br>`select count(*) from app_private.church_access where user_id = '<ID_CONTA_NATIVA>' and status = 'active' and role = 'admin';` (deve retornar 2).<br>2. Disparar uma requisição de listagem ou restauração na Igreja 1.<br>3. Alternar imediatamente para a Igreja 2 no seletor de congregação antes da chegada da resposta. | - A resposta pendente da Igreja 1 é descartada no cliente (`isCurrentContext` retorna false).<br>- Nenhum dado da Igreja 1 é renderizado na tela da Igreja 2.<br>- **Nota de Rigor:** O descarte no cliente protege a interface contra mistura visual de congregações; a garantia de isolamento transacional decorre do RLS e validações no servidor. | **Componente:** Guardas `isMountedRef` e `isCurrentContext(targetChurchId, targetUserId)`.<br>**Navegador:** Ausência de alertas espúrios ou telas inconsistentes na alternância entre igrejas autorizadas. |
+| **J8** | **Isolamento de Contexto de Congregação no Cliente (Conta Multi-Igreja)** | 1. **Pré-requisito:** Respeito à trava estrutural `church_access_single_active_admin_idx`: nenhuma conta pode ser administradora ativa (`is_admin = true` e `status = 'active'`) em duas igrejas simultaneamente.<br>Configurar a conta de teste com **administração ativa na Igreja 1 e acesso regular na Igreja 2**:<br>`select church_id, is_admin, status from app_private.church_access where user_id = '<ID_CONTA_NATIVA>' and status = 'active';`<br>(retorna 2 linhas: Igreja 1 com `is_admin = true`, Igreja 2 com `is_admin = false`).<br>*(Para testar telas administrativas em ambas as congregações, utilizam-se duas contas distintas de administrador: Conta A para Igreja 1 e Conta B para Igreja 2).*<br>2. Disparar uma requisição de listagem ou restauração na Igreja 1.<br>3. Alternar imediatamente para a Igreja 2 no seletor de congregação antes da chegada da resposta. | - A resposta pendente da Igreja 1 é descartada no cliente (`isCurrentContext` retorna false).<br>- Nenhum dado da Igreja 1 é renderizado na tela da Igreja 2.<br>- **Nota de Rigor:** O descarte no cliente protege a interface contra mistura visual de congregações; a garantia de isolamento transacional decorre do RLS e validações no servidor. | **Componente:** Guardas `isMountedRef` e `isCurrentContext(targetChurchId, targetUserId)`.<br>**Navegador:** Ausência de alertas espúrios ou telas inconsistentes na alternância entre igrejas autorizadas. |
 
 ---
 

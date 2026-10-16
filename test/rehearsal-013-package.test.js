@@ -18,6 +18,7 @@ import {
   RehearsalOrchestrator013,
   MockSessionTransport,
   ConcurrencyCoordinator,
+  PsqlCommandTransport,
   runCli,
   CANONICAL_013_INSTALLER_SHA256,
   REHEARSAL_013_FIXTURE_MANIFEST,
@@ -364,3 +365,238 @@ test('16. R5: Divergência em fingerprints de catálogo (triggers, RLS, function
   assert.equal(compAuth.matches, false);
   assert.ok(compAuth.differences.some(d => d.includes('content_hashes.auth_users divergiu')));
 });
+
+test('17. B1: Modo físico governa decisão com 014 real e exige execução dos scripts concorrentes A/B', async () => {
+  const calls = [];
+  const validIndicators = {};
+  VERIFY_014_INDICATORS.forEach(ind => { validIndicators[ind] = true; });
+
+  const spyTransport = {
+    executeSql: async (sql) => {
+      calls.push({ type: 'sql', snippet: sql.slice(0, 30) });
+      return { success: true, output: '' };
+    },
+    executeFile: async (filePath) => {
+      calls.push({ type: 'file', file: path.basename(filePath) });
+      return { success: true, output: '' };
+    },
+    captureSnapshot: async () => {
+      calls.push({ type: 'snapshot' });
+      return createSimulatedBaselineSnapshot();
+    },
+    executeVerify014: async () => {
+      calls.push({ type: 'verify_014' });
+      return [validIndicators];
+    },
+    executeConcurrency: async ({ sessionAPath, sessionBPath }) => {
+      calls.push({
+        type: 'concurrency',
+        fileA: path.basename(sessionAPath),
+        fileB: path.basename(sessionBPath)
+      });
+      return {
+        success: true,
+        scenarios: ['c1a', 'c1b1', 'c1b2', 'c2', 'c3']
+      };
+    }
+  };
+
+  const orchestrator = new RehearsalOrchestrator013({ dryRun: false, transport: spyTransport });
+  const result = await orchestrator.runRehearsalPlan('all');
+
+  assert.equal(result.success, true, `Plano falhou: ${result.error}`);
+  assert.ok(calls.some(c => c.type === 'verify_014'), 'executeVerify014 DEVE ser chamado no transporte físico');
+  assert.ok(calls.some(c => c.type === 'concurrency' && c.fileA.includes('session_a') && c.fileB.includes('session_b')),
+    'executeConcurrency DEVE ser chamado com os scripts A e B');
+});
+
+test('18. B1: Verificação 014 com indicador FALSE ou NULL aborta execução antes de chegar à concorrência', async () => {
+  const calls = [];
+  const badIndicators = {};
+  VERIFY_014_INDICATORS.forEach(ind => { badIndicators[ind] = true; });
+  badIndicators['private_schema_still_blocked'] = false; // falha de segurança!
+
+  const spyTransport = {
+    executeSql: async (sql) => { calls.push({ type: 'sql' }); return { success: true }; },
+    executeFile: async (filePath) => { calls.push({ type: 'file', file: path.basename(filePath) }); return { success: true }; },
+    captureSnapshot: async () => { calls.push({ type: 'snapshot' }); return createSimulatedBaselineSnapshot(); },
+    executeVerify014: async () => {
+      calls.push({ type: 'verify_014' });
+      return [badIndicators];
+    },
+    executeConcurrency: async () => {
+      calls.push({ type: 'concurrency' });
+      return { success: true, scenarios: ['c1a', 'c1b1', 'c1b2', 'c2', 'c3'] };
+    }
+  };
+
+  const orchestrator = new RehearsalOrchestrator013({ dryRun: false, transport: spyTransport });
+  const result = await orchestrator.runRehearsalPlan('all');
+
+  assert.equal(result.success, false);
+  assert.ok(result.error.includes('Verificação 014 falhou'));
+  assert.equal(calls.some(c => c.type === 'concurrency'), false,
+    'Concorrência NUNCA pode ser executada se 014 falhar!');
+});
+
+test('19. B1: Concorrência com cenário faltante ou falho bloqueia PASS', async () => {
+  const validIndicators = {};
+  VERIFY_014_INDICATORS.forEach(ind => { validIndicators[ind] = true; });
+
+  const spyTransport = {
+    executeSql: async () => ({ success: true }),
+    executeFile: async () => ({ success: true }),
+    captureSnapshot: async () => createSimulatedBaselineSnapshot(),
+    executeVerify014: async () => [validIndicators],
+    executeConcurrency: async () => {
+      // Cenário c3 ausente!
+      return { success: true, scenarios: ['c1a', 'c1b1', 'c1b2', 'c2'] };
+    }
+  };
+
+  const orchestrator = new RehearsalOrchestrator013({ dryRun: false, transport: spyTransport });
+  const result = await orchestrator.runRehearsalPlan('all');
+
+  assert.equal(result.success, false);
+  assert.ok(result.error.includes('Cenários de concorrência não comprovados: c3'));
+});
+
+test('20. B1: Transporte psql rejeita alvos, databases e portas não autorizados', () => {
+  assert.throws(() => {
+    const badTransport = new PsqlCommandTransport({ targetContainer: 'wrong_container' });
+    badTransport.assertAuthorizedTarget();
+  }, /ALVO NÃO AUTORIZADO/);
+
+  assert.throws(() => {
+    const badDb = new PsqlCommandTransport({ database: 'production_db' });
+    badDb.assertAuthorizedTarget();
+  }, /ALVO NÃO AUTORIZADO/);
+
+  assert.throws(() => {
+    const badPort = new PsqlCommandTransport({ targetPort: 5432 });
+    badPort.assertAuthorizedTarget();
+  }, /ALVO NÃO AUTORIZADO/);
+});
+
+test('21. B2: Rollback físico sem baseline real persistido ou sem propriedade comprovada produz ZERO mutações', async () => {
+  const mutations = [];
+  const transport = {
+    executeSql: async (sql) => { mutations.push(sql); return { success: true }; },
+    captureSnapshot: async () => createSimulatedBaselineSnapshot()
+  };
+
+  const orchestrator = new RehearsalOrchestrator013({ dryRun: false, transport });
+
+  // 1. Rollback sem baselineSnapshot
+  const resNoBaseline = await orchestrator.rollback();
+  assert.equal(resNoBaseline.success, false);
+  assert.ok(resNoBaseline.error.includes('requer baseline real persistido'));
+  assert.equal(mutations.length, 0, 'Zero mutações permitidas sem baseline real persistido!');
+
+  // 2. Rollback com baseline mas sem propriedade comprovada (nenhum objeto alterado por esta execução)
+  const baseline = createSimulatedBaselineSnapshot();
+  const resNoOwnership = await orchestrator.rollback({ baselineSnapshot: baseline });
+  assert.equal(resNoOwnership.success, false);
+  assert.ok(resNoOwnership.error.includes('propriedade das alterações'));
+  assert.equal(mutations.length, 0, 'Zero mutações permitidas sem propriedade comprovada!');
+});
+
+test('22. B2: Falha pré-fixtures não executa deleção de fixtures por IDs fixos', async () => {
+  const executedSqls = [];
+  const transport = {
+    executeSql: async (sql) => {
+      executedSqls.push(sql);
+      return { success: true };
+    },
+    executeFile: async (filePath) => {
+      if (filePath.includes('013_member_lifecycle.sql')) {
+        throw new Error('SIMULATED_INSTALL_ERROR: Syntax error or lock conflict');
+      }
+      return { success: true };
+    },
+    captureSnapshot: async () => createSimulatedBaselineSnapshot()
+  };
+
+  const orchestrator = new RehearsalOrchestrator013({ dryRun: false, transport });
+  const planRes = await orchestrator.runRehearsalPlan('all');
+
+  assert.equal(planRes.success, false);
+  assert.ok(planRes.error.includes('SIMULATED_INSTALL_ERROR'));
+  assert.equal(orchestrator.provenOwnership.installed013, false);
+  assert.equal(orchestrator.provenOwnership.fixturesCreated, false);
+
+  // Como falhou antes da instalação e antes de criar fixtures, NÃO pode deletar fixtures nem tentar reverter 013
+  const deletedFixtures = executedSqls.some(sql => sql.includes('01300000-0000-4000-8000-000000000011'));
+  assert.equal(deletedFixtures, false, 'Falha pré-fixtures não deve tentar apagar fixtures fixas!');
+});
+
+test('23. B3: Alteração de permissões (ACLs de schema/tabelas/funções ou policies) é rejeitada mesmo com contagens e dados iguais', () => {
+  const baseline = createSimulatedBaselineSnapshot();
+  const postRev = createSimulatedPostReversalSnapshot();
+
+  // 1. Alteração de ACL de schema
+  const alteredSchemaAcl = JSON.parse(JSON.stringify(postRev));
+  alteredSchemaAcl.catalogue_fingerprints.schema_acls = 'different_schema_acls_md5';
+  const compSchema = compareSnapshots(baseline, alteredSchemaAcl);
+  assert.equal(compSchema.matches, false);
+  assert.ok(compSchema.differences.some(d => d.includes('catalogue_fingerprints.schema_acls divergiu')));
+
+  // 2. Alteração de ACL de tabela
+  const alteredTableAcl = JSON.parse(JSON.stringify(postRev));
+  alteredTableAcl.catalogue_fingerprints.table_acls = 'different_table_acls_md5';
+  const compTable = compareSnapshots(baseline, alteredTableAcl);
+  assert.equal(compTable.matches, false);
+  assert.ok(compTable.differences.some(d => d.includes('catalogue_fingerprints.table_acls divergiu')));
+
+  // 3. Alteração de ACL de função
+  const alteredFuncAcl = JSON.parse(JSON.stringify(postRev));
+  alteredFuncAcl.catalogue_fingerprints.function_acls = 'different_function_acls_md5';
+  const compFunc = compareSnapshots(baseline, alteredFuncAcl);
+  assert.equal(compFunc.matches, false);
+  assert.ok(compFunc.differences.some(d => d.includes('catalogue_fingerprints.function_acls divergiu')));
+
+  // 4. Alteração de RLS policies (USING, WITH CHECK, roles)
+  const alteredRls = JSON.parse(JSON.stringify(postRev));
+  alteredRls.catalogue_fingerprints.rls_policies = 'different_rls_policies_md5';
+  const compRls = compareSnapshots(baseline, alteredRls);
+  assert.equal(compRls.matches, false);
+  assert.ok(compRls.differences.some(d => d.includes('catalogue_fingerprints.rls_policies divergiu')));
+});
+
+test('24. B4: Roteiro de navegador respeita administração única, is_admin e limpeza por manifesto exato', () => {
+  const roteiroPath = path.join(rootDir, 'docs', 'ROTEIRO-NAVEGADOR-LOCAL-013.md');
+  const content = fs.readFileSync(roteiroPath, 'utf8');
+
+  // Não usar a coluna inexistente role em church_access
+  assert.equal(content.includes("role = 'admin'") || content.includes("role='admin'"), false,
+    'ROTEIRO-NAVEGADOR-LOCAL-013.md não deve usar a coluna inexistente role em church_access');
+
+  // Respeito ao índice único de administração única
+  assert.ok(content.includes('church_access_single_active_admin_idx'),
+    'Roteiro deve referenciar e respeitar a trava church_access_single_active_admin_idx');
+  assert.ok(content.includes('is_admin = true') && content.includes('is_admin = false'),
+    'Roteiro deve especificar is_admin booleano para alternância de contexto');
+
+  // Limpeza: audit_entries não tem user_id
+  assert.equal(content.includes('audit_entries where church_id') && content.includes('user_id::text'), false,
+    'audit_entries não possui coluna user_id');
+  assert.ok(content.includes('target_id in'),
+    'Limpeza de audit_entries deve utilizar target_id vinculado aos membros da jornada');
+
+  // Limpeza de command_receipts não presume command_id com prefixo 013b%
+  assert.equal(content.includes("command_id::text like '013b%'"), false,
+    'Limpeza não deve presumir prefixo fixo em command_id gerado pelo navegador');
+  assert.ok(content.includes('result_member_id in'),
+    'Limpeza de command_receipts deve utilizar result_member_id');
+
+  // Deleção de membros por manifesto exato (sem id between)
+  assert.equal(content.toLowerCase().includes('id between'), false,
+    'Deleção de membros no roteiro não deve usar id between genérico');
+  assert.ok(content.includes('013b0000-0000-4000-8000-000000000012'),
+    'Deleção deve conter lista explícita dos 12 membros do manifesto');
+
+  // Distinção expressa entre igreja persistente e igreja efêmera
+  assert.ok(content.includes('Igreja Efêmera') && content.includes('Igreja Persistente'),
+    'Roteiro deve distinguir a igreja persistente da jornada de navegador da igreja efêmera do ensaio SQL');
+});
+

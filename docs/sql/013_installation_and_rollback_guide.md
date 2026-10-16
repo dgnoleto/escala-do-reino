@@ -72,31 +72,64 @@ SELECT json_build_object(
       WHERE n.nspname in ('public', 'app_private')
         AND not tr.tgisinternal
     ),
-    'functions', (
+    'app_private_functions', (
       SELECT md5(coalesce(string_agg(
-        concat_ws('|', n.nspname, p.proname, pg_get_function_identity_arguments(p.oid)),
+        concat_ws('|', p.proname, p.prosecdef, pg_get_functiondef(p.oid)),
+        ';' order by p.proname
+      ), 'none'))
+      FROM pg_catalog.pg_proc p
+      JOIN pg_catalog.pg_namespace n ON n.oid = p.pronamespace
+      WHERE n.nspname = 'app_private'
+    ),
+    'schema_acls', (
+      SELECT md5(coalesce(string_agg(
+        concat_ws('|', n.nspname, coalesce(array_to_string(n.nspacl, ','), 'default')),
+        ';' order by n.nspname
+      ), 'none'))
+      FROM pg_catalog.pg_namespace n
+      WHERE n.nspname in ('public', 'app_private')
+    ),
+    'table_acls', (
+      SELECT md5(coalesce(string_agg(
+        concat_ws('|', n.nspname, c.relname, coalesce(array_to_string(c.relacl, ','), 'default')),
+        ';' order by n.nspname, c.relname
+      ), 'none'))
+      FROM pg_catalog.pg_class c
+      JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+      WHERE n.nspname in ('public', 'app_private')
+        AND c.relkind in ('r', 'v')
+    ),
+    'function_acls', (
+      SELECT md5(coalesce(string_agg(
+        concat_ws('|', n.nspname, p.proname, coalesce(array_to_string(p.proacl, ','), 'default')),
         ';' order by n.nspname, p.proname, p.oid
-      ), 'empty'))
+      ), 'none'))
       FROM pg_catalog.pg_proc p
       JOIN pg_catalog.pg_namespace n ON n.oid = p.pronamespace
       WHERE n.nspname in ('public', 'app_private')
     ),
-    'rls', (
+    'rls_policies', (
       SELECT md5(coalesce(string_agg(
-        concat_ws('|', n.nspname, c.relname, c.relrowsecurity::text, pol.polname, pol.polcmd::text),
+        concat_ws('|',
+          n.nspname,
+          c.relname,
+          c.relrowsecurity,
+          coalesce(pol.polname, 'none'),
+          coalesce(pol.polcmd::text, 'none'),
+          coalesce(pol.polpermissive::text, 'none'),
+          coalesce(pol.polroles::text, 'none'),
+          coalesce(pg_get_expr(pol.polqual, pol.polrelid), 'none'),
+          coalesce(pg_get_expr(pol.polwithcheck, pol.polrelid), 'none')
+        ),
         ';' order by n.nspname, c.relname, coalesce(pol.polname, '')
-      ), 'empty'))
+      ), 'none'))
       FROM pg_catalog.pg_class c
       JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
       LEFT JOIN pg_catalog.pg_policy pol ON pol.polrelid = c.oid
-      WHERE n.nspname in ('public', 'app_private') AND c.relkind = 'r'
+      WHERE n.nspname in ('public', 'app_private')
+        AND c.relkind = 'r'
     ),
-    'has_coordination_table', (
-      SELECT exists(
-        SELECT 1 FROM pg_catalog.pg_tables
-        WHERE schemaname = 'app_private' AND tablename = 'rehearsal_coordination'
-      )
-    )
+    'has_coordination_table', (to_regclass('app_private.rehearsal_coordination') is not null)
   ),
   'row_counts', json_build_object(
     'churches', (SELECT count(*)::int FROM app_private.churches),

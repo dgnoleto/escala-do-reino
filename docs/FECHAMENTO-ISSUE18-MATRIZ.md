@@ -3,7 +3,7 @@
 **Incremento:** 013 / 014 — Ciclo de Vida de Membros (Listagem Administrativa com Filtros, Restauração Elegível, Recibos Idempotentes e Trava Litúrgica P0021)
 **Documento Normativo:** `docs/FECHAMENTO-ISSUE18-MATRIZ.md`
 **Data de Referência da Rodada:** 16/10/2026
-**Branch de Trabalho:** `feat/issue-18-ciclo-vida-membros` | **HEAD:** `52e047dd1d7bacc4a2849051381e3dc311feef62`
+**Branch de Trabalho:** `feat/issue-18-ciclo-vida-membros` | **HEAD:** `e9d45bb64bd8764b9701a0e6ccf9268bfe95e925`
 **Branch Preservada (Issue #12):** `refs/heads/docs/ajuste-visao-e-evolucao` apontando para `1c8dbb0fbc40f056ec46f092b6ab4f009595a3c0`
 
 ---
