@@ -278,26 +278,27 @@ Qualquer divergência acusada pela comparação de snapshots constitui impedimen
 
 ## 7. Execução e Recuperação Automatizada via Runner com Journal Durável (C1, C2, C3)
 
-Para assegurar recuperação comprovável e eliminar a fragilidade de estado volátil em memória entre processos distintos (`baseline`, `install-keep`, `rehearsal`, `rollback`), o executor `tools/rehearsal-runner-013.js` opera sob as seguintes diretrizes normativas:
+Para assegurar recuperação comprovável e eliminar a fragilidade de estado volátil em memória entre processos distintos (`baseline`, `install-keep`, `rehearsal`, `rollback`), o executor `tools/rehearsal-runner-013.js` opera sob as seguintes diretrizes normativas estritas:
 
-### 7.1 Journal Atômico Durável (`--journal`) — C1
-- **Persistência atômica:** O estado operacional é gravado em disco no caminho especificado (padrão `tools/.rehearsal-013-journal.json`) via gravação em arquivo temporário (`.tmp`) seguida de renomeação atômica (`fs.renameSync`).
-- **Conteúdo auditável (sem PII):**
-  - Metadados canônicos: versão do formato (`1.0`), alvo autorizado (`localhost:55332/postgres`), hash SHA-256 do instalador `013_member_lifecycle.sql` e resumo dos arquivos do pacote.
-  - Snapshot completo de baseline pré-instalação (contagens, fingerprints de triggers/RLS/funções/ACLs e hashes de conteúdo das 8 tabelas).
-  - Propriedade comprovada (`provenOwnership`): `baselineCaptured`, `installed013`, `fixturesCreated`, `uncertainCommit`.
-  - Fases concluídas e status operacional.
-- **Validação estrita pré-mutação:** Qualquer processo subsequente que execute `--stage rollback` ou etapas duráveis valida o journal existente. Se o journal estiver ausente, corrompido ou apontar divergência de alvo ou instalador, o runner recusa imediatamente a execução com **zero mutações** no banco.
+### 7.1 Estado Durável Antecipado e Journal Rejeitado com Zero Mutações — C1
+- **Registro de intenção antes da operação mutável externa:**
+  - Antes de disparar o commit de `013_member_lifecycle.sql`, o runner persiste no journal `uncertainCommit: true` e `status: 'installing_013'`. Em caso de interrupção abrupta do processo (queda de energia, kill -9 ou crash), o journal já reflete o risco de commit não reconciliado.
+  - Antes de iniciar o ensaio multi-sessão de concorrência, o runner persiste `concurrencyAttempted: true` e `status: 'concurrency_rehearsal'`.
+- **Recusa estrita de journal incompatível com zero mutações:**
+  - Se o journal apontar container/alvo divergente ou corrompido, a recusa impede qualquer mutação em **todas** as entradas (`rollback()`, `executePlan()`, `finally` e `performRecovery()`).
+  - `cleanupAttempted` permanece `false`, zero chamadas SQL mutáveis são emitidas e o journal rejeitado é preservado intacto em disco para análise forense.
 
-### 7.2 Protocolo Unificado de Recuperação (`performRecovery`) — C2
-- **Sem deleções cegas:** Se `fixturesCreated === false` (por exemplo, falha em `phase_5_verify_014`), a limpeza de fixtures (`fixture_cleanup`) **não é executada**, preservando integridade e evitando toques espúrios no catálogo.
-- **Reversão cirúrgica de catálogo:** Se `installed013 === true` ou `uncertainCommit === true`, executa o script exato de reversão (`catalogue_reversal`), restaurando `touch_updated_at` e dropando as 4 RPCs e a tabela efêmera.
+### 7.2 Reconciliação Cirúrgica por Inspeção de Snapshot — C2
+- **Sem edição manual de journal:** A recuperação em novo processo após queda não exige edição manual de flags.
+- **Inspeção determinística de estado real:** Se `fixturesCreated` for `false` mas a concorrência tiver sido tentada ou houver commit incerto, o runner captura um snapshot de inspeção. Se `residual_fixtures_count > 0` ou `has_coordination_table === true`, a rotina ativa automaticamente `needsFixtureCleanup = true` e limpa as fixtures sintéticas antes da reversão do catálogo.
+- **Caso C2 (014=false pré-fixtures):** Quando a falha ocorre antes da concorrência (como em `verify_014 = false`), a inspeção confirma `residual_fixtures_count == 0` e **não executa** `fixture_cleanup`.
 - **Conferência obrigatória pós-reversão:** A recuperação só é declarada com sucesso (`cleanupSuccess: true`) se o snapshot capturado imediatamente após a reversão for **100% idêntico ao baseline** registrado no journal.
 
-### 7.3 Ciclo de Vida Independente e Concorrência Coordenada — C3
-- **Cancelamento mútuo imediato:** As conexões A e B possuem `AbortController` individuais. Se a Sessão A falhar, a Sessão B é cancelada imediatamente via sinal; se a Sessão B falhar, a Sessão A é cancelada imediatamente.
-- **Encerramento prévio à desmontagem:** O executor aguarda explicitamente o encerramento de **ambas as sessões** via `Promise.allSettled` antes de devolver controle à rotina de limpeza. Nenhuma sessão órfã permanece ativa no backend ou no mapa `activeSessions`.
-- **Tratamento de timeout e sinais:** O runner suporta cancelamento graceful e timeout determinístico com confirmação de término no socket.
+### 7.3 Identificação e Confirmação de Término no PostgreSQL — C3
+- **Identificação inequívoca de conexões:** Ambas as sessões são marcadas com `application_name = 'rehearsal_013_session_a'` e `rehearsal_013_session_b'` tanto via `SET application_name` quanto via variável de ambiente `PGAPPNAME`.
+- **Confirmação no PostgreSQL:** O término do cliente local (`activeSessions.size === 0`) é condição necessária, mas não suficiente. O runner consulta `pg_catalog.pg_stat_activity` filtrando por `application_name` próprio e PIDs registrados em `app_private.rehearsal_coordination`.
+- **Término assistido e re-checagem:** Se sessões próprias ainda estiverem ativas no servidor, invoca `pg_terminate_backend(pid)` estritamente para essas conexões e revalida que a lista de sessões ativas retornou vazia.
+- **Bloqueio de limpeza em caso de dúvida:** Caso o encerramento no PostgreSQL não possa ser confirmado (timeout, erro de rede ou backend órfão persistente), a limpeza é **bloqueada** (`cleanupAttempted = false`), o journal grava `status: 'unconfirmed_session_termination'` e a falha é reportada visivelmente, preservando o estado para investigação.
 
 ### 7.4 Comandos Concretos para Futura Execução Controlada
 

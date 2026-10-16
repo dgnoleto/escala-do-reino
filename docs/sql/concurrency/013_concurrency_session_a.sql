@@ -17,6 +17,7 @@
 -- ============================================================================
 
 \set ON_ERROR_STOP on
+set application_name = 'rehearsal_013_session_a';
 
 -- GUARDA ANTECIPADA: Bloqueio estrito contra execução em piloto, produção ou base remota
 do $guard_target$
@@ -158,6 +159,11 @@ insert into app_private.church_access (
   ('01300000-0000-4000-8000-00000000ac33', '01300000-0000-4000-8000-0000000000c1', '01300000-0000-4000-8000-0000000000b3', '01300000-0000-4000-8000-0000000000d3', false, 'revoked', null, '01300000-0000-4000-8000-0000000000a1', statement_timestamp(), '01300000-0000-4000-8000-0000000000a1', statement_timestamp(), statement_timestamp(), statement_timestamp());
 
 commit;
+
+-- Registra confirmação das fixtures na tabela de coordenação para comprovação de propriedade
+update app_private.rehearsal_coordination
+set step_status = 'fixtures_committed', last_step = 'fixtures_ready'
+where session_role = 'session_a_013';
 
 -- Handshake Inicial: Conexão A aguarda Conexão B registrar seu PID em rehearsal_coordination
 do $wait_session_b_init$

@@ -14,6 +14,7 @@
 -- ============================================================================
 
 \set ON_ERROR_STOP on
+set application_name = 'rehearsal_013_session_b';
 
 -- GUARDA ANTECIPADA: Bloqueio estrito contra execução em piloto, produção ou base remota
 do $guard_target$

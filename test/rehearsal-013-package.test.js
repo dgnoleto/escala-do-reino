@@ -4,6 +4,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
 import { fileURLToPath } from 'node:url';
+import { spawnSync } from 'node:child_process';
 
 import {
   verifyCanonicalFiles,
@@ -673,53 +674,93 @@ test('25. C1: Retomada em nova instância/processo via journal atômico durável
     assert.equal(updatedJournal.status, 'rolled_back');
     assert.equal(updatedJournal.provenOwnership.installed013, false);
 
-    // Processo 3: Instância com journal inexistente ou incompatível deve causar ZERO mutações
+    // Processo 3: Instância com journal incompatível (container divergente) e flags de propriedade preenchidas
+    // Deve resultar em ZERO mutações em todas as rotas (rollback, executePlan, performRecovery), cleanupAttempted=false
+    // e preservação do arquivo de journal no disco para investigação forense.
     const executedSqls3 = [];
     const transport3 = {
       executeSql: async (sql) => { executedSqls3.push(sql); return { success: true }; },
       captureSnapshot: async () => postReversalSnap
     };
 
-    const badJournalPath = path.join(tempDir, 'non-existent-journal.json');
+    const invalidJournal = createInitialJournal();
+    invalidJournal.target.container = 'different-container';
+    invalidJournal.baselineSnapshot = baseline;
+    invalidJournal.provenOwnership.baselineCaptured = true;
+    invalidJournal.provenOwnership.installed013 = true;
+    invalidJournal.provenOwnership.fixturesCreated = true;
+    invalidJournal.provenOwnership.uncertainCommit = true;
+
+    const badJournalPath = path.join(tempDir, 'incompatible-journal.json');
+    writeJournal(badJournalPath, invalidJournal);
+
     const orchestrator3 = new RehearsalOrchestrator013({
       dryRun: false,
       transport: transport3,
       journalPath: badJournalPath
     });
 
+    // 1. rollback()
     const badRes = await orchestrator3.rollback();
     assert.equal(badRes.success, false);
-    assert.ok(badRes.error.includes('zero mutações') || badRes.error.includes('Zero mutações'));
-    assert.equal(executedSqls3.length, 0, 'Journal ausente DEVE produzir ZERO mutações!');
+    assert.equal(badRes.cleanupAttempted, false, 'cleanupAttempted deve ser false em journal rejeitado');
+    assert.ok(badRes.error.includes('inválido ou incompatível') || badRes.error.includes('Zero mutações'));
+    assert.equal(executedSqls3.length, 0, 'rollback() com journal incompatível DEVE produzir ZERO mutações!');
+
+    // 2. executePlan('all')
+    const badPlanRes = await orchestrator3.executePlan('all');
+    assert.equal(badPlanRes.success, false);
+    assert.equal(badPlanRes.cleanupAttempted, false, 'cleanupAttempted no finally deve ser false em journal rejeitado');
+    assert.equal(executedSqls3.length, 0, 'executePlan() com journal incompatível DEVE produzir ZERO mutações no try e finally!');
+
+    // 3. performRecovery() direto
+    const badRecRes = await orchestrator3.performRecovery();
+    assert.equal(badRecRes.success, false);
+    assert.equal(badRecRes.attempted, false);
+    assert.equal(executedSqls3.length, 0, 'performRecovery() direto com journal incompatível DEVE produzir ZERO mutações!');
+
+    // 4. Preservação do journal no disco intacto para investigação
+    const diskJournal = readJournal(badJournalPath);
+    assert.equal(diskJournal.target.container, 'different-container');
+    assert.equal(diskJournal.provenOwnership.installed013, true);
   } finally {
     fs.rmSync(tempDir, { recursive: true, force: true });
   }
 });
 
-test('26. C1: Falha após seed de fixtures persiste propriedade no journal e recupera em novo processo', async () => {
+test('26. C1: Falha após seed de fixtures sem edição manual do journal reconcilia resíduos por inspeção e recupera', async () => {
   const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'rehearsal-seed-fail-'));
   const journalPath = path.join(tempDir, '.rehearsal-013-journal.json');
 
   try {
     const baseline = createSimulatedBaselineSnapshot();
+    let fixturesSeeded = false;
     const executedSqls1 = [];
 
-    // Instância 1: Simula falha logo após criar fixtures
+    // Instância 1: Simula falha durante concorrência APÓS fixtures terem sido commitadas na sessão A
     const transport1 = {
       executeSql: async (sql) => {
         executedSqls1.push(sql);
+        if (sql === EXACT_FIXTURE_CLEANUP_013_SQL) fixturesSeeded = false;
         return { success: true };
       },
       executeFile: async () => ({ success: true }),
-      captureSnapshot: async () => baseline,
+      captureSnapshot: async () => {
+        const snap = structuredClone(baseline);
+        if (fixturesSeeded) {
+          snap.row_counts.members += 1;
+          snap.residual_fixtures_count = 1;
+        }
+        return snap;
+      },
       executeVerify014: async () => {
         const rows = {};
         VERIFY_014_INDICATORS.forEach(k => { rows[k] = true; });
         return [rows];
       },
       executeConcurrency: async () => {
-        // Falha injetada simulando queda/erro durante ensaio
-        throw new Error('SIMULATED_POWER_LOSS_OR_CRASH: Concurrency run interrupted');
+        fixturesSeeded = true; // Fixtures commitadas
+        throw new Error('SIMULATED_POWER_LOSS_OR_CRASH: Concurrency run interrupted after fixtures committed');
       }
     };
 
@@ -733,46 +774,65 @@ test('26. C1: Falha após seed de fixtures persiste propriedade no journal e rec
     assert.equal(runRes.success, false);
     assert.ok(runRes.error.includes('SIMULATED_POWER_LOSS_OR_CRASH'));
 
-    // Grava no journal o estado com fixtures comprovadas como se o processo tivesse sido interrompido
-    writeJournal(journalPath, {
-      ...readJournal(journalPath),
-      provenOwnership: {
-        baselineCaptured: true,
-        installed013: true,
-        fixturesCreated: true,
-        uncertainCommit: false
-      },
-      status: 'failed'
-    });
+    // Recuperação cirúrgica no finally da própria execução sem edição manual:
+    assert.equal(runRes.cleanupAttempted, true);
+    assert.equal(runRes.cleanupSuccess, true);
+    assert.ok(executedSqls1.includes(EXACT_FIXTURE_CLEANUP_013_SQL), 'Deve executar limpeza de fixtures');
+    assert.ok(executedSqls1.includes(EXACT_REVERSAL_013_SQL), 'Deve executar reversão de 013');
+    assert.equal(fixturesSeeded, false, 'Fixtures não devem permanecer');
 
-    // Instância 2 (novo processo de recuperação após reinício):
+    // Cenário de retomada em NOVO PROCESSO sem edição manual do journal:
+    // Simula nova instância executando performRecovery a partir de journal de concorrência com resíduos no banco
+    const tempDir2 = fs.mkdtempSync(path.join(os.tmpdir(), 'rehearsal-new-proc-'));
+    const journalPath2 = path.join(tempDir2, '.rehearsal-013-journal.json');
+    let fixturesSeeded2 = true;
     const executedSqls2 = [];
-    const postReversalSnap = createSimulatedPostReversalSnapshot();
+
     const transport2 = {
-      executeSql: async (sql) => { executedSqls2.push(sql); return { success: true }; },
-      captureSnapshot: async () => postReversalSnap
+      executeSql: async (sql) => {
+        executedSqls2.push(sql);
+        if (sql === EXACT_FIXTURE_CLEANUP_013_SQL) fixturesSeeded2 = false;
+        return { success: true };
+      },
+      captureSnapshot: async () => {
+        const snap = structuredClone(baseline);
+        if (fixturesSeeded2) {
+          snap.row_counts.members += 1;
+          snap.residual_fixtures_count = 1;
+        }
+        return snap;
+      }
     };
+
+    // Journal gravado pelo orquestrador antes da queda (com concurrencyAttempted registrado duravelmente)
+    const initialInterruptedJournal = createInitialJournal();
+    initialInterruptedJournal.baselineSnapshot = baseline;
+    initialInterruptedJournal.provenOwnership.baselineCaptured = true;
+    initialInterruptedJournal.provenOwnership.installed013 = true;
+    initialInterruptedJournal.provenOwnership.concurrencyAttempted = true;
+    initialInterruptedJournal.status = 'concurrency_rehearsal';
+    writeJournal(journalPath2, initialInterruptedJournal);
 
     const orchestrator2 = new RehearsalOrchestrator013({
       dryRun: false,
       transport: transport2,
-      journalPath
+      journalPath: journalPath2
     });
 
-    assert.equal(orchestrator2.provenOwnership.fixturesCreated, true);
-    assert.equal(orchestrator2.provenOwnership.installed013, true);
-
+    // Reconciliação automática por inspeção do snapshot — sem edição manual do journal:
     const recoveryRes = await orchestrator2.performRecovery();
     assert.equal(recoveryRes.success, true);
-    assert.equal(recoveryRes.fixtureCleanupExecuted, true, 'Deve executar limpeza de fixtures');
-    assert.equal(recoveryRes.reversalExecuted, true, 'Deve executar reversão de 013');
-    assert.ok(executedSqls2.some(s => s === EXACT_FIXTURE_CLEANUP_013_SQL));
-    assert.ok(executedSqls2.some(s => s === EXACT_REVERSAL_013_SQL));
+    assert.equal(recoveryRes.fixtureCleanupExecuted, true, 'Deve reconciliar por inspeção e limpar fixtures');
+    assert.equal(recoveryRes.reversalExecuted, true, 'Deve reverter 013');
+    assert.ok(executedSqls2.includes(EXACT_FIXTURE_CLEANUP_013_SQL));
+    assert.ok(executedSqls2.includes(EXACT_REVERSAL_013_SQL));
+    assert.equal(fixturesSeeded2, false);
 
-    const journalAfter = readJournal(journalPath);
-    assert.equal(journalAfter.status, 'rolled_back');
-    assert.equal(journalAfter.provenOwnership.fixturesCreated, false);
-    assert.equal(journalAfter.provenOwnership.installed013, false);
+    const journalAfter2 = readJournal(journalPath2);
+    assert.equal(journalAfter2.status, 'rolled_back');
+    assert.equal(journalAfter2.provenOwnership.fixturesCreated, false);
+    assert.equal(journalAfter2.provenOwnership.installed013, false);
+    fs.rmSync(tempDir2, { recursive: true, force: true });
   } finally {
     fs.rmSync(tempDir, { recursive: true, force: true });
   }
@@ -1001,5 +1061,159 @@ test('28. C3: Concorrência com cancelamento mútuo e confirmação de encerrame
     assert.equal(transport.activeSessions.size, 0, 'Nenhuma sessão ativa deve restar após timeout');
   }
 });
+
+test('29. C1: Interrupção abrupta de subprocesso em fronteira externa persiste intenção e novo processo recupera sem edição manual', async () => {
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'rehearsal-crash-child-'));
+  const journalPath = path.join(tempDir, 'crash-journal.json');
+  const runnerPathUrl = `file:///${path.resolve(rootDir, 'tools/rehearsal-runner-013.js').replace(/\\/g, '/')}`;
+
+  const childScript = `
+    import * as runner from ${JSON.stringify(runnerPathUrl)};
+    const baseline = runner.createSimulatedBaselineSnapshot();
+    const transport = {
+      executeFile: async p => {
+        if (p.endsWith('013_member_lifecycle.sql')) {
+          process.exit(77);
+        }
+        return { success: true };
+      },
+      captureSnapshot: async () => baseline,
+      executeSql: async () => { throw new Error('Inesperado'); }
+    };
+    await new runner.RehearsalOrchestrator013({
+      dryRun: false,
+      transport,
+      journalPath: ${JSON.stringify(journalPath)}
+    }).executePlan('install-keep');
+  `;
+
+  try {
+    const child = spawnSync(process.execPath, ['--input-type=module', '-e', childScript], { encoding: 'utf8' });
+    assert.equal(child.status, 77, `Filho deve encerrar abruptamente com código 77. stderr: ${child.stderr}`);
+
+    // Verifica que o journal durável gravou a intenção antes da queda abrupta:
+    const persisted = readJournal(journalPath);
+    assert.ok(persisted, 'Journal deve ter sido gravado atomicamente');
+    assert.equal(persisted.provenOwnership.uncertainCommit, true, 'uncertainCommit deve estar gravado no journal antes da queda');
+    assert.equal(persisted.provenOwnership.installed013, false);
+    assert.equal(persisted.status, 'installing_013');
+
+    // Novo processo / instância limpa lê o journal exatamente como deixado em disco (sem edição manual!):
+    const baseline = createSimulatedBaselineSnapshot();
+    const recoveryCalls = [];
+    const fresh = new RehearsalOrchestrator013({
+      dryRun: false,
+      journalPath,
+      transport: {
+        executeSql: async sql => {
+          if (sql === EXACT_REVERSAL_013_SQL) recoveryCalls.push('catalogue_reversal');
+          else if (sql === EXACT_FIXTURE_CLEANUP_013_SQL) recoveryCalls.push('fixture_cleanup');
+          return { success: true };
+        },
+        captureSnapshot: async () => baseline
+      }
+    });
+
+    const recResult = await fresh.rollback();
+    assert.equal(recResult.success, true, 'Rollback em nova instância deve ter sucesso');
+    assert.deepEqual(recoveryCalls, ['catalogue_reversal'], 'Deve reverter 013 e não tentar apagar fixtures inexistentes');
+
+    const journalAfterRecovery = readJournal(journalPath);
+    assert.equal(journalAfterRecovery.status, 'rolled_back');
+    assert.equal(journalAfterRecovery.provenOwnership.uncertainCommit, false);
+    assert.equal(journalAfterRecovery.provenOwnership.installed013, false);
+  } finally {
+    fs.rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test('30. C3: Término não confirmado de sessões no PostgreSQL bloqueia limpeza e preserva estado para investigação', async () => {
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'rehearsal-unconfirmed-term-'));
+  const journalPath = path.join(tempDir, 'unconfirmed-journal.json');
+  const baseline = createSimulatedBaselineSnapshot();
+  const executedSqls = [];
+
+  try {
+    const transport = {
+      executeFile: async () => ({ success: true }),
+      executeVerify014: async () => {
+        const rows = {};
+        VERIFY_014_INDICATORS.forEach(k => { rows[k] = true; });
+        return [rows];
+      },
+      executeConcurrency: async () => {
+        throw new Error('SIMULATED_FAILURE_MID_RUN');
+      },
+      executeSql: async (sql) => {
+        executedSqls.push(sql);
+        return { success: true };
+      },
+      captureSnapshot: async () => baseline,
+      close: async () => {
+        // Simula cliente local encerrado mas verificação no PostgreSQL não pôde confirmar término do backend
+        return {
+          confirmed: false,
+          error: 'Sessões backend ainda ativas no PostgreSQL: PID 9999 (application_name: rehearsal_013_session_a)'
+        };
+      }
+    };
+
+    const orchestrator = new RehearsalOrchestrator013({
+      dryRun: false,
+      transport,
+      journalPath
+    });
+
+    const report = await orchestrator.executePlan('all');
+    assert.equal(report.success, false);
+    assert.equal(report.cleanupAttempted, false, 'cleanupAttempted DEVE ser false quando encerramento de sessões não foi confirmado!');
+    assert.equal(report.cleanupSuccess, false);
+    assert.ok(report.cleanupError.includes('Limpeza bloqueada: Sessões backend ainda ativas no PostgreSQL'));
+    assert.ok(report.error.includes('Sessões backend ainda ativas no PostgreSQL'));
+
+    // Nenhuma mutação de limpeza ou reversão pode ter sido enviada:
+    assert.equal(executedSqls.length, 0, 'Zero mutações de limpeza permitidas quando encerramento do backend é incerto!');
+
+    // Journal deve registrar estado não confirmado e preservar ownership para investigação forense:
+    const persisted = readJournal(journalPath);
+    assert.equal(persisted.status, 'unconfirmed_session_termination');
+    assert.ok(persisted.error.includes('Sessões backend ainda ativas'));
+    assert.equal(persisted.provenOwnership.installed013, true, 'Propriedade instalada deve ser preservada intacta');
+  } finally {
+    fs.rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test('31. C3: PsqlCommandTransport executa comando de verificação e término no servidor via pg_stat_activity', async () => {
+  const transport = new PsqlCommandTransport({ timeoutMs: 500 });
+  const processCalls = [];
+
+  transport._runProcess = async (args = [], inputSql = '', options = {}) => {
+    processCalls.push({ args, inputSql });
+    // Primeira chamada: checkSql -> simula encontrar uma sessão ativa no servidor
+    if (processCalls.length === 1) {
+      return { stdout: '12345|rehearsal_013_session_a', stderr: '', code: 0 };
+    }
+    // Segunda chamada: termSql -> simula sucesso no terminate_backend
+    if (processCalls.length === 2) {
+      return { stdout: 't', stderr: '', code: 0 };
+    }
+    // Terceira chamada: recheck -> lista vazia (todas encerradas)
+    if (processCalls.length === 3) {
+      return { stdout: '', stderr: '', code: 0 };
+    }
+    return { stdout: '', stderr: '', code: 0 };
+  };
+
+  const res = await transport.confirmBackendSessionsClosed();
+  assert.equal(res.confirmed, true);
+  assert.equal(processCalls.length, 3, 'Deve ter feito check, terminate e recheck');
+
+  // Verifica que os comandos contêm pg_stat_activity e pg_terminate_backend
+  assert.ok(processCalls[0].args.some(a => String(a).includes('pg_stat_activity')));
+  assert.ok(processCalls[1].args.some(a => String(a).includes('pg_terminate_backend')));
+  assert.ok(processCalls[2].args.some(a => String(a).includes('pg_stat_activity')));
+});
+
 
 

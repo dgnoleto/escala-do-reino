@@ -1203,9 +1203,11 @@ export class PsqlCommandTransport {
       let isAborted = false;
       let isClosed = false;
 
+      const envArgs = sessionId ? ['-e', `PGAPPNAME=rehearsal_013_${sessionId}`] : [];
       const cmdArgs = [
         'exec',
         '-i',
+        ...envArgs,
         this.targetContainer,
         'psql',
         '-U', this.user,
@@ -1543,6 +1545,60 @@ export class PsqlCommandTransport {
     };
   }
 
+  async confirmBackendSessionsClosed() {
+    const checkSql = `
+SELECT pid, application_name
+FROM pg_catalog.pg_stat_activity
+WHERE datname = '${this.database}'
+  AND (
+    application_name IN ('rehearsal_013_session_a', 'rehearsal_013_session_b')
+    OR (
+      to_regclass('app_private.rehearsal_coordination') IS NOT NULL
+      AND pid IN (SELECT pid FROM app_private.rehearsal_coordination WHERE session_role IN ('session_a_013', 'session_b_013'))
+    )
+  )
+  AND pid <> pg_backend_pid();
+`.trim();
+
+    const termSql = `
+SELECT pg_catalog.pg_terminate_backend(pid)
+FROM pg_catalog.pg_stat_activity
+WHERE datname = '${this.database}'
+  AND (
+    application_name IN ('rehearsal_013_session_a', 'rehearsal_013_session_b')
+    OR (
+      to_regclass('app_private.rehearsal_coordination') IS NOT NULL
+      AND pid IN (SELECT pid FROM app_private.rehearsal_coordination WHERE session_role IN ('session_a_013', 'session_b_013'))
+    )
+  )
+  AND pid <> pg_backend_pid();
+`.trim();
+
+    try {
+      const res = await this._runProcess(['-t', '-A', '-c', checkSql], '', { timeoutMs: Math.min(this.timeoutMs, 1000) });
+      const lines = (res?.stdout || '').trim().split('\n').map(l => l.trim()).filter(Boolean);
+      if (lines.length > 0) {
+        // Sessões ativas encontradas no backend! Terminar especificamente essas sessões:
+        await this._runProcess(['-t', '-A', '-c', termSql], '', { timeoutMs: Math.min(this.timeoutMs, 1000) });
+        // Re-verificar se foram encerradas
+        const recheck = await this._runProcess(['-t', '-A', '-c', checkSql], '', { timeoutMs: Math.min(this.timeoutMs, 1000) });
+        const remaining = (recheck?.stdout || '').trim().split('\n').map(l => l.trim()).filter(Boolean);
+        if (remaining.length > 0) {
+          return {
+            confirmed: false,
+            error: `Sessões backend no PostgreSQL ainda ativas após tentativa de término: ${remaining.join(', ')}`
+          };
+        }
+      }
+      return { confirmed: true };
+    } catch (err) {
+      return {
+        confirmed: false,
+        error: `Falha ao verificar término de sessões no PostgreSQL: ${err.message}`
+      };
+    }
+  }
+
   async close() {
     for (const [id, session] of this.activeSessions.entries()) {
       try {
@@ -1555,7 +1611,13 @@ export class PsqlCommandTransport {
     while (this.activeSessions.size > 0 && Date.now() - start < 2000) {
       await new Promise(r => setTimeout(r, 20));
     }
-    this.activeSessions.clear();
+    if (this.activeSessions.size > 0) {
+      return {
+        confirmed: false,
+        error: `Processos clientes locais não encerraram a tempo (${this.activeSessions.size} pendentes).`
+      };
+    }
+    return await this.confirmBackendSessionsClosed();
   }
 }
 
@@ -1572,6 +1634,9 @@ export class RehearsalOrchestrator013 {
     this.coordinator = new ConcurrencyCoordinator();
     this.journalPath = journalPath;
 
+    this.isJournalRejected = false;
+    this.journalRejectionReason = null;
+
     if (journal) {
       this.journal = journal;
     } else if (this.journalPath && fs.existsSync(this.journalPath)) {
@@ -1580,19 +1645,46 @@ export class RehearsalOrchestrator013 {
       this.journal = null;
     }
 
-    this.persistedBaselineSnapshot = this.journal?.baselineSnapshot || null;
-    this.provenOwnership = this.journal?.provenOwnership || {
-      baselineCaptured: false,
-      installed013: false,
-      fixturesCreated: false,
-      uncertainCommit: false
-    };
+    if (this.journal) {
+      const jVal = validateJournal(this.journal);
+      if (!jVal.valid) {
+        this.isJournalRejected = true;
+        this.journalRejectionReason = `Journal existente inválido ou incompatível: ${jVal.errors.join('; ')}. Zero mutações executadas.`;
+        this.persistedBaselineSnapshot = null;
+        this.provenOwnership = {
+          baselineCaptured: false,
+          installed013: false,
+          fixturesCreated: false,
+          uncertainCommit: false,
+          concurrencyAttempted: false
+        };
+      } else {
+        this.persistedBaselineSnapshot = this.journal.baselineSnapshot || null;
+        this.provenOwnership = {
+          baselineCaptured: false,
+          installed013: false,
+          fixturesCreated: false,
+          uncertainCommit: false,
+          concurrencyAttempted: false,
+          ...(this.journal.provenOwnership || {})
+        };
+      }
+    } else {
+      this.persistedBaselineSnapshot = null;
+      this.provenOwnership = {
+        baselineCaptured: false,
+        installed013: false,
+        fixturesCreated: false,
+        uncertainCommit: false,
+        concurrencyAttempted: false
+      };
+    }
   }
 
   _saveJournal(updates = {}) {
-    if (!this.journalPath) return;
+    if (!this.journalPath || this.isJournalRejected) return;
     if (!this.journal) {
-      this.journal = createInitialJournal();
+      this.journal = createInitialJournal({ journalPath: this.journalPath });
     }
     this.journal = {
       ...this.journal,
@@ -1606,6 +1698,16 @@ export class RehearsalOrchestrator013 {
   }
 
   async performRecovery(options = {}) {
+    if (this.isJournalRejected) {
+      return {
+        attempted: false,
+        success: false,
+        error: `Recuperação cancelada: journal rejeitado ou incompatível (${this.journalRejectionReason}). Zero mutações executadas.`,
+        fixtureCleanupExecuted: false,
+        reversalExecuted: false
+      };
+    }
+
     const ownership = options.provenOwnership || this.provenOwnership;
     const baselineSnapshot = options.baselineSnapshot || this.persistedBaselineSnapshot || this.journal?.baselineSnapshot;
 
@@ -1657,7 +1759,25 @@ export class RehearsalOrchestrator013 {
       }
     }
 
-    const needsFixtureCleanup = Boolean(ownership.fixturesCreated);
+    // Reconciliação por inspeção antes da limpeza (C1 / C2):
+    // Se fixturesCreated é falso, mas a concorrência foi tentada ou há commit incerto/instalado,
+    // inspeciona o snapshot para verificar se fixtures foram criadas nesta execução.
+    let needsFixtureCleanup = Boolean(ownership.fixturesCreated);
+    if (!needsFixtureCleanup && (ownership.concurrencyAttempted || ownership.uncertainCommit || ownership.installed013)) {
+      if (typeof this.transport.captureSnapshot === 'function') {
+        try {
+          const preInspection = await this.transport.captureSnapshot();
+          const baseCount = baselineSnapshot?.residual_fixtures_count || 0;
+          const currentCount = preInspection?.residual_fixtures_count || 0;
+          const hasCoordTable = Boolean(preInspection?.catalogue_fingerprints?.has_coordination_table);
+          if (currentCount > baseCount || hasCoordTable) {
+            needsFixtureCleanup = true;
+            ownership.fixturesCreated = true;
+          }
+        } catch (_) {}
+      }
+    }
+
     const needsReversal = Boolean(ownership.installed013 || ownership.uncertainCommit);
 
     if (!needsFixtureCleanup && !needsReversal) {
@@ -1743,6 +1863,19 @@ export class RehearsalOrchestrator013 {
   }
 
   async rollback(options = {}) {
+    if (this.isJournalRejected) {
+      return {
+        mode: this.isDryRun ? 'simulated' : 'physical',
+        stage: 'rollback',
+        phasesExecuted: [],
+        success: false,
+        error: this.journalRejectionReason,
+        cleanupAttempted: false,
+        cleanupSuccess: false,
+        cleanupError: null,
+        snapshots: {}
+      };
+    }
     return await this.executePlan('rollback', options);
   }
 
@@ -1773,6 +1906,13 @@ export class RehearsalOrchestrator013 {
 
     if (!VALID_STAGES.includes(stage)) {
       report.error = `Etapa inválida solicitada: '${stage}'. Etapas válidas: ${VALID_STAGES.join(', ')}`;
+      return report;
+    }
+
+    if (this.isJournalRejected) {
+      report.error = `Execução bloqueada por journal inválido ou incompatível: ${this.journalRejectionReason}. Zero mutações executadas.`;
+      report.success = false;
+      report.cleanupAttempted = false;
       return report;
     }
 
@@ -1898,12 +2038,21 @@ export class RehearsalOrchestrator013 {
 
       // [Fase 4] Instalação 013 com COMMIT
       if (!this.isDryRun) {
+        // C1: Registrar intenção durável antes da operação mutável externa.
+        // Em caso de interrupção abrupta do processo durante o commit, o estado de incerteza já estará gravado no journal.
+        this.provenOwnership.uncertainCommit = true;
+        this._saveJournal({
+          status: 'installing_013',
+          provenOwnership: this.provenOwnership
+        });
+
         try {
           await this.transport.executeFile(path.join(rootDir, 'docs', 'sql', '013_member_lifecycle.sql'));
           report.phasesExecuted.push('phase_4_install_013');
           this.provenOwnership.installed013 = true;
           this.provenOwnership.uncertainCommit = false;
           this._saveJournal({
+            status: 'installed_013',
             phasesCompleted: [...report.phasesExecuted],
             provenOwnership: this.provenOwnership
           });
@@ -1970,6 +2119,12 @@ export class RehearsalOrchestrator013 {
         this.provenOwnership.fixturesCreated = true;
         this._saveJournal({ provenOwnership: this.provenOwnership });
       } else if (typeof this.transport.executeConcurrency === 'function') {
+        this.provenOwnership.concurrencyAttempted = true;
+        this._saveJournal({
+          status: 'concurrency_rehearsal',
+          provenOwnership: this.provenOwnership
+        });
+
         const sessionAPath = path.join(rootDir, 'docs', 'sql', 'concurrency', '013_concurrency_session_a.sql');
         const sessionBPath = path.join(rootDir, 'docs', 'sql', 'concurrency', '013_concurrency_session_b.sql');
         const concRes = await this.transport.executeConcurrency({ sessionAPath, sessionBPath });
@@ -2032,15 +2187,47 @@ export class RehearsalOrchestrator013 {
       report.error = `Exceção durante a execução do plano: ${err.message}`;
       return report;
     } finally {
+      if (this.isJournalRejected) {
+        report.cleanupAttempted = false;
+        return report;
+      }
+
       // C3: Confirmar encerramento de ambas as sessões próprias antes de iniciar desmontagem
+      let sessionsConfirmed = true;
+      let sessionCloseError = null;
       if (this.transport && typeof this.transport.close === 'function') {
         try {
-          await this.transport.close();
-        } catch (_) {}
+          const closeRes = await this.transport.close();
+          if (closeRes && closeRes.confirmed === false) {
+            sessionsConfirmed = false;
+            sessionCloseError = closeRes.error || 'Encerramento de sessões no servidor não pôde ser confirmado.';
+          }
+        } catch (closeErr) {
+          sessionsConfirmed = false;
+          sessionCloseError = closeErr.message;
+        }
+      }
+
+      if (!sessionsConfirmed) {
+        // Bloquear limpeza se encerramento das sessões no backend não foi confirmado
+        report.cleanupAttempted = false;
+        report.cleanupSuccess = false;
+        report.cleanupError = `Limpeza bloqueada: ${sessionCloseError}`;
+        if (!report.error) {
+          report.error = sessionCloseError;
+        } else if (!report.error.includes(sessionCloseError)) {
+          report.error += ` | ${sessionCloseError}`;
+        }
+        this._saveJournal({
+          status: 'unconfirmed_session_termination',
+          error: report.cleanupError,
+          provenOwnership: this.provenOwnership
+        });
+        return report;
       }
 
       // C2: Recuperação cirúrgica unificada baseada em PROPRIEDADE REAL comprovada
-      if (!report.success && (this.provenOwnership.installed013 || this.provenOwnership.fixturesCreated || this.provenOwnership.uncertainCommit)) {
+      if (!report.success && (this.provenOwnership.installed013 || this.provenOwnership.fixturesCreated || this.provenOwnership.uncertainCommit || this.provenOwnership.concurrencyAttempted)) {
         report.cleanupAttempted = true;
         const rec = await this.performRecovery({
           baselineSnapshot: report.snapshots.baseline || this.persistedBaselineSnapshot || this.journal?.baselineSnapshot
