@@ -2,7 +2,14 @@
 
 **Incremento:** Ciclo de Vida de Membros (Listagem Administrativa com Filtros, Restauração Elegível, Recibo Idempotente e Trava Litúrgica P0021)  
 **Documento Normativo de Planejamento:** `docs/sql/013_concurrency_rehearsal_guide.md`  
-**Referência Metodológica:** `docs/sql/011_concurrency_rehearsal_guide.md` e `docs/CADASTRO-MEMBROS.md`
+**Referência Metodológica:** `docs/sql/011_concurrency_rehearsal_guide.md` e `docs/CADASTRO-MEMBROS.md`  
+**Scripts e Guias Vinculados:**  
+- Conexão A (Terminal 1 / Bloqueador): [`docs/sql/concurrency/013_concurrency_session_a.sql`](concurrency/013_concurrency_session_a.sql)  
+- Conexão B (Terminal 2 / Concorrente): [`docs/sql/concurrency/013_concurrency_session_b.sql`](concurrency/013_concurrency_session_b.sql)  
+- Guia de Instalação e Reversão Exata: [`docs/sql/013_installation_and_rollback_guide.md`](013_installation_and_rollback_guide.md)  
+- Executor e Validador Automatizado: [`tools/rehearsal-runner-013.js`](../../tools/rehearsal-runner-013.js)  
+- Roteiro de Navegador com Backend Local: [`docs/ROTEIRO-NAVEGADOR-LOCAL-013.md`](../ROTEIRO-NAVEGADOR-LOCAL-013.md)  
+- Matriz dos Seis Pontos e Aceite: [`docs/FECHAMENTO-ISSUE18-MATRIZ.md`](../FECHAMENTO-ISSUE18-MATRIZ.md)  
 
 ---
 

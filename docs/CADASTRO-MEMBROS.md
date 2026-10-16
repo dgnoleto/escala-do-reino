@@ -161,4 +161,8 @@ Conforme informado pelo responsável pelo projeto, a aplicação dos scripts em 
 ### 5.3 Testes Automatizados Locais de Cliente
 
 - Suíte `test/member-lifecycle-cycle.test.js` cobrindo classificação de erros, isolamento de comandos, ciclo de despacho, reconciliação estrita, validação de retornos por operação, tolerância a falhas no storage, integridade pós-await com troca de igreja e testes reais de componente de `MembersPage` com `react-test-renderer`.
-- Planejamento do laboratório de concorrência com duas sessões detalhado em `docs/sql/013_concurrency_rehearsal_guide.md` (não executado).
+- Planejamento e scripts de concorrência real com duas sessões detalhados em `docs/sql/013_concurrency_rehearsal_guide.md`, `docs/sql/concurrency/013_concurrency_session_a.sql` e `docs/sql/concurrency/013_concurrency_session_b.sql`.
+- Guia normativo de instalação, verificação 014 e reversão exata: `docs/sql/013_installation_and_rollback_guide.md`.
+- Executor e validador automatizado: `tools/rehearsal-runner-013.js`.
+- Roteiro de ensaio em navegador real com backend local: `docs/ROTEIRO-NAVEGADOR-LOCAL-013.md`.
+- Matriz de evidências, pendências e critérios de aceite dos seis pontos da issue #18: `docs/FECHAMENTO-ISSUE18-MATRIZ.md`.
