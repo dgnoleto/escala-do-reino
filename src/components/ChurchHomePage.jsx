@@ -2,8 +2,9 @@ import React, { useState, useEffect } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { supabase } from '../lib/supabaseClient';
 import MembersPage from './MembersPage';
+import TeamsPage from './TeamsPage';
 import CreateChurchModal from './CreateChurchModal';
-import { Church, PlusCircle, ShieldAlert, Loader2, AlertCircle, Mail, RefreshCw, Clock } from 'lucide-react';
+import { Church, PlusCircle, ShieldAlert, Loader2, AlertCircle, Mail, RefreshCw, Clock, Users } from 'lucide-react';
 import { checkChurchCreationEligibility, loadPendingChurchCommand } from '../utils/churchCommandService';
 import { loadAccessRequestMarker, removeAccessRequestMarker } from '../utils/invitationCommandService';
 
@@ -107,6 +108,11 @@ export default function ChurchHomePage() {
   // Navegação para a tela de membros do administrador
   if (currentView === 'members' && isAdmin) {
     return <MembersPage onBack={() => setCurrentView('home')} />;
+  }
+
+  // Navegação para a tela de ministérios e equipes (Admin ou Membro)
+  if (currentView === 'teams') {
+    return <TeamsPage onBack={() => setCurrentView('home')} />;
   }
 
   return (
@@ -416,6 +422,32 @@ export default function ChurchHomePage() {
             </button>
           </div>
         )}
+
+        {/* Bloco de Gestão de Ministérios e Equipes */}
+        <div className="church-home-admin-section" style={{ marginTop: '12px' }}>
+          <div className="church-home-admin-box">
+            <div className="church-home-admin-icon" aria-hidden="true">
+              <Users size={20} />
+            </div>
+            <div className="church-home-admin-info">
+              <span className="church-home-admin-title">Ministérios &amp; Equipes</span>
+              <span className="church-home-admin-desc">
+                {isAdmin
+                  ? 'Gerencie equipes, líderes, funções técnicas e qualificações para escalas.'
+                  : 'Consulte os ministérios, funções e integrantes da igreja.'}
+              </span>
+            </div>
+          </div>
+          <button
+            id="btn-goto-teams"
+            className="btn btn-secondary church-home-admin-btn"
+            onClick={() => setCurrentView('teams')}
+            type="button"
+            aria-label="Acessar Ministérios e Equipes"
+          >
+            Acessar Equipes
+          </button>
+        </div>
 
         {/* Aviso de limite de administração para Administrador */}
         {isAdmin && !pendingCommand && (

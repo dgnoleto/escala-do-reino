@@ -1,6 +1,7 @@
 -- Escala do Reino: pré-validação somente leitura antes de aplicar 015_liturgical_dependencies.sql.
 -- Valida codificação UTF8, integridade dos incrementos anteriores (001–013),
--- ausência prévia das novas tabelas e RPCs operacionais e isolamento de app_private.
+-- presença dos campos de recibo estendido (011), ausência prévia das novas tabelas e RPCs operacionais
+-- e isolamento de app_private.
 -- Esperado: sucesso com diagnóstico positivo. Não altera dados nem privilégios.
 
 do $preflight$
@@ -40,6 +41,17 @@ begin
     raise exception 'Constraint app_private.members_church_id_id_unique ausente. Parar e conferir.';
   end if;
 
+  -- Verifica que command_receipts possui campos estendidos de 011
+  if not exists (
+    select 1 from information_schema.columns
+    where table_schema = 'app_private' and table_name = 'command_receipts' and column_name = 'result_entity_id'
+  ) or not exists (
+    select 1 from information_schema.columns
+    where table_schema = 'app_private' and table_name = 'command_receipts' and column_name = 'result_payload'
+  ) then
+    raise exception 'Colunas result_entity_id ou result_payload ausentes em command_receipts. Parar e conferir.';
+  end if;
+
   -- Verifica que as novas tabelas operacionais do incremento 015 ainda não existem
   if to_regclass('app_private.teams') is not null
      or to_regclass('app_private.team_memberships') is not null
@@ -59,18 +71,24 @@ begin
       and p.proname in (
         'create_church_team',
         'assign_team_leader',
+        'create_team_role',
         'add_team_member',
         'remove_team_member',
-        'create_team_role',
         'grant_member_qualification',
         'revoke_member_qualification',
         'create_church_event',
         'assign_event_liturgy_leader',
+        'start_event_service',
+        'finish_event_service',
+        'cancel_church_event',
         'assign_event_participant',
         'replace_event_participant',
-        'finish_event_service',
         'list_church_teams',
-        'list_church_events'
+        'list_church_team_roles',
+        'list_team_members',
+        'list_member_qualifications',
+        'list_church_events',
+        'list_event_assignments'
       )
   ) then
     raise exception 'Um ou mais endpoints operacionais do incremento 015 já existem em public. Parar e revisar.';
