@@ -1,40 +1,45 @@
-# Checkpoint 2 — Bloco 1 Concluído: Contrato e Desenho da Fonte Real e Revisão da #12
+# Checkpoint 3 — Bloco 1: Contrato Integrado Corrigido e Revisão Fiel da #12
 
-- **Data/Hora:** 2026-10-16 18:54 BRT
-- **Contexto:** Execução coordenada aprovada das issues #12 e #18 (`PROMPT-EXECUCAO-ANTIGRAVITY.md`).
+- **Data/Hora:** 2026-10-16 19:08 BRT
+- **Contexto:** Execução coordenada aprovada das issues #12 e #18 (`PROMPT-CORRECAO-CONTRATO.md` e `PARECER-CODEX.md`).
 - **Branch Ativa:** `feat/issue-18-ciclo-vida-membros`
-- **HEAD da Branch:** `52e047dd1d7bacc4a2849051381e3dc311feef62`
-- **Commit Candidato da #12:** `1c8dbb0fbc40f056ec46f092b6ab4f009595a3c0` (preservado sem alteração)
+- **HEAD da Branch Conferido:** `80f16fabb23fd7a9cbf87d912aac18b99f7cecb3`
+- **Commit Candidato Isolado da #12:** `1c8dbb0fbc40f056ec46f092b6ab4f009595a3c0` (preservado sem alteração)
 - **Hash Canônico Preservado de 013:** `40709A4FE9FEB688D3BE92564B821DCAC4142F6A588E4ACA585D42FBDB964AF7`
 
 ---
 
-## 1. Status das Entregas do Bloco 1
+## 1. Status das Entregas do Bloco 1 (Versão Integrada Corrigida)
 
-| Item do Bloco | Descrição do Roteiro | Arquivo de Entrega | Critérios Atendidos na Matriz |
+| Item | Descrição da Entrega Corrigida | Arquivo de Entrega | Situação Atual |
 | :--- | :--- | :--- | :--- |
-| **B1.1** | Modelo lógico e físico da fonte real de dependências por church_id/member_id | `docs/CONTRATO-FONTE-REAL-DEPENDENCIAS-LITURGICAS.md` (Seção 1 e 2) | `M18-01`, `M18-12` |
-| **B1.2** | Matriz de operações e permissões estritas (Admin vs Equipe vs Liturgia) | `docs/CONTRATO-FONTE-REAL-DEPENDENCIAS-LITURGICAS.md` (Seção 3) | `M18-01`, `M18-05` |
-| **B1.3** | Regras de estados, tempo e tratamento de informação inconclusiva | `docs/CONTRATO-FONTE-REAL-DEPENDENCIAS-LITURGICAS.md` (Seção 4) | `M18-12` |
-| **B1.4** | Ordem global de bloqueios e prevenção de corridas/deadlocks | `docs/CONTRATO-FONTE-REAL-DEPENDENCIAS-LITURGICAS.md` (Seção 5) | `M18-06`, `M18-07`, `M18-10` |
-| **B1.5** | Sequência de incrementos SQL versionados (015/016) e plano do cliente web | `docs/CONTRATO-FONTE-REAL-DEPENDENCIAS-LITURGICAS.md` (Seção 6) | `M18-01`, `M18-02`, `M18-08` |
-| **B1.6** | Revisão documental candidata da issue #12 sobre o commit `1c8dbb0` | `docs/REVISAO-CANDIDATA-ISSUE12.md` | `D12-01`, `D12-02`, `D12-03`, `D12-04` |
+| **B1.1** | **Integridade Relacional Multi-Tenant:** Chaves únicas e FKs compostas por `church_id`, amarrando `(church_id, id)` em todas as tabelas operacionais, consistência `item->evento` e `função->equipe`, além de inclusão explícita de `member_qualifications`. Ações `ON DELETE RESTRICT` preservando histórico. | `docs/CONTRATO-FONTE-REAL-DEPENDENCIAS-LITURGICAS.md` (Seção 2) | Entregue em desenho corrigido |
+| **B1.2** | **Plano de Bloqueios Compatível (Sem Ciclos):** Alinhamento estrito com a ordem de 013 (`church_access` antes de `members`), integração de `church_admin_continuity`, operador em `FOR SHARE`, ordenação determinística de múltiplas linhas (`ORDER BY id ASC`), revalidação pós-espera e tabela de bloqueios por operação (007/009/011/013/015/016). | `docs/CONTRATO-FONTE-REAL-DEPENDENCIAS-LITURGICAS.md` (Seção 5) | Entregue em desenho corrigido |
+| **B1.3** | **Ciclo Operacional Completo e Decisão Confirmada:** Registro formal da decisão de 16/10/2026 (quem lidera ministério ativo só pode ser excluído após transferir liderança). Tabela completa de dependências $\rightarrow$ comandos $\rightarrow$ consultas $\rightarrow$ locks $\rightarrow$ predicados. Fronteira de substituição pelo início da atividade. | `docs/CONTRATO-FONTE-REAL-DEPENDENCIAS-LITURGICAS.md` (Seções 1, 3 e 4) | Entregue em desenho corrigido |
+| **B1.4** | **Revisão Documental Fiel da Issue #12:** Baseada na estrutura real de 12 seções de `docs/EVOLUCAO-FUTURA.md` (eliminada menção indevida à seção 13 e organização fictícia de módulos). Distinção de histórico vs texto atual, preservação integral de propostas futuras e minuta de fechamento condicionada a comprovação física. | `docs/REVISAO-CANDIDATA-ISSUE12.md` | Entregue em revisão fiel |
 
 ---
 
-## 2. Matriz de Rastreabilidade de Aceite
+## 2. Acompanhamento pela Matriz de Aceite (`MATRIZ-ACEITE.md`)
 
-| ID Matriz | Critério | Situação Anterior | Situação após Bloco 1 |
+| ID | Critério Preservado | Situação Inicial | Situação Atual (Após Parecer Codex e Ajustes) |
 | :--- | :--- | :--- | :--- |
-| `D12-01` | Seção 10 distingue histórico Google e interface e-mail/senha | Preparado no commit `1c8dbb0` | **Revisado e confirmado** em `docs/REVISAO-CANDIDATA-ISSUE12.md` |
-| `D12-02` | Seção 12 reflete convites entregues e estado da etapa 4 | Preparado com referência de 13/10 | **Revisado com texto projetado** para fechamento final conjunto |
-| `D12-03` | Propostas futuras (1 a 9, 13) 100% preservadas | Preservadas no commit `1c8dbb0` | **Confirmada preservação integral** sem qualquer remoção |
-| `D12-04` | Links e consistência documental | Pendente | **Alinhamento e referências cruzadas estabelecidas** |
-| `M18-01` | Contrato/desenho antes das partes dependentes | Parcial | **Entregue integralmente** em `docs/CONTRATO-FONTE-REAL-DEPENDENCIAS-LITURGICAS.md` |
-| `M18-12` | Dependência futura/em andamento bloqueia; encerrado preserva | Pendente de fonte real | **Desenhado com estados conclusivos, tempo e ordem canônica** |
+| **D12-01** | Seção 10 distingue histórico Google e interface e-mail/senha | Preparado em `1c8dbb0` | **Revisado e conferido no commit isolado**; integração final na main pendente. |
+| **D12-02** | Seção 12 reflete convites entregues e estado da etapa 4 | Preparado (13/10) | **Histórico conferido**; redação final da etapa 4 condicionada à implementação física comprovada. |
+| **D12-03** | Ideias futuras das seções 1 a 9 preservadas | Preservadas em `1c8dbb0` | **Preservação confirmada na estrutura real de 12 seções**, sem criar novas categorias. |
+| **D12-04** | Links e consistência documental | Pendente | **Pendente de revisão de links e diff final** na janela de integração. |
+| **M18-01** | Contrato/desenho antes das partes dependentes | Parcial | **Contrato integrado corrigido entregue** (em revisão de alinhamento para início do SQL). |
+| **M18-05** | Servidor valida elegibilidade, permissão, autoexclusão | Parcial | **Desenhado com revalidação pós-espera de locks e recusas canônicas.** |
+| **M18-06** | Último administrador protegido sob concorrência | Parcial | **Integrado ao lock `church_admin_continuity` e gatilhos de 009.** |
+| **M18-07** | Mutação atômica com auditoria e recibo | Parcial | **Mapeado para incremento 016 com garantia de reversão total.** |
+| **M18-10** | Concorrência sem ciclos/deadlocks | Parcial | **Ordem compatível com 013 desenhada; validação física virá nos ensaios do Bloco 3.** |
+| **M18-12** | Dependência futura/em andamento bloqueia; histórico preserva | Pendente de fonte real | **Desenhado com chave composta, regra de ministério de 16/10/2026 e combinação de estados.** |
 
 ---
 
-## 3. Próximo Passo do Plano Conjunto
+## 3. Limites Mantidos
 
-Avançar para o **Bloco 2**: Implementação incremental da fonte real e do ciclo efetivo (`015_liturgical_dependencies.sql` e `016_member_lifecycle_effective.sql`), testes pertinentes e build, mantendo a integridade do checkout e os limites estritos (sem execução em banco até autorização expressa).
+- Zero comandos SQL executados contra laboratório ou piloto.
+- Contêineres inalterados.
+- Hash de `013_member_lifecycle.sql` e arquivos em `sources/` estritamente preservados.
+- Testes unitários do ciclo de vida em `test/member-lifecycle-cycle.test.js` mantidos 100% verdes (49/49).
