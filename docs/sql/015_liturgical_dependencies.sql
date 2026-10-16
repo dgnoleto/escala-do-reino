@@ -1,8 +1,8 @@
--- Escala do Reino: Incremento 015 — Fonte Real de Dependências Litúrgicas e Operacionais.
+-- Escala do Reino: Incremento 015 – Fonte Real de Dependências Litúrgicas e Operacionais.
 -- Cria as tabelas em app_private (teams, team_memberships, team_roles, member_qualifications,
 -- events, event_items, assignments) com integridade relacional composta multi-tenant por church_id,
 -- triggers monotônicos de updated_at, RLS e RPCs públicas de gestão com autorização estrita no servidor.
--- Evolui app_private.command_receipts tornando result_member_id opcional para acomodar entidades litúrgicas (B2-01).
+-- Evolui app_private.command_receipts tornando result_member_id opcional e adicionando result_entity_id e result_payload (B2-01).
 -- Executar apenas com autorização explícita do responsável após ensaio 015_validate_liturgical_dependencies.sql com PASS.
 
 begin;
@@ -37,9 +37,11 @@ end;
 $preflight$;
 
 -- 0.1 Evolução do Contrato de Recibos para Entidades Litúrgicas (B2-01)
--- Torna result_member_id opcional para comandos cujo resultado principal é equipe, evento ou alocação
+-- Torna result_member_id opcional e adiciona result_entity_id e result_payload preservando a chave (user_id, command_id)
 alter table app_private.command_receipts
-  alter column result_member_id drop not null;
+  alter column result_member_id drop not null,
+  add column if not exists result_entity_id uuid,
+  add column if not exists result_payload jsonb;
 
 -- 1. Criação das Tabelas Operacionais com Integridade Composta em app_private
 
@@ -119,6 +121,10 @@ create table app_private.team_roles (
   constraint tr_church_team_name_unique unique (church_id, team_id, name)
 );
 
+create index tr_church_team_active_idx
+  on app_private.team_roles (church_id, team_id)
+  where status = 'active';
+
 create trigger tr_touch_updated_at
   before update on app_private.team_roles
   for each row execute function app_private.touch_updated_at();
@@ -158,12 +164,13 @@ create trigger mq_touch_updated_at
 
 alter table app_private.member_qualifications enable row level security;
 
--- 1.5 Eventos e Cultos
+-- 1.5 Eventos e Cultos (Com timezone herdado da igreja - B2-02)
 create table app_private.events (
   id uuid primary key default gen_random_uuid(),
   church_id uuid not null references app_private.churches(id) on delete restrict,
   title text not null,
   event_type text not null default 'culto',
+  timezone text not null,
   status text not null default 'scheduled' check (status in ('scheduled', 'in_progress', 'completed', 'cancelled')),
   planned_start_at timestamptz not null,
   planned_end_at timestamptz not null,
@@ -175,6 +182,7 @@ create table app_private.events (
   created_at timestamptz not null default clock_timestamp(),
   updated_at timestamptz not null default clock_timestamp(),
   constraint events_title_clean check (title = btrim(title) and char_length(title) between 1 and 200),
+  constraint events_timezone_clean check (timezone = btrim(timezone) and char_length(timezone) between 1 and 80),
   constraint events_dates_order check (planned_end_at > planned_start_at),
   constraint events_church_id_id_unique unique (church_id, id),
   constraint events_church_liturgy_fkey
@@ -191,7 +199,7 @@ create trigger events_touch_updated_at
 
 alter table app_private.events enable row level security;
 
--- 1.6 Itens do Cronograma de Culto
+-- 1.6 Itens do Cronograma de Culto (Com chave única hierárquica - B2-02)
 create table app_private.event_items (
   id uuid primary key default gen_random_uuid(),
   church_id uuid not null,
@@ -209,6 +217,7 @@ create table app_private.event_items (
   created_at timestamptz not null default clock_timestamp(),
   updated_at timestamptz not null default clock_timestamp(),
   constraint ei_church_id_id_unique unique (church_id, id),
+  constraint ei_church_event_item_unique unique (church_id, event_id, id),
   constraint ei_church_event_fkey
     foreign key (church_id, event_id)
     references app_private.events(church_id, id) on delete restrict,
@@ -229,7 +238,7 @@ create trigger ei_touch_updated_at
 
 alter table app_private.event_items enable row level security;
 
--- 1.7 Alocações e Escalas de Voluntários
+-- 1.7 Alocações e Escalas de Voluntários (Com FK hierárquica church_id/event_id/item_id - B2-02)
 create table app_private.assignments (
   id uuid primary key default gen_random_uuid(),
   church_id uuid not null,
@@ -248,9 +257,9 @@ create table app_private.assignments (
   constraint asg_church_event_fkey
     foreign key (church_id, event_id)
     references app_private.events(church_id, id) on delete restrict,
-  constraint asg_church_item_fkey
-    foreign key (church_id, item_id)
-    references app_private.event_items(church_id, id) on delete restrict,
+  constraint asg_church_event_item_fkey
+    foreign key (church_id, event_id, item_id)
+    references app_private.event_items(church_id, event_id, id) on delete restrict,
   constraint asg_church_member_fkey
     foreign key (church_id, member_id)
     references app_private.members(church_id, id) on delete restrict,
@@ -262,8 +271,15 @@ create table app_private.assignments (
     references app_private.team_roles(church_id, team_id, id) on delete restrict,
   constraint asg_replaced_fkey
     foreign key (church_id, replaced_assignment_id)
+    references app_private.assignments(church_id, id) on delete restrict,
+  constraint asg_replacement_fkey
+    foreign key (church_id, replacement_assignment_id)
     references app_private.assignments(church_id, id) on delete restrict
 );
+
+create index asg_church_event_active_idx
+  on app_private.assignments (church_id, event_id, status)
+  where status = 'active';
 
 create index asg_church_member_active_idx
   on app_private.assignments (church_id, member_id, status)
@@ -276,11 +292,7 @@ create trigger asg_touch_updated_at
 alter table app_private.assignments enable row level security;
 
 
--- =============================================================================
--- 2. Endpoints Públicos RPC (SECURITY DEFINER, search_path = '', timeout 5s)
--- =============================================================================
-
--- 2.1 Criar Equipe / Ministério (Admin)
+-- 2.1 create_church_team
 create or replace function public.create_church_team(
   p_church_id uuid,
   p_command_id uuid,
@@ -305,7 +317,6 @@ declare
   v_caller_member_id uuid;
   v_is_admin boolean;
   v_name_clean text;
-  v_params_canonical text;
   v_params_hash bytea;
   v_existing_receipt record;
   v_team_id uuid;
@@ -327,91 +338,111 @@ begin
     raise exception 'Nome de equipe deve ter entre 1 e 100 caracteres.' using errcode = '22000';
   end if;
 
-  -- B2-03: Autorização vigente sob contexto real de igreja/membro/acesso
+  -- B2-03: Autorização vigente sob contexto real de igreja/membro/acesso com predicados Auth completos
   select ca.member_id, ca.is_admin
   into v_caller_member_id, v_is_admin
   from app_private.church_access ca
-  join app_private.members m on m.id = ca.member_id and m.church_id = ca.church_id
+  join auth.users u on u.id = ca.user_id
   join app_private.churches c on c.id = ca.church_id
+  join app_private.members m on m.id = ca.member_id and m.church_id = ca.church_id
   where ca.user_id = v_user_id
     and ca.church_id = p_church_id
     and ca.status = 'active'
+    and ca.onboarding_completed_at is not null
+    and c.status = 'active'
     and m.status = 'active'
-    and c.status = 'active';
+    and u.email_confirmed_at is not null
+    and u.deleted_at is null
+    and not coalesce(u.is_anonymous, false)
+    and (u.banned_until is null or u.banned_until <= clock_timestamp());
 
   if v_caller_member_id is null or not coalesce(v_is_admin, false) then
     raise exception 'Apenas administradores ativos podem criar equipes.' using errcode = '42501';
   end if;
 
-  -- Lock de idempotência por usuário e comando
   perform pg_advisory_xact_lock(hashtext(v_user_id::text), hashtext(p_command_id::text));
 
-  v_params_canonical := c_action || ':' || p_church_id::text || ':' || v_name_clean || ':' || coalesce(p_leader_member_id::text, 'null');
-  v_params_hash := extensions.digest(v_params_canonical, 'sha256');
+  v_params_hash := pg_catalog.sha256(convert_to(jsonb_build_object(
+    'action', c_action,
+    'church_id', p_church_id,
+    'name', v_name_clean,
+    'leader_member_id', p_leader_member_id
+  )::text, 'UTF8'));
 
-  -- B2-03: Validação estrita de replay com conferência completa de ação, igreja e hash
-  select cr.command_id, cr.action, cr.church_id, cr.result_entity_id, cr.result_payload, cr.created_at, cr.parameters_hash
+  select cr.command_id, cr.action, cr.church_id, cr.result_entity_id, cr.result_payload, cr.created_at, cr.params_hash
   into v_existing_receipt
   from app_private.command_receipts cr
-  where cr.command_id = p_command_id;
+  where cr.user_id = v_user_id
+    and cr.command_id = p_command_id;
 
-  if found then
-    if v_existing_receipt.church_id <> p_church_id
-       or v_existing_receipt.action <> c_action
-       or v_existing_receipt.parameters_hash <> v_params_hash then
-      raise exception 'Comando já executado com parâmetros divergentes ou em outro contexto.' using errcode = '23505';
+  if v_existing_receipt.command_id is not null then
+    if v_existing_receipt.action <> c_action or v_existing_receipt.church_id <> p_church_id then
+      raise exception 'Identificador de comando já utilizado para outra operação.' using errcode = 'P0020';
     end if;
-
-    return query select
-      v_existing_receipt.command_id,
-      v_existing_receipt.action,
-      v_existing_receipt.church_id,
-      v_existing_receipt.result_entity_id,
-      v_existing_receipt.result_payload,
-      v_existing_receipt.created_at;
+    if v_existing_receipt.params_hash <> v_params_hash then
+      raise exception 'Comando já executado com parâmetros divergentes.' using errcode = 'P0020';
+    end if;
+    return query
+    select v_existing_receipt.command_id, v_existing_receipt.action, v_existing_receipt.church_id,
+           v_existing_receipt.result_entity_id, v_existing_receipt.result_payload, v_existing_receipt.created_at;
     return;
   end if;
 
-  -- Validar líder inicial se fornecido
   if p_leader_member_id is not null then
     if not exists (
-      select 1 from app_private.members m
-      where m.church_id = p_church_id and m.id = p_leader_member_id and m.status = 'active'
+      select 1 from app_private.members
+      where church_id = p_church_id and id = p_leader_member_id and status = 'active'
     ) then
-      raise exception 'Líder informado não é membro ativo desta igreja.' using errcode = 'P0002';
+      raise exception 'Líder indicado não encontrado ou inativo nesta igreja.' using errcode = 'P0020';
     end if;
   end if;
 
-  insert into app_private.teams (church_id, name, leader_member_id, status, version)
-  values (p_church_id, v_name_clean, p_leader_member_id, 'active', 1)
-  returning id, app_private.teams.created_at into v_team_id, v_created_at;
+  if exists (
+    select 1 from app_private.teams
+    where church_id = p_church_id and name = v_name_clean
+  ) then
+    raise exception 'Já existe equipe com este nome nesta igreja.' using errcode = '23505';
+  end if;
+
+  insert into app_private.teams (church_id, name, leader_member_id, status)
+  values (p_church_id, v_name_clean, p_leader_member_id, 'active')
+  returning id, created_at into v_team_id, v_created_at;
 
   if p_leader_member_id is not null then
     insert into app_private.team_memberships (church_id, team_id, member_id, status)
     values (p_church_id, v_team_id, p_leader_member_id, 'active')
-    on conflict (church_id, team_id, member_id) do nothing;
+    on conflict (church_id, team_id, member_id) do update set status = 'active', updated_at = clock_timestamp();
   end if;
 
   v_payload := jsonb_build_object(
     'team_id', v_team_id,
     'name', v_name_clean,
     'leader_member_id', p_leader_member_id,
-    'status', 'active',
-    'version', 1
+    'status', 'active'
   );
 
-  insert into app_private.audit_entries (church_id, operator_user_id, action, entity_type, entity_id, payload)
-  values (p_church_id, v_user_id, c_action, 'team', v_team_id, v_payload);
+  insert into app_private.audit_entries (
+    church_id, action, actor_user_id, actor_source, maintenance_operator,
+    target_type, target_id, details, occurred_at
+  ) values (
+    p_church_id, c_action, v_user_id, 'application', null,
+    'team', v_team_id, v_payload, v_created_at
+  );
 
-  -- B2-01: Recibo canônico compatível com result_member_id nulo para entidades litúrgicas
-  insert into app_private.command_receipts (command_id, church_id, action, result_entity_id, result_payload, parameters_hash)
-  values (p_command_id, p_church_id, c_action, v_team_id, v_payload, v_params_hash);
+  insert into app_private.command_receipts (
+    church_id, user_id, command_id, action, params_hash,
+    result_member_id, result_entity_id, result_payload, created_at
+  ) values (
+    p_church_id, v_user_id, p_command_id, c_action, v_params_hash,
+    null, v_team_id, v_payload, v_created_at
+  );
 
-  return query select p_command_id, c_action, p_church_id, v_team_id, v_payload, v_created_at;
+  return query
+  select p_command_id, c_action, p_church_id, v_team_id, v_payload, v_created_at;
 end;
 $function$;
 
--- 2.2 Designar / Transferir Liderança da Equipe (Admin, com controle de versão otimista)
+-- 2.2 assign_team_leader
 create or replace function public.assign_team_leader(
   p_church_id uuid,
   p_command_id uuid,
@@ -437,11 +468,10 @@ declare
   v_caller_member_id uuid;
   v_is_admin boolean;
   v_team record;
-  v_params_canonical text;
   v_params_hash bytea;
   v_existing_receipt record;
   v_payload jsonb;
-  v_new_version integer;
+  v_created_at timestamptz;
   c_action constant text := 'assign_team_leader';
 begin
   v_user_id := (select auth.uid());
@@ -453,101 +483,122 @@ begin
     raise exception 'Parâmetros obrigatórios ausentes.' using errcode = '22004';
   end if;
 
-  -- B2-03: Autorização vigente
   select ca.member_id, ca.is_admin
   into v_caller_member_id, v_is_admin
   from app_private.church_access ca
-  join app_private.members m on m.id = ca.member_id and m.church_id = ca.church_id
+  join auth.users u on u.id = ca.user_id
   join app_private.churches c on c.id = ca.church_id
+  join app_private.members m on m.id = ca.member_id and m.church_id = ca.church_id
   where ca.user_id = v_user_id
     and ca.church_id = p_church_id
     and ca.status = 'active'
+    and ca.onboarding_completed_at is not null
+    and c.status = 'active'
     and m.status = 'active'
-    and c.status = 'active';
+    and u.email_confirmed_at is not null
+    and u.deleted_at is null
+    and not coalesce(u.is_anonymous, false)
+    and (u.banned_until is null or u.banned_until <= clock_timestamp());
 
-  if v_caller_member_id is null or not coalesce(v_is_admin, false) then
-    raise exception 'Apenas administradores ativos podem transferir liderança de equipe.' using errcode = '42501';
+  if v_caller_member_id is null then
+    raise exception 'Acesso não autorizado nesta igreja.' using errcode = '42501';
   end if;
 
   perform pg_advisory_xact_lock(hashtext(v_user_id::text), hashtext(p_command_id::text));
 
-  v_params_canonical := c_action || ':' || p_church_id::text || ':' || p_team_id::text || ':' || p_new_leader_member_id::text || ':' || coalesce(p_expected_version::text, 'null');
-  v_params_hash := extensions.digest(v_params_canonical, 'sha256');
+  v_params_hash := pg_catalog.sha256(convert_to(jsonb_build_object(
+    'action', c_action,
+    'church_id', p_church_id,
+    'team_id', p_team_id,
+    'new_leader_member_id', p_new_leader_member_id,
+    'expected_version', p_expected_version
+  )::text, 'UTF8'));
 
-  select cr.command_id, cr.action, cr.church_id, cr.result_entity_id, cr.result_payload, cr.created_at, cr.parameters_hash
+  select cr.command_id, cr.action, cr.church_id, cr.result_entity_id, cr.result_payload, cr.created_at, cr.params_hash
   into v_existing_receipt
   from app_private.command_receipts cr
-  where cr.command_id = p_command_id;
+  where cr.user_id = v_user_id
+    and cr.command_id = p_command_id;
 
-  if found then
-    if v_existing_receipt.church_id <> p_church_id
-       or v_existing_receipt.action <> c_action
-       or v_existing_receipt.parameters_hash <> v_params_hash then
-      raise exception 'Comando já executado com parâmetros divergentes ou em outro contexto.' using errcode = '23505';
+  if v_existing_receipt.command_id is not null then
+    if v_existing_receipt.action <> c_action or v_existing_receipt.church_id <> p_church_id then
+      raise exception 'Identificador de comando já utilizado para outra operação.' using errcode = 'P0020';
     end if;
-
-    return query select
-      v_existing_receipt.command_id,
-      v_existing_receipt.action,
-      v_existing_receipt.church_id,
-      v_existing_receipt.result_entity_id,
-      v_existing_receipt.result_payload,
-      v_existing_receipt.created_at;
+    if v_existing_receipt.params_hash <> v_params_hash then
+      raise exception 'Comando já executado com parâmetros divergentes.' using errcode = 'P0020';
+    end if;
+    return query
+    select v_existing_receipt.command_id, v_existing_receipt.action, v_existing_receipt.church_id,
+           v_existing_receipt.result_entity_id, v_existing_receipt.result_payload, v_existing_receipt.created_at;
     return;
   end if;
 
-  -- Lock hierárquico: members FOR SHARE antes de teams FOR UPDATE
-  perform 1 from app_private.members m
-  where m.church_id = p_church_id and m.id = p_new_leader_member_id and m.status = 'active'
-  for share;
-
-  if not found then
-    raise exception 'Novo líder não é membro ativo desta igreja.' using errcode = 'P0002';
-  end if;
-
-  select * into v_team
-  from app_private.teams t
-  where t.church_id = p_church_id and t.id = p_team_id and t.status = 'active'
+  select id, leader_member_id, version, status
+  into v_team
+  from app_private.teams
+  where church_id = p_church_id and id = p_team_id
   for update;
 
-  if not found then
-    raise exception 'Equipe não encontrada ou inativa.' using errcode = 'P0002';
+  if v_team.id is null or v_team.status <> 'active' then
+    raise exception 'Equipe não encontrada ou inativa.' using errcode = 'P0020';
+  end if;
+
+  -- B2-03: Checagem segura com NULL - ausência de líder não concede permissão
+  if not coalesce(v_is_admin, false) and (v_team.leader_member_id is null or v_team.leader_member_id <> v_caller_member_id) then
+    raise exception 'Apenas o líder atual da equipe ou administrador pode transferir a liderança.' using errcode = '42501';
   end if;
 
   if p_expected_version is not null and v_team.version <> p_expected_version then
-    raise exception 'Versão esperada da equipe divergente da atual (conflito de concorrência).' using errcode = 'P0019';
+    raise exception 'Versão esperada divergente da versão atual da equipe.' using errcode = 'P0020';
   end if;
 
-  v_new_version := v_team.version + 1;
-
-  update app_private.teams
-  set leader_member_id = p_new_leader_member_id,
-      version = v_new_version
-  where id = p_team_id and church_id = p_church_id;
+  if not exists (
+    select 1 from app_private.members
+    where church_id = p_church_id and id = p_new_leader_member_id and status = 'active'
+  ) then
+    raise exception 'Novo líder não encontrado ou inativo nesta igreja.' using errcode = 'P0020';
+  end if;
 
   insert into app_private.team_memberships (church_id, team_id, member_id, status)
   values (p_church_id, p_team_id, p_new_leader_member_id, 'active')
-  on conflict (church_id, team_id, member_id) do update
-  set status = 'active';
+  on conflict (church_id, team_id, member_id) do update set status = 'active', updated_at = clock_timestamp();
+
+  update app_private.teams
+  set leader_member_id = p_new_leader_member_id,
+      version = version + 1,
+      updated_at = clock_timestamp()
+  where church_id = p_church_id and id = p_team_id
+  returning updated_at into v_created_at;
 
   v_payload := jsonb_build_object(
     'team_id', p_team_id,
     'previous_leader_member_id', v_team.leader_member_id,
     'new_leader_member_id', p_new_leader_member_id,
-    'version', v_new_version
+    'version', v_team.version + 1
   );
 
-  insert into app_private.audit_entries (church_id, operator_user_id, action, entity_type, entity_id, payload)
-  values (p_church_id, v_user_id, c_action, 'team', p_team_id, v_payload);
+  insert into app_private.audit_entries (
+    church_id, action, actor_user_id, actor_source, maintenance_operator,
+    target_type, target_id, details, occurred_at
+  ) values (
+    p_church_id, c_action, v_user_id, 'application', null,
+    'team', p_team_id, v_payload, v_created_at
+  );
 
-  insert into app_private.command_receipts (command_id, church_id, action, result_entity_id, result_payload, parameters_hash)
-  values (p_command_id, p_church_id, c_action, p_team_id, v_payload, v_params_hash);
+  insert into app_private.command_receipts (
+    church_id, user_id, command_id, action, params_hash,
+    result_member_id, result_entity_id, result_payload, created_at
+  ) values (
+    p_church_id, v_user_id, p_command_id, c_action, v_params_hash,
+    null, p_team_id, v_payload, v_created_at
+  );
 
-  return query select p_command_id, c_action, p_church_id, p_team_id, v_payload, clock_timestamp();
+  return query
+  select p_command_id, c_action, p_church_id, p_team_id, v_payload, v_created_at;
 end;
 $function$;
 
--- 2.3 Criar Função Técnica na Equipe (Admin ou Líder da Equipe)
+-- 2.3 create_team_role
 create or replace function public.create_team_role(
   p_church_id uuid,
   p_command_id uuid,
@@ -574,11 +625,12 @@ declare
   v_is_admin boolean;
   v_team record;
   v_name_clean text;
-  v_role_id uuid;
-  v_params_canonical text;
+  v_desc_clean text;
   v_params_hash bytea;
   v_existing_receipt record;
+  v_role_id uuid;
   v_payload jsonb;
+  v_created_at timestamptz;
   c_action constant text := 'create_team_role';
 begin
   v_user_id := (select auth.uid());
@@ -592,19 +644,29 @@ begin
 
   v_name_clean := btrim(normalize(p_name, NFC));
   if char_length(v_name_clean) < 1 or char_length(v_name_clean) > 100 then
-    raise exception 'Nome da função técnica deve ter entre 1 e 100 caracteres.' using errcode = '22000';
+    raise exception 'Nome de função deve ter entre 1 e 100 caracteres.' using errcode = '22000';
+  end if;
+
+  if p_description is not null then
+    v_desc_clean := btrim(normalize(p_description, NFC));
   end if;
 
   select ca.member_id, ca.is_admin
   into v_caller_member_id, v_is_admin
   from app_private.church_access ca
-  join app_private.members m on m.id = ca.member_id and m.church_id = ca.church_id
+  join auth.users u on u.id = ca.user_id
   join app_private.churches c on c.id = ca.church_id
+  join app_private.members m on m.id = ca.member_id and m.church_id = ca.church_id
   where ca.user_id = v_user_id
     and ca.church_id = p_church_id
     and ca.status = 'active'
+    and ca.onboarding_completed_at is not null
+    and c.status = 'active'
     and m.status = 'active'
-    and c.status = 'active';
+    and u.email_confirmed_at is not null
+    and u.deleted_at is null
+    and not coalesce(u.is_anonymous, false)
+    and (u.banned_until is null or u.banned_until <= clock_timestamp());
 
   if v_caller_member_id is null then
     raise exception 'Acesso não autorizado nesta igreja.' using errcode = '42501';
@@ -612,66 +674,89 @@ begin
 
   perform pg_advisory_xact_lock(hashtext(v_user_id::text), hashtext(p_command_id::text));
 
-  v_params_canonical := c_action || ':' || p_church_id::text || ':' || p_team_id::text || ':' || v_name_clean;
-  v_params_hash := extensions.digest(v_params_canonical, 'sha256');
+  v_params_hash := pg_catalog.sha256(convert_to(jsonb_build_object(
+    'action', c_action,
+    'church_id', p_church_id,
+    'team_id', p_team_id,
+    'name', v_name_clean,
+    'description', v_desc_clean
+  )::text, 'UTF8'));
 
-  select cr.command_id, cr.action, cr.church_id, cr.result_entity_id, cr.result_payload, cr.created_at, cr.parameters_hash
+  select cr.command_id, cr.action, cr.church_id, cr.result_entity_id, cr.result_payload, cr.created_at, cr.params_hash
   into v_existing_receipt
   from app_private.command_receipts cr
-  where cr.command_id = p_command_id;
+  where cr.user_id = v_user_id
+    and cr.command_id = p_command_id;
 
-  if found then
-    if v_existing_receipt.church_id <> p_church_id
-       or v_existing_receipt.action <> c_action
-       or v_existing_receipt.parameters_hash <> v_params_hash then
-      raise exception 'Comando já executado com parâmetros divergentes ou em outro contexto.' using errcode = '23505';
+  if v_existing_receipt.command_id is not null then
+    if v_existing_receipt.action <> c_action or v_existing_receipt.church_id <> p_church_id then
+      raise exception 'Identificador de comando já utilizado para outra operação.' using errcode = 'P0020';
     end if;
-
-    return query select
-      v_existing_receipt.command_id,
-      v_existing_receipt.action,
-      v_existing_receipt.church_id,
-      v_existing_receipt.result_entity_id,
-      v_existing_receipt.result_payload,
-      v_existing_receipt.created_at;
+    if v_existing_receipt.params_hash <> v_params_hash then
+      raise exception 'Comando já executado com parâmetros divergentes.' using errcode = 'P0020';
+    end if;
+    return query
+    select v_existing_receipt.command_id, v_existing_receipt.action, v_existing_receipt.church_id,
+           v_existing_receipt.result_entity_id, v_existing_receipt.result_payload, v_existing_receipt.created_at;
     return;
   end if;
 
-  select * into v_team
-  from app_private.teams t
-  where t.church_id = p_church_id and t.id = p_team_id and t.status = 'active'
+  select id, leader_member_id, status
+  into v_team
+  from app_private.teams
+  where church_id = p_church_id and id = p_team_id
   for share;
 
-  if not found then
-    raise exception 'Equipe não encontrada ou inativa.' using errcode = 'P0002';
+  if v_team.id is null or v_team.status <> 'active' then
+    raise exception 'Equipe não encontrada ou inativa.' using errcode = 'P0020';
   end if;
 
-  if not v_is_admin and v_team.leader_member_id <> v_caller_member_id then
-    raise exception 'Apenas o administrador ou o líder desta equipe podem criar funções técnicas.' using errcode = '42501';
+  -- B2-03: Checagem segura de liderança
+  if not coalesce(v_is_admin, false) and (v_team.leader_member_id is null or v_team.leader_member_id <> v_caller_member_id) then
+    raise exception 'Apenas o líder desta equipe ou administrador pode criar funções técnicas.' using errcode = '42501';
+  end if;
+
+  if exists (
+    select 1 from app_private.team_roles
+    where church_id = p_church_id and team_id = p_team_id and name = v_name_clean
+  ) then
+    raise exception 'Função técnica com este nome já existe nesta equipe.' using errcode = '23505';
   end if;
 
   insert into app_private.team_roles (church_id, team_id, name, description, status)
-  values (p_church_id, p_team_id, v_name_clean, btrim(p_description), 'active')
-  returning id into v_role_id;
+  values (p_church_id, p_team_id, v_name_clean, v_desc_clean, 'active')
+  returning id, created_at into v_role_id, v_created_at;
 
   v_payload := jsonb_build_object(
-    'team_role_id', v_role_id,
+    'role_id', v_role_id,
     'team_id', p_team_id,
     'name', v_name_clean,
+    'description', v_desc_clean,
     'status', 'active'
   );
 
-  insert into app_private.audit_entries (church_id, operator_user_id, action, entity_type, entity_id, payload)
-  values (p_church_id, v_user_id, c_action, 'team_role', v_role_id, v_payload);
+  insert into app_private.audit_entries (
+    church_id, action, actor_user_id, actor_source, maintenance_operator,
+    target_type, target_id, details, occurred_at
+  ) values (
+    p_church_id, c_action, v_user_id, 'application', null,
+    'team_role', v_role_id, v_payload, v_created_at
+  );
 
-  insert into app_private.command_receipts (command_id, church_id, action, result_entity_id, result_payload, parameters_hash)
-  values (p_command_id, p_church_id, c_action, v_role_id, v_payload, v_params_hash);
+  insert into app_private.command_receipts (
+    church_id, user_id, command_id, action, params_hash,
+    result_member_id, result_entity_id, result_payload, created_at
+  ) values (
+    p_church_id, v_user_id, p_command_id, c_action, v_params_hash,
+    null, v_role_id, v_payload, v_created_at
+  );
 
-  return query select p_command_id, c_action, p_church_id, v_role_id, v_payload, clock_timestamp();
+  return query
+  select p_command_id, c_action, p_church_id, v_role_id, v_payload, v_created_at;
 end;
 $function$;
 
--- 2.4 Adicionar Integrante à Equipe (Admin ou Líder da Equipe)
+-- 2.4 add_team_member
 create or replace function public.add_team_member(
   p_church_id uuid,
   p_command_id uuid,
@@ -697,10 +782,10 @@ declare
   v_is_admin boolean;
   v_team record;
   v_membership_id uuid;
-  v_params_canonical text;
   v_params_hash bytea;
   v_existing_receipt record;
   v_payload jsonb;
+  v_created_at timestamptz;
   c_action constant text := 'add_team_member';
 begin
   v_user_id := (select auth.uid());
@@ -715,13 +800,19 @@ begin
   select ca.member_id, ca.is_admin
   into v_caller_member_id, v_is_admin
   from app_private.church_access ca
-  join app_private.members m on m.id = ca.member_id and m.church_id = ca.church_id
+  join auth.users u on u.id = ca.user_id
   join app_private.churches c on c.id = ca.church_id
+  join app_private.members m on m.id = ca.member_id and m.church_id = ca.church_id
   where ca.user_id = v_user_id
     and ca.church_id = p_church_id
     and ca.status = 'active'
+    and ca.onboarding_completed_at is not null
+    and c.status = 'active'
     and m.status = 'active'
-    and c.status = 'active';
+    and u.email_confirmed_at is not null
+    and u.deleted_at is null
+    and not coalesce(u.is_anonymous, false)
+    and (u.banned_until is null or u.banned_until <= clock_timestamp());
 
   if v_caller_member_id is null then
     raise exception 'Acesso não autorizado nesta igreja.' using errcode = '42501';
@@ -729,58 +820,59 @@ begin
 
   perform pg_advisory_xact_lock(hashtext(v_user_id::text), hashtext(p_command_id::text));
 
-  v_params_canonical := c_action || ':' || p_church_id::text || ':' || p_team_id::text || ':' || p_member_id::text;
-  v_params_hash := extensions.digest(v_params_canonical, 'sha256');
+  v_params_hash := pg_catalog.sha256(convert_to(jsonb_build_object(
+    'action', c_action,
+    'church_id', p_church_id,
+    'team_id', p_team_id,
+    'member_id', p_member_id
+  )::text, 'UTF8'));
 
-  select cr.command_id, cr.action, cr.church_id, cr.result_entity_id, cr.result_payload, cr.created_at, cr.parameters_hash
+  select cr.command_id, cr.action, cr.church_id, cr.result_entity_id, cr.result_payload, cr.created_at, cr.params_hash
   into v_existing_receipt
   from app_private.command_receipts cr
-  where cr.command_id = p_command_id;
+  where cr.user_id = v_user_id
+    and cr.command_id = p_command_id;
 
-  if found then
-    if v_existing_receipt.church_id <> p_church_id
-       or v_existing_receipt.action <> c_action
-       or v_existing_receipt.parameters_hash <> v_params_hash then
-      raise exception 'Comando já executado com parâmetros divergentes ou em outro contexto.' using errcode = '23505';
+  if v_existing_receipt.command_id is not null then
+    if v_existing_receipt.action <> c_action or v_existing_receipt.church_id <> p_church_id then
+      raise exception 'Identificador de comando já utilizado para outra operação.' using errcode = 'P0020';
     end if;
-
-    return query select
-      v_existing_receipt.command_id,
-      v_existing_receipt.action,
-      v_existing_receipt.church_id,
-      v_existing_receipt.result_entity_id,
-      v_existing_receipt.result_payload,
-      v_existing_receipt.created_at;
+    if v_existing_receipt.params_hash <> v_params_hash then
+      raise exception 'Comando já executado com parâmetros divergentes.' using errcode = 'P0020';
+    end if;
+    return query
+    select v_existing_receipt.command_id, v_existing_receipt.action, v_existing_receipt.church_id,
+           v_existing_receipt.result_entity_id, v_existing_receipt.result_payload, v_existing_receipt.created_at;
     return;
   end if;
 
-  -- Lock hierárquico: members FOR SHARE -> teams FOR SHARE
-  perform 1 from app_private.members m
-  where m.church_id = p_church_id and m.id = p_member_id and m.status = 'active'
+  select id, leader_member_id, status
+  into v_team
+  from app_private.teams
+  where church_id = p_church_id and id = p_team_id
   for share;
 
-  if not found then
-    raise exception 'Membro não encontrado ou inativo nesta igreja.' using errcode = 'P0002';
+  if v_team.id is null or v_team.status <> 'active' then
+    raise exception 'Equipe não encontrada ou inativa.' using errcode = 'P0020';
   end if;
 
-  select * into v_team
-  from app_private.teams t
-  where t.church_id = p_church_id and t.id = p_team_id and t.status = 'active'
-  for share;
-
-  if not found then
-    raise exception 'Equipe não encontrada ou inativa.' using errcode = 'P0002';
+  -- B2-03: Checagem segura com NULL
+  if not coalesce(v_is_admin, false) and (v_team.leader_member_id is null or v_team.leader_member_id <> v_caller_member_id) then
+    raise exception 'Apenas o líder desta equipe ou administrador pode adicionar membros.' using errcode = '42501';
   end if;
 
-  if not v_is_admin and v_team.leader_member_id <> v_caller_member_id then
-    raise exception 'Apenas o administrador ou o líder desta equipe podem incluir integrantes.' using errcode = '42501';
+  if not exists (
+    select 1 from app_private.members
+    where church_id = p_church_id and id = p_member_id and status = 'active'
+  ) then
+    raise exception 'Membro não encontrado ou inativo nesta igreja.' using errcode = 'P0020';
   end if;
 
   insert into app_private.team_memberships (church_id, team_id, member_id, status)
   values (p_church_id, p_team_id, p_member_id, 'active')
   on conflict (church_id, team_id, member_id) do update
-  set status = 'active'
-  returning id into v_membership_id;
+  set status = 'active', updated_at = clock_timestamp()
+  returning id, updated_at into v_membership_id, v_created_at;
 
   v_payload := jsonb_build_object(
     'membership_id', v_membership_id,
@@ -789,17 +881,28 @@ begin
     'status', 'active'
   );
 
-  insert into app_private.audit_entries (church_id, operator_user_id, action, entity_type, entity_id, payload)
-  values (p_church_id, v_user_id, c_action, 'team_membership', v_membership_id, v_payload);
+  insert into app_private.audit_entries (
+    church_id, action, actor_user_id, actor_source, maintenance_operator,
+    target_type, target_id, details, occurred_at
+  ) values (
+    p_church_id, c_action, v_user_id, 'application', null,
+    'team_membership', v_membership_id, v_payload, v_created_at
+  );
 
-  insert into app_private.command_receipts (command_id, church_id, action, result_entity_id, result_payload, parameters_hash)
-  values (p_command_id, p_church_id, c_action, v_membership_id, v_payload, v_params_hash);
+  insert into app_private.command_receipts (
+    church_id, user_id, command_id, action, params_hash,
+    result_member_id, result_entity_id, result_payload, created_at
+  ) values (
+    p_church_id, v_user_id, p_command_id, c_action, v_params_hash,
+    null, v_membership_id, v_payload, v_created_at
+  );
 
-  return query select p_command_id, c_action, p_church_id, v_membership_id, v_payload, clock_timestamp();
+  return query
+  select p_command_id, c_action, p_church_id, v_membership_id, v_payload, v_created_at;
 end;
 $function$;
 
--- 2.5 Remover Integrante da Equipe (Admin ou Líder da Equipe)
+-- 2.5 remove_team_member
 create or replace function public.remove_team_member(
   p_church_id uuid,
   p_command_id uuid,
@@ -824,11 +927,11 @@ declare
   v_caller_member_id uuid;
   v_is_admin boolean;
   v_team record;
-  v_membership_id uuid;
-  v_params_canonical text;
+  v_membership record;
   v_params_hash bytea;
   v_existing_receipt record;
   v_payload jsonb;
+  v_created_at timestamptz;
   c_action constant text := 'remove_team_member';
 begin
   v_user_id := (select auth.uid());
@@ -843,13 +946,19 @@ begin
   select ca.member_id, ca.is_admin
   into v_caller_member_id, v_is_admin
   from app_private.church_access ca
-  join app_private.members m on m.id = ca.member_id and m.church_id = ca.church_id
+  join auth.users u on u.id = ca.user_id
   join app_private.churches c on c.id = ca.church_id
+  join app_private.members m on m.id = ca.member_id and m.church_id = ca.church_id
   where ca.user_id = v_user_id
     and ca.church_id = p_church_id
     and ca.status = 'active'
+    and ca.onboarding_completed_at is not null
+    and c.status = 'active'
     and m.status = 'active'
-    and c.status = 'active';
+    and u.email_confirmed_at is not null
+    and u.deleted_at is null
+    and not coalesce(u.is_anonymous, false)
+    and (u.banned_until is null or u.banned_until <= clock_timestamp());
 
   if v_caller_member_id is null then
     raise exception 'Acesso não autorizado nesta igreja.' using errcode = '42501';
@@ -857,79 +966,113 @@ begin
 
   perform pg_advisory_xact_lock(hashtext(v_user_id::text), hashtext(p_command_id::text));
 
-  v_params_canonical := c_action || ':' || p_church_id::text || ':' || p_team_id::text || ':' || p_member_id::text;
-  v_params_hash := extensions.digest(v_params_canonical, 'sha256');
+  v_params_hash := pg_catalog.sha256(convert_to(jsonb_build_object(
+    'action', c_action,
+    'church_id', p_church_id,
+    'team_id', p_team_id,
+    'member_id', p_member_id
+  )::text, 'UTF8'));
 
-  select cr.command_id, cr.action, cr.church_id, cr.result_entity_id, cr.result_payload, cr.created_at, cr.parameters_hash
+  select cr.command_id, cr.action, cr.church_id, cr.result_entity_id, cr.result_payload, cr.created_at, cr.params_hash
   into v_existing_receipt
   from app_private.command_receipts cr
-  where cr.command_id = p_command_id;
+  where cr.user_id = v_user_id
+    and cr.command_id = p_command_id;
 
-  if found then
-    if v_existing_receipt.church_id <> p_church_id
-       or v_existing_receipt.action <> c_action
-       or v_existing_receipt.parameters_hash <> v_params_hash then
-      raise exception 'Comando já executado com parâmetros divergentes ou em outro contexto.' using errcode = '23505';
+  if v_existing_receipt.command_id is not null then
+    if v_existing_receipt.action <> c_action or v_existing_receipt.church_id <> p_church_id then
+      raise exception 'Identificador de comando já utilizado para outra operação.' using errcode = 'P0020';
     end if;
-
-    return query select
-      v_existing_receipt.command_id,
-      v_existing_receipt.action,
-      v_existing_receipt.church_id,
-      v_existing_receipt.result_entity_id,
-      v_existing_receipt.result_payload,
-      v_existing_receipt.created_at;
+    if v_existing_receipt.params_hash <> v_params_hash then
+      raise exception 'Comando já executado com parâmetros divergentes.' using errcode = 'P0020';
+    end if;
+    return query
+    select v_existing_receipt.command_id, v_existing_receipt.action, v_existing_receipt.church_id,
+           v_existing_receipt.result_entity_id, v_existing_receipt.result_payload, v_existing_receipt.created_at;
     return;
   end if;
 
-  select * into v_team
-  from app_private.teams t
-  where t.church_id = p_church_id and t.id = p_team_id and t.status = 'active'
+  select id, leader_member_id, status
+  into v_team
+  from app_private.teams
+  where church_id = p_church_id and id = p_team_id
   for share;
 
-  if not found then
-    raise exception 'Equipe não encontrada ou inativa.' using errcode = 'P0002';
+  if v_team.id is null or v_team.status <> 'active' then
+    raise exception 'Equipe não encontrada ou inativa.' using errcode = 'P0020';
   end if;
 
-  if not v_is_admin and v_team.leader_member_id <> v_caller_member_id then
-    raise exception 'Apenas o administrador ou o líder desta equipe podem remover integrantes.' using errcode = '42501';
+  -- B2-03: Checagem segura com NULL
+  if not coalesce(v_is_admin, false) and (v_team.leader_member_id is null or v_team.leader_member_id <> v_caller_member_id) then
+    raise exception 'Apenas o líder desta equipe ou administrador pode remover membros.' using errcode = '42501';
   end if;
 
-  if v_team.leader_member_id = p_member_id then
-    raise exception 'Não é permitido desvincular o líder ativo da equipe antes de transferir a liderança.' using errcode = 'P0022';
+  if v_team.leader_member_id is not null and v_team.leader_member_id = p_member_id then
+    raise exception 'Membro lidera a equipe; transfira a liderança antes de removê-lo.' using errcode = 'P0020';
   end if;
 
-  select tm.id into v_membership_id
-  from app_private.team_memberships tm
-  where tm.church_id = p_church_id and tm.team_id = p_team_id and tm.member_id = p_member_id and tm.status = 'active'
+  select id, status
+  into v_membership
+  from app_private.team_memberships
+  where church_id = p_church_id and team_id = p_team_id and member_id = p_member_id
   for update;
 
-  if not found then
-    raise exception 'Membro não integra ativamente esta equipe.' using errcode = 'P0002';
+  if v_membership.id is null or v_membership.status <> 'active' then
+    raise exception 'Membro não integra ativamente esta equipe.' using errcode = 'P0020';
+  end if;
+
+  -- Verifica se membro possui alocações ativas em cultos futuros ou em andamento
+  if exists (
+    select 1
+    from app_private.assignments a
+    join app_private.events e on e.id = a.event_id and e.church_id = a.church_id
+    where a.church_id = p_church_id
+      and a.team_id = p_team_id
+      and a.member_id = p_member_id
+      and a.status = 'active'
+      and e.status in ('scheduled', 'in_progress')
+  ) then
+    raise exception 'Membro possui escalas ativas nesta equipe; substitua ou cancele as escalas antes de removê-lo.' using errcode = 'P0020';
   end if;
 
   update app_private.team_memberships
-  set status = 'inactive'
-  where id = v_membership_id and church_id = p_church_id;
+  set status = 'inactive', updated_at = clock_timestamp()
+  where id = v_membership.id
+  returning updated_at into v_created_at;
+
+  update app_private.member_qualifications
+  set status = 'inactive', updated_at = clock_timestamp()
+  where church_id = p_church_id and team_id = p_team_id and member_id = p_member_id and status = 'active';
 
   v_payload := jsonb_build_object(
-    'membership_id', v_membership_id,
+    'membership_id', v_membership.id,
     'team_id', p_team_id,
     'member_id', p_member_id,
     'status', 'inactive'
   );
 
-  insert into app_private.audit_entries (church_id, operator_user_id, action, entity_type, entity_id, payload)
-  values (p_church_id, v_user_id, c_action, 'team_membership', v_membership_id, v_payload);
+  insert into app_private.audit_entries (
+    church_id, action, actor_user_id, actor_source, maintenance_operator,
+    target_type, target_id, details, occurred_at
+  ) values (
+    p_church_id, c_action, v_user_id, 'application', null,
+    'team_membership', v_membership.id, v_payload, v_created_at
+  );
 
-  insert into app_private.command_receipts (command_id, church_id, action, result_entity_id, result_payload, parameters_hash)
-  values (p_command_id, p_church_id, c_action, v_membership_id, v_payload, v_params_hash);
+  insert into app_private.command_receipts (
+    church_id, user_id, command_id, action, params_hash,
+    result_member_id, result_entity_id, result_payload, created_at
+  ) values (
+    p_church_id, v_user_id, p_command_id, c_action, v_params_hash,
+    null, v_membership.id, v_payload, v_created_at
+  );
 
-  return query select p_command_id, c_action, p_church_id, v_membership_id, v_payload, clock_timestamp();
+  return query
+  select p_command_id, c_action, p_church_id, v_membership.id, v_payload, v_created_at;
 end;
 $function$;
 
--- 2.6 Homologar Aptidão / Qualificação de Membro (Admin ou Líder da Equipe)
+-- 2.6 grant_member_qualification
 create or replace function public.grant_member_qualification(
   p_church_id uuid,
   p_command_id uuid,
@@ -956,10 +1099,10 @@ declare
   v_is_admin boolean;
   v_team record;
   v_qual_id uuid;
-  v_params_canonical text;
   v_params_hash bytea;
   v_existing_receipt record;
   v_payload jsonb;
+  v_created_at timestamptz;
   c_action constant text := 'grant_member_qualification';
 begin
   v_user_id := (select auth.uid());
@@ -974,13 +1117,19 @@ begin
   select ca.member_id, ca.is_admin
   into v_caller_member_id, v_is_admin
   from app_private.church_access ca
-  join app_private.members m on m.id = ca.member_id and m.church_id = ca.church_id
+  join auth.users u on u.id = ca.user_id
   join app_private.churches c on c.id = ca.church_id
+  join app_private.members m on m.id = ca.member_id and m.church_id = ca.church_id
   where ca.user_id = v_user_id
     and ca.church_id = p_church_id
     and ca.status = 'active'
+    and ca.onboarding_completed_at is not null
+    and c.status = 'active'
     and m.status = 'active'
-    and c.status = 'active';
+    and u.email_confirmed_at is not null
+    and u.deleted_at is null
+    and not coalesce(u.is_anonymous, false)
+    and (u.banned_until is null or u.banned_until <= clock_timestamp());
 
   if v_caller_member_id is null then
     raise exception 'Acesso não autorizado nesta igreja.' using errcode = '42501';
@@ -988,72 +1137,67 @@ begin
 
   perform pg_advisory_xact_lock(hashtext(v_user_id::text), hashtext(p_command_id::text));
 
-  v_params_canonical := c_action || ':' || p_church_id::text || ':' || p_member_id::text || ':' || p_team_id::text || ':' || p_team_role_id::text;
-  v_params_hash := extensions.digest(v_params_canonical, 'sha256');
+  v_params_hash := pg_catalog.sha256(convert_to(jsonb_build_object(
+    'action', c_action,
+    'church_id', p_church_id,
+    'member_id', p_member_id,
+    'team_id', p_team_id,
+    'team_role_id', p_team_role_id
+  )::text, 'UTF8'));
 
-  select cr.command_id, cr.action, cr.church_id, cr.result_entity_id, cr.result_payload, cr.created_at, cr.parameters_hash
+  select cr.command_id, cr.action, cr.church_id, cr.result_entity_id, cr.result_payload, cr.created_at, cr.params_hash
   into v_existing_receipt
   from app_private.command_receipts cr
-  where cr.command_id = p_command_id;
+  where cr.user_id = v_user_id
+    and cr.command_id = p_command_id;
 
-  if found then
-    if v_existing_receipt.church_id <> p_church_id
-       or v_existing_receipt.action <> c_action
-       or v_existing_receipt.parameters_hash <> v_params_hash then
-      raise exception 'Comando já executado com parâmetros divergentes ou em outro contexto.' using errcode = '23505';
+  if v_existing_receipt.command_id is not null then
+    if v_existing_receipt.action <> c_action or v_existing_receipt.church_id <> p_church_id then
+      raise exception 'Identificador de comando já utilizado para outra operação.' using errcode = 'P0020';
     end if;
-
-    return query select
-      v_existing_receipt.command_id,
-      v_existing_receipt.action,
-      v_existing_receipt.church_id,
-      v_existing_receipt.result_entity_id,
-      v_existing_receipt.result_payload,
-      v_existing_receipt.created_at;
+    if v_existing_receipt.params_hash <> v_params_hash then
+      raise exception 'Comando já executado com parâmetros divergentes.' using errcode = 'P0020';
+    end if;
+    return query
+    select v_existing_receipt.command_id, v_existing_receipt.action, v_existing_receipt.church_id,
+           v_existing_receipt.result_entity_id, v_existing_receipt.result_payload, v_existing_receipt.created_at;
     return;
   end if;
 
-  -- Lock hierárquico: members -> teams -> team_memberships -> team_roles
-  perform 1 from app_private.members m
-  where m.church_id = p_church_id and m.id = p_member_id and m.status = 'active'
+  select id, leader_member_id, status
+  into v_team
+  from app_private.teams
+  where church_id = p_church_id and id = p_team_id
   for share;
 
-  if not found then
-    raise exception 'Membro não encontrado ou inativo.' using errcode = 'P0002';
+  if v_team.id is null or v_team.status <> 'active' then
+    raise exception 'Equipe não encontrada ou inativa.' using errcode = 'P0020';
   end if;
 
-  select * into v_team
-  from app_private.teams t
-  where t.church_id = p_church_id and t.id = p_team_id and t.status = 'active'
-  for share;
-
-  if not found then
-    raise exception 'Equipe não encontrada ou inativa.' using errcode = 'P0002';
-  end if;
-
-  if not v_is_admin and v_team.leader_member_id <> v_caller_member_id then
-    raise exception 'Apenas o administrador ou o líder desta equipe podem homologar aptidões.' using errcode = '42501';
+  -- B2-03: Checagem segura de liderança
+  if not coalesce(v_is_admin, false) and (v_team.leader_member_id is null or v_team.leader_member_id <> v_caller_member_id) then
+    raise exception 'Apenas o líder desta equipe ou administrador pode homologar aptidões.' using errcode = '42501';
   end if;
 
   if not exists (
-    select 1 from app_private.team_memberships tm
-    where tm.church_id = p_church_id and tm.team_id = p_team_id and tm.member_id = p_member_id and tm.status = 'active'
+    select 1 from app_private.team_roles
+    where church_id = p_church_id and team_id = p_team_id and id = p_team_role_id and status = 'active'
   ) then
-    raise exception 'Membro deve ser integrante ativo da equipe para receber aptidão.' using errcode = 'P0020';
+    raise exception 'Função técnica não encontrada ou inativa nesta equipe.' using errcode = 'P0020';
   end if;
 
   if not exists (
-    select 1 from app_private.team_roles tr
-    where tr.church_id = p_church_id and tr.team_id = p_team_id and tr.id = p_team_role_id and tr.status = 'active'
+    select 1 from app_private.team_memberships
+    where church_id = p_church_id and team_id = p_team_id and member_id = p_member_id and status = 'active'
   ) then
-    raise exception 'Função técnica não encontrada ou inativa nesta equipe.' using errcode = 'P0002';
+    raise exception 'Membro deve integrar ativamente a equipe para receber homologação de aptidão.' using errcode = 'P0020';
   end if;
 
   insert into app_private.member_qualifications (church_id, member_id, team_id, team_role_id, status)
   values (p_church_id, p_member_id, p_team_id, p_team_role_id, 'active')
   on conflict (church_id, member_id, team_role_id) do update
-  set status = 'active'
-  returning id into v_qual_id;
+  set status = 'active', updated_at = clock_timestamp()
+  returning id, updated_at into v_qual_id, v_created_at;
 
   v_payload := jsonb_build_object(
     'qualification_id', v_qual_id,
@@ -1063,17 +1207,28 @@ begin
     'status', 'active'
   );
 
-  insert into app_private.audit_entries (church_id, operator_user_id, action, entity_type, entity_id, payload)
-  values (p_church_id, v_user_id, c_action, 'member_qualification', v_qual_id, v_payload);
+  insert into app_private.audit_entries (
+    church_id, action, actor_user_id, actor_source, maintenance_operator,
+    target_type, target_id, details, occurred_at
+  ) values (
+    p_church_id, c_action, v_user_id, 'application', null,
+    'member_qualification', v_qual_id, v_payload, v_created_at
+  );
 
-  insert into app_private.command_receipts (command_id, church_id, action, result_entity_id, result_payload, parameters_hash)
-  values (p_command_id, p_church_id, c_action, v_qual_id, v_payload, v_params_hash);
+  insert into app_private.command_receipts (
+    church_id, user_id, command_id, action, params_hash,
+    result_member_id, result_entity_id, result_payload, created_at
+  ) values (
+    p_church_id, v_user_id, p_command_id, c_action, v_params_hash,
+    null, v_qual_id, v_payload, v_created_at
+  );
 
-  return query select p_command_id, c_action, p_church_id, v_qual_id, v_payload, clock_timestamp();
+  return query
+  select p_command_id, c_action, p_church_id, v_qual_id, v_payload, v_created_at;
 end;
 $function$;
 
--- 2.7 Revogar Aptidão / Qualificação de Membro (Admin ou Líder da Equipe)
+-- 2.7 revoke_member_qualification
 create or replace function public.revoke_member_qualification(
   p_church_id uuid,
   p_command_id uuid,
@@ -1099,11 +1254,11 @@ declare
   v_caller_member_id uuid;
   v_is_admin boolean;
   v_team record;
-  v_qual_id uuid;
-  v_params_canonical text;
+  v_qual record;
   v_params_hash bytea;
   v_existing_receipt record;
   v_payload jsonb;
+  v_created_at timestamptz;
   c_action constant text := 'revoke_member_qualification';
 begin
   v_user_id := (select auth.uid());
@@ -1118,13 +1273,19 @@ begin
   select ca.member_id, ca.is_admin
   into v_caller_member_id, v_is_admin
   from app_private.church_access ca
-  join app_private.members m on m.id = ca.member_id and m.church_id = ca.church_id
+  join auth.users u on u.id = ca.user_id
   join app_private.churches c on c.id = ca.church_id
+  join app_private.members m on m.id = ca.member_id and m.church_id = ca.church_id
   where ca.user_id = v_user_id
     and ca.church_id = p_church_id
     and ca.status = 'active'
+    and ca.onboarding_completed_at is not null
+    and c.status = 'active'
     and m.status = 'active'
-    and c.status = 'active';
+    and u.email_confirmed_at is not null
+    and u.deleted_at is null
+    and not coalesce(u.is_anonymous, false)
+    and (u.banned_until is null or u.banned_until <= clock_timestamp());
 
   if v_caller_member_id is null then
     raise exception 'Acesso não autorizado nesta igreja.' using errcode = '42501';
@@ -1132,76 +1293,109 @@ begin
 
   perform pg_advisory_xact_lock(hashtext(v_user_id::text), hashtext(p_command_id::text));
 
-  v_params_canonical := c_action || ':' || p_church_id::text || ':' || p_member_id::text || ':' || p_team_id::text || ':' || p_team_role_id::text;
-  v_params_hash := extensions.digest(v_params_canonical, 'sha256');
+  v_params_hash := pg_catalog.sha256(convert_to(jsonb_build_object(
+    'action', c_action,
+    'church_id', p_church_id,
+    'member_id', p_member_id,
+    'team_id', p_team_id,
+    'team_role_id', p_team_role_id
+  )::text, 'UTF8'));
 
-  select cr.command_id, cr.action, cr.church_id, cr.result_entity_id, cr.result_payload, cr.created_at, cr.parameters_hash
+  select cr.command_id, cr.action, cr.church_id, cr.result_entity_id, cr.result_payload, cr.created_at, cr.params_hash
   into v_existing_receipt
   from app_private.command_receipts cr
-  where cr.command_id = p_command_id;
+  where cr.user_id = v_user_id
+    and cr.command_id = p_command_id;
 
-  if found then
-    if v_existing_receipt.church_id <> p_church_id
-       or v_existing_receipt.action <> c_action
-       or v_existing_receipt.parameters_hash <> v_params_hash then
-      raise exception 'Comando já executado com parâmetros divergentes ou em outro contexto.' using errcode = '23505';
+  if v_existing_receipt.command_id is not null then
+    if v_existing_receipt.action <> c_action or v_existing_receipt.church_id <> p_church_id then
+      raise exception 'Identificador de comando já utilizado para outra operação.' using errcode = 'P0020';
     end if;
-
-    return query select
-      v_existing_receipt.command_id,
-      v_existing_receipt.action,
-      v_existing_receipt.church_id,
-      v_existing_receipt.result_entity_id,
-      v_existing_receipt.result_payload,
-      v_existing_receipt.created_at;
+    if v_existing_receipt.params_hash <> v_params_hash then
+      raise exception 'Comando já executado com parâmetros divergentes.' using errcode = 'P0020';
+    end if;
+    return query
+    select v_existing_receipt.command_id, v_existing_receipt.action, v_existing_receipt.church_id,
+           v_existing_receipt.result_entity_id, v_existing_receipt.result_payload, v_existing_receipt.created_at;
     return;
   end if;
 
-  select * into v_team
-  from app_private.teams t
-  where t.church_id = p_church_id and t.id = p_team_id and t.status = 'active'
+  select id, leader_member_id, status
+  into v_team
+  from app_private.teams
+  where church_id = p_church_id and id = p_team_id
   for share;
 
-  if not found then
-    raise exception 'Equipe não encontrada ou inativa.' using errcode = 'P0002';
+  if v_team.id is null or v_team.status <> 'active' then
+    raise exception 'Equipe não encontrada ou inativa.' using errcode = 'P0020';
   end if;
 
-  if not v_is_admin and v_team.leader_member_id <> v_caller_member_id then
-    raise exception 'Apenas o administrador ou o líder desta equipe podem revogar aptidões.' using errcode = '42501';
+  -- B2-03: Checagem segura de liderança
+  if not coalesce(v_is_admin, false) and (v_team.leader_member_id is null or v_team.leader_member_id <> v_caller_member_id) then
+    raise exception 'Apenas o líder desta equipe ou administrador pode revogar aptidões.' using errcode = '42501';
   end if;
 
-  select mq.id into v_qual_id
-  from app_private.member_qualifications mq
-  where mq.church_id = p_church_id and mq.member_id = p_member_id and mq.team_role_id = p_team_role_id and mq.status = 'active'
+  select id, status
+  into v_qual
+  from app_private.member_qualifications
+  where church_id = p_church_id and team_id = p_team_id and team_role_id = p_team_role_id and member_id = p_member_id
   for update;
 
-  if not found then
-    raise exception 'Membro não possui esta qualificação ativa.' using errcode = 'P0002';
+  if v_qual.id is null or v_qual.status <> 'active' then
+    raise exception 'Aptidão não encontrada ou já inativa para este membro nesta equipe.' using errcode = 'P0020';
+  end if;
+
+  -- Verifica se membro possui alocações ativas com esta função técnica
+  if exists (
+    select 1
+    from app_private.assignments a
+    join app_private.events e on e.id = a.event_id and e.church_id = a.church_id
+    where a.church_id = p_church_id
+      and a.team_id = p_team_id
+      and a.team_role_id = p_team_role_id
+      and a.member_id = p_member_id
+      and a.status = 'active'
+      and e.status in ('scheduled', 'in_progress')
+  ) then
+    raise exception 'Membro possui escalas ativas com esta função; substitua ou cancele as escalas antes de revogar a aptidão.' using errcode = 'P0020';
   end if;
 
   update app_private.member_qualifications
-  set status = 'inactive'
-  where id = v_qual_id and church_id = p_church_id;
+  set status = 'inactive', updated_at = clock_timestamp()
+  where id = v_qual.id
+  returning updated_at into v_created_at;
 
   v_payload := jsonb_build_object(
-    'qualification_id', v_qual_id,
+    'qualification_id', v_qual.id,
     'member_id', p_member_id,
     'team_id', p_team_id,
     'team_role_id', p_team_role_id,
     'status', 'inactive'
   );
 
-  insert into app_private.audit_entries (church_id, operator_user_id, action, entity_type, entity_id, payload)
-  values (p_church_id, v_user_id, c_action, 'member_qualification', v_qual_id, v_payload);
+  insert into app_private.audit_entries (
+    church_id, action, actor_user_id, actor_source, maintenance_operator,
+    target_type, target_id, details, occurred_at
+  ) values (
+    p_church_id, c_action, v_user_id, 'application', null,
+    'member_qualification', v_qual.id, v_payload, v_created_at
+  );
 
-  insert into app_private.command_receipts (command_id, church_id, action, result_entity_id, result_payload, parameters_hash)
-  values (p_command_id, p_church_id, c_action, v_qual_id, v_payload, v_params_hash);
+  insert into app_private.command_receipts (
+    church_id, user_id, command_id, action, params_hash,
+    result_member_id, result_entity_id, result_payload, created_at
+  ) values (
+    p_church_id, v_user_id, p_command_id, c_action, v_params_hash,
+    null, v_qual.id, v_payload, v_created_at
+  );
 
-  return query select p_command_id, c_action, p_church_id, v_qual_id, v_payload, clock_timestamp();
+  return query
+  select p_command_id, c_action, p_church_id, v_qual.id, v_payload, v_created_at;
 end;
 $function$;
 
--- 2.8 Criar Culto / Evento (Admin OU Líder de Ministério Ativo)
+
+-- 2.8 create_church_event
 create or replace function public.create_church_event(
   p_church_id uuid,
   p_command_id uuid,
@@ -1228,10 +1422,9 @@ declare
   v_user_id uuid;
   v_caller_member_id uuid;
   v_is_admin boolean;
-  v_is_team_leader boolean;
+  v_timezone text;
   v_title_clean text;
-  v_event_type_clean text;
-  v_params_canonical text;
+  v_type_clean text;
   v_params_hash bytea;
   v_existing_receipt record;
   v_event_id uuid;
@@ -1244,13 +1437,8 @@ begin
     raise exception 'Não autenticado.' using errcode = '28000';
   end if;
 
-  if p_church_id is null or p_command_id is null or p_title is null
-     or p_planned_start_at is null or p_planned_end_at is null then
+  if p_church_id is null or p_command_id is null or p_title is null or p_planned_start_at is null or p_planned_end_at is null then
     raise exception 'Parâmetros obrigatórios ausentes.' using errcode = '22004';
-  end if;
-
-  if p_planned_end_at <= p_planned_start_at then
-    raise exception 'Término previsto deve ser posterior ao início previsto.' using errcode = '22000';
   end if;
 
   v_title_clean := btrim(normalize(p_title, NFC));
@@ -1258,110 +1446,124 @@ begin
     raise exception 'Título do evento deve ter entre 1 e 200 caracteres.' using errcode = '22000';
   end if;
 
-  v_event_type_clean := lower(btrim(coalesce(p_event_type, 'culto')));
+  v_type_clean := lower(btrim(coalesce(p_event_type, 'culto')));
 
-  -- B2-03: Contexto elegível ativo
+  if p_planned_end_at <= p_planned_start_at then
+    raise exception 'Data/hora de término planejada deve ser posterior ao início.' using errcode = '22000';
+  end if;
+
   select ca.member_id, ca.is_admin
   into v_caller_member_id, v_is_admin
   from app_private.church_access ca
-  join app_private.members m on m.id = ca.member_id and m.church_id = ca.church_id
+  join auth.users u on u.id = ca.user_id
   join app_private.churches c on c.id = ca.church_id
+  join app_private.members m on m.id = ca.member_id and m.church_id = ca.church_id
   where ca.user_id = v_user_id
     and ca.church_id = p_church_id
     and ca.status = 'active'
+    and ca.onboarding_completed_at is not null
+    and c.status = 'active'
     and m.status = 'active'
-    and c.status = 'active';
+    and u.email_confirmed_at is not null
+    and u.deleted_at is null
+    and not coalesce(u.is_anonymous, false)
+    and (u.banned_until is null or u.banned_until <= clock_timestamp());
 
-  if v_caller_member_id is null then
-    raise exception 'Acesso não autorizado nesta igreja.' using errcode = '42501';
+  if v_caller_member_id is null or not coalesce(v_is_admin, false) then
+    raise exception 'Apenas administradores ativos podem criar eventos.' using errcode = '42501';
   end if;
 
-  -- Verifica se é líder ativo de ao menos uma equipe
-  select exists (
-    select 1 from app_private.teams t
-    where t.church_id = p_church_id and t.leader_member_id = v_caller_member_id and t.status = 'active'
-  ) into v_is_team_leader;
+  select c.timezone
+  into v_timezone
+  from app_private.churches c
+  where c.id = p_church_id;
 
-  if not v_is_admin and not v_is_team_leader then
-    raise exception 'Apenas administradores ou líderes de ministério podem criar eventos.' using errcode = '42501';
-  end if;
-
-  -- Decisão confirmada: se o criador for Líder de Ministério (não-admin), NÃO pode designar liturgia
-  if not v_is_admin and p_liturgy_leader_member_id is not null then
-    raise exception 'Líderes de ministério não têm permissão para designar a liderança da liturgia.' using errcode = '42501';
+  if v_timezone is null then
+    raise exception 'Igreja não encontrada ou sem fuso horário configurado.' using errcode = '22000';
   end if;
 
   perform pg_advisory_xact_lock(hashtext(v_user_id::text), hashtext(p_command_id::text));
 
-  v_params_canonical := c_action || ':' || p_church_id::text || ':' || v_title_clean || ':' ||
-                        v_event_type_clean || ':' ||
-                        to_char(p_planned_start_at at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"') || ':' ||
-                        to_char(p_planned_end_at at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"') || ':' ||
-                        coalesce(p_liturgy_leader_member_id::text, 'null');
-  v_params_hash := extensions.digest(v_params_canonical, 'sha256');
+  v_params_hash := pg_catalog.sha256(convert_to(jsonb_build_object(
+    'action', c_action,
+    'church_id', p_church_id,
+    'title', v_title_clean,
+    'event_type', v_type_clean,
+    'planned_start_at', to_jsonb(p_planned_start_at),
+    'planned_end_at', to_jsonb(p_planned_end_at),
+    'liturgy_leader_member_id', p_liturgy_leader_member_id
+  )::text, 'UTF8'));
 
-  select cr.command_id, cr.action, cr.church_id, cr.result_entity_id, cr.result_payload, cr.created_at, cr.parameters_hash
+  select cr.command_id, cr.action, cr.church_id, cr.result_entity_id, cr.result_payload, cr.created_at, cr.params_hash
   into v_existing_receipt
   from app_private.command_receipts cr
-  where cr.command_id = p_command_id;
+  where cr.user_id = v_user_id
+    and cr.command_id = p_command_id;
 
-  if found then
-    if v_existing_receipt.church_id <> p_church_id
-       or v_existing_receipt.action <> c_action
-       or v_existing_receipt.parameters_hash <> v_params_hash then
-      raise exception 'Comando já executado com parâmetros divergentes ou em outro contexto.' using errcode = '23505';
+  if v_existing_receipt.command_id is not null then
+    if v_existing_receipt.action <> c_action or v_existing_receipt.church_id <> p_church_id then
+      raise exception 'Identificador de comando já utilizado para outra operação.' using errcode = 'P0020';
     end if;
-
-    return query select
-      v_existing_receipt.command_id,
-      v_existing_receipt.action,
-      v_existing_receipt.church_id,
-      v_existing_receipt.result_entity_id,
-      v_existing_receipt.result_payload,
-      v_existing_receipt.created_at;
+    if v_existing_receipt.params_hash <> v_params_hash then
+      raise exception 'Comando já executado com parâmetros divergentes.' using errcode = 'P0020';
+    end if;
+    return query
+    select v_existing_receipt.command_id, v_existing_receipt.action, v_existing_receipt.church_id,
+           v_existing_receipt.result_entity_id, v_existing_receipt.result_payload, v_existing_receipt.created_at;
     return;
   end if;
 
-  -- Se admin informou líder da liturgia, validar que é membro ativo
   if p_liturgy_leader_member_id is not null then
     if not exists (
-      select 1 from app_private.members m
-      where m.church_id = p_church_id and m.id = p_liturgy_leader_member_id and m.status = 'active'
+      select 1 from app_private.members
+      where church_id = p_church_id and id = p_liturgy_leader_member_id and status = 'active'
     ) then
-      raise exception 'Líder da liturgia informado não é membro ativo desta igreja.' using errcode = 'P0002';
+      raise exception 'Líder de liturgia indicado não encontrado ou inativo nesta igreja.' using errcode = 'P0020';
     end if;
   end if;
 
   insert into app_private.events (
-    church_id, title, event_type, status, planned_start_at, planned_end_at, liturgy_leader_member_id, version
+    church_id, title, event_type, timezone, status,
+    planned_start_at, planned_end_at, liturgy_leader_member_id
+  ) values (
+    p_church_id, v_title_clean, v_type_clean, v_timezone, 'scheduled',
+    p_planned_start_at, p_planned_end_at, p_liturgy_leader_member_id
   )
-  values (
-    p_church_id, v_title_clean, v_event_type_clean, 'scheduled', p_planned_start_at, p_planned_end_at, p_liturgy_leader_member_id, 1
-  )
-  returning id, app_private.events.created_at into v_event_id, v_created_at;
+  returning id, created_at into v_event_id, v_created_at;
 
   v_payload := jsonb_build_object(
     'event_id', v_event_id,
     'title', v_title_clean,
-    'event_type', v_event_type_clean,
+    'event_type', v_type_clean,
+    'timezone', v_timezone,
+    'status', 'scheduled',
     'planned_start_at', p_planned_start_at,
     'planned_end_at', p_planned_end_at,
-    'liturgy_leader_member_id', p_liturgy_leader_member_id,
-    'status', 'scheduled',
-    'version', 1
+    'liturgy_leader_member_id', p_liturgy_leader_member_id
   );
 
-  insert into app_private.audit_entries (church_id, operator_user_id, action, entity_type, entity_id, payload)
-  values (p_church_id, v_user_id, c_action, 'event', v_event_id, v_payload);
+  insert into app_private.audit_entries (
+    church_id, action, actor_user_id, actor_source, maintenance_operator,
+    target_type, target_id, details, occurred_at
+  ) values (
+    p_church_id, c_action, v_user_id, 'application', null,
+    'event', v_event_id, v_payload, v_created_at
+  );
 
-  insert into app_private.command_receipts (command_id, church_id, action, result_entity_id, result_payload, parameters_hash)
-  values (p_command_id, p_church_id, c_action, v_event_id, v_payload, v_params_hash);
+  insert into app_private.command_receipts (
+    church_id, user_id, command_id, action, params_hash,
+    result_member_id, result_entity_id, result_payload, created_at
+  ) values (
+    p_church_id, v_user_id, p_command_id, c_action, v_params_hash,
+    null, v_event_id, v_payload, v_created_at
+  );
 
-  return query select p_command_id, c_action, p_church_id, v_event_id, v_payload, v_created_at;
+  return query
+  select p_command_id, c_action, p_church_id, v_event_id, v_payload, v_created_at;
 end;
 $function$;
 
--- 2.9 Designar / Trocar Líder da Liturgia do Evento (Exclusivo Administrador)
+-- 2.9 assign_event_liturgy_leader
 create or replace function public.assign_event_liturgy_leader(
   p_church_id uuid,
   p_command_id uuid,
@@ -1387,11 +1589,10 @@ declare
   v_caller_member_id uuid;
   v_is_admin boolean;
   v_event record;
-  v_params_canonical text;
   v_params_hash bytea;
   v_existing_receipt record;
   v_payload jsonb;
-  v_new_version integer;
+  v_created_at timestamptz;
   c_action constant text := 'assign_event_liturgy_leader';
 begin
   v_user_id := (select auth.uid());
@@ -1403,100 +1604,118 @@ begin
     raise exception 'Parâmetros obrigatórios ausentes.' using errcode = '22004';
   end if;
 
-  -- B2-03: Exclusivo Administrador ativo
   select ca.member_id, ca.is_admin
   into v_caller_member_id, v_is_admin
   from app_private.church_access ca
-  join app_private.members m on m.id = ca.member_id and m.church_id = ca.church_id
+  join auth.users u on u.id = ca.user_id
   join app_private.churches c on c.id = ca.church_id
+  join app_private.members m on m.id = ca.member_id and m.church_id = ca.church_id
   where ca.user_id = v_user_id
     and ca.church_id = p_church_id
     and ca.status = 'active'
+    and ca.onboarding_completed_at is not null
+    and c.status = 'active'
     and m.status = 'active'
-    and c.status = 'active';
+    and u.email_confirmed_at is not null
+    and u.deleted_at is null
+    and not coalesce(u.is_anonymous, false)
+    and (u.banned_until is null or u.banned_until <= clock_timestamp());
 
+  -- Criação e designação litúrgica exclusiva de administradores
   if v_caller_member_id is null or not coalesce(v_is_admin, false) then
     raise exception 'Apenas administradores ativos podem designar a liderança da liturgia.' using errcode = '42501';
   end if;
 
   perform pg_advisory_xact_lock(hashtext(v_user_id::text), hashtext(p_command_id::text));
 
-  v_params_canonical := c_action || ':' || p_church_id::text || ':' || p_event_id::text || ':' || p_new_liturgy_leader_member_id::text || ':' || coalesce(p_expected_version::text, 'null');
-  v_params_hash := extensions.digest(v_params_canonical, 'sha256');
+  v_params_hash := pg_catalog.sha256(convert_to(jsonb_build_object(
+    'action', c_action,
+    'church_id', p_church_id,
+    'event_id', p_event_id,
+    'new_liturgy_leader_member_id', p_new_liturgy_leader_member_id,
+    'expected_version', p_expected_version
+  )::text, 'UTF8'));
 
-  select cr.command_id, cr.action, cr.church_id, cr.result_entity_id, cr.result_payload, cr.created_at, cr.parameters_hash
+  select cr.command_id, cr.action, cr.church_id, cr.result_entity_id, cr.result_payload, cr.created_at, cr.params_hash
   into v_existing_receipt
   from app_private.command_receipts cr
-  where cr.command_id = p_command_id;
+  where cr.user_id = v_user_id
+    and cr.command_id = p_command_id;
 
-  if found then
-    if v_existing_receipt.church_id <> p_church_id
-       or v_existing_receipt.action <> c_action
-       or v_existing_receipt.parameters_hash <> v_params_hash then
-      raise exception 'Comando já executado com parâmetros divergentes ou em outro contexto.' using errcode = '23505';
+  if v_existing_receipt.command_id is not null then
+    if v_existing_receipt.action <> c_action or v_existing_receipt.church_id <> p_church_id then
+      raise exception 'Identificador de comando já utilizado para outra operação.' using errcode = 'P0020';
     end if;
-
-    return query select
-      v_existing_receipt.command_id,
-      v_existing_receipt.action,
-      v_existing_receipt.church_id,
-      v_existing_receipt.result_entity_id,
-      v_existing_receipt.result_payload,
-      v_existing_receipt.created_at;
+    if v_existing_receipt.params_hash <> v_params_hash then
+      raise exception 'Comando já executado com parâmetros divergentes.' using errcode = 'P0020';
+    end if;
+    return query
+    select v_existing_receipt.command_id, v_existing_receipt.action, v_existing_receipt.church_id,
+           v_existing_receipt.result_entity_id, v_existing_receipt.result_payload, v_existing_receipt.created_at;
     return;
   end if;
 
-  -- Lock hierárquico: members FOR SHARE antes de events FOR UPDATE
-  perform 1 from app_private.members m
-  where m.church_id = p_church_id and m.id = p_new_liturgy_leader_member_id and m.status = 'active'
-  for share;
-
-  if not found then
-    raise exception 'Novo líder da liturgia não é membro ativo desta igreja.' using errcode = 'P0002';
-  end if;
-
-  select * into v_event
-  from app_private.events e
-  where e.church_id = p_church_id and e.id = p_event_id
+  select id, liturgy_leader_member_id, version, status
+  into v_event
+  from app_private.events
+  where church_id = p_church_id and id = p_event_id
   for update;
 
-  if not found then
-    raise exception 'Evento não encontrado.' using errcode = 'P0002';
+  if v_event.id is null then
+    raise exception 'Evento não encontrado nesta igreja.' using errcode = 'P0020';
   end if;
 
   if v_event.status in ('completed', 'cancelled') then
-    raise exception 'Não é permitido alterar liturgia de evento já concluído ou cancelado.' using errcode = 'P0020';
+    raise exception 'Não é possível alterar a liturgia de um evento finalizado ou cancelado.' using errcode = 'P0020';
   end if;
 
   if p_expected_version is not null and v_event.version <> p_expected_version then
-    raise exception 'Versão esperada do evento divergente da atual (conflito de concorrência).' using errcode = 'P0019';
+    raise exception 'Versão esperada divergente da versão atual do evento.' using errcode = 'P0020';
   end if;
 
-  v_new_version := v_event.version + 1;
+  if not exists (
+    select 1 from app_private.members
+    where church_id = p_church_id and id = p_new_liturgy_leader_member_id and status = 'active'
+  ) then
+    raise exception 'Novo líder de liturgia não encontrado ou inativo nesta igreja.' using errcode = 'P0020';
+  end if;
 
   update app_private.events
   set liturgy_leader_member_id = p_new_liturgy_leader_member_id,
-      version = v_new_version
-  where id = p_event_id and church_id = p_church_id;
+      version = version + 1,
+      updated_at = clock_timestamp()
+  where church_id = p_church_id and id = p_event_id
+  returning updated_at into v_created_at;
 
   v_payload := jsonb_build_object(
     'event_id', p_event_id,
-    'previous_liturgy_leader_id', v_event.liturgy_leader_member_id,
-    'new_liturgy_leader_id', p_new_liturgy_leader_member_id,
-    'version', v_new_version
+    'previous_liturgy_leader_member_id', v_event.liturgy_leader_member_id,
+    'new_liturgy_leader_member_id', p_new_liturgy_leader_member_id,
+    'version', v_event.version + 1
   );
 
-  insert into app_private.audit_entries (church_id, operator_user_id, action, entity_type, entity_id, payload)
-  values (p_church_id, v_user_id, c_action, 'event', p_event_id, v_payload);
+  insert into app_private.audit_entries (
+    church_id, action, actor_user_id, actor_source, maintenance_operator,
+    target_type, target_id, details, occurred_at
+  ) values (
+    p_church_id, c_action, v_user_id, 'application', null,
+    'event', p_event_id, v_payload, v_created_at
+  );
 
-  insert into app_private.command_receipts (command_id, church_id, action, result_entity_id, result_payload, parameters_hash)
-  values (p_command_id, p_church_id, c_action, p_event_id, v_payload, v_params_hash);
+  insert into app_private.command_receipts (
+    church_id, user_id, command_id, action, params_hash,
+    result_member_id, result_entity_id, result_payload, created_at
+  ) values (
+    p_church_id, v_user_id, p_command_id, c_action, v_params_hash,
+    null, p_event_id, v_payload, v_created_at
+  );
 
-  return query select p_command_id, c_action, p_church_id, p_event_id, v_payload, clock_timestamp();
+  return query
+  select p_command_id, c_action, p_church_id, p_event_id, v_payload, v_created_at;
 end;
 $function$;
 
--- 2.10 Iniciar Execução do Culto / Evento (Exclusivo Líder da Liturgia ou Admin)
+-- 2.10 start_event_service (Restrito estritamente à liderança de liturgia designada - B2-03)
 create or replace function public.start_event_service(
   p_church_id uuid,
   p_command_id uuid,
@@ -1521,11 +1740,10 @@ declare
   v_caller_member_id uuid;
   v_is_admin boolean;
   v_event record;
-  v_params_canonical text;
   v_params_hash bytea;
   v_existing_receipt record;
   v_payload jsonb;
-  v_new_version integer;
+  v_created_at timestamptz;
   c_action constant text := 'start_event_service';
 begin
   v_user_id := (select auth.uid());
@@ -1540,13 +1758,19 @@ begin
   select ca.member_id, ca.is_admin
   into v_caller_member_id, v_is_admin
   from app_private.church_access ca
-  join app_private.members m on m.id = ca.member_id and m.church_id = ca.church_id
+  join auth.users u on u.id = ca.user_id
   join app_private.churches c on c.id = ca.church_id
+  join app_private.members m on m.id = ca.member_id and m.church_id = ca.church_id
   where ca.user_id = v_user_id
     and ca.church_id = p_church_id
     and ca.status = 'active'
+    and ca.onboarding_completed_at is not null
+    and c.status = 'active'
     and m.status = 'active'
-    and c.status = 'active';
+    and u.email_confirmed_at is not null
+    and u.deleted_at is null
+    and not coalesce(u.is_anonymous, false)
+    and (u.banned_until is null or u.banned_until <= clock_timestamp());
 
   if v_caller_member_id is null then
     raise exception 'Acesso não autorizado nesta igreja.' using errcode = '42501';
@@ -1554,80 +1778,92 @@ begin
 
   perform pg_advisory_xact_lock(hashtext(v_user_id::text), hashtext(p_command_id::text));
 
-  v_params_canonical := c_action || ':' || p_church_id::text || ':' || p_event_id::text || ':' || coalesce(p_expected_version::text, 'null');
-  v_params_hash := extensions.digest(v_params_canonical, 'sha256');
+  v_params_hash := pg_catalog.sha256(convert_to(jsonb_build_object(
+    'action', c_action,
+    'church_id', p_church_id,
+    'event_id', p_event_id,
+    'expected_version', p_expected_version
+  )::text, 'UTF8'));
 
-  select cr.command_id, cr.action, cr.church_id, cr.result_entity_id, cr.result_payload, cr.created_at, cr.parameters_hash
+  select cr.command_id, cr.action, cr.church_id, cr.result_entity_id, cr.result_payload, cr.created_at, cr.params_hash
   into v_existing_receipt
   from app_private.command_receipts cr
-  where cr.command_id = p_command_id;
+  where cr.user_id = v_user_id
+    and cr.command_id = p_command_id;
 
-  if found then
-    if v_existing_receipt.church_id <> p_church_id
-       or v_existing_receipt.action <> c_action
-       or v_existing_receipt.parameters_hash <> v_params_hash then
-      raise exception 'Comando já executado com parâmetros divergentes ou em outro contexto.' using errcode = '23505';
+  if v_existing_receipt.command_id is not null then
+    if v_existing_receipt.action <> c_action or v_existing_receipt.church_id <> p_church_id then
+      raise exception 'Identificador de comando já utilizado para outra operação.' using errcode = 'P0020';
     end if;
-
-    return query select
-      v_existing_receipt.command_id,
-      v_existing_receipt.action,
-      v_existing_receipt.church_id,
-      v_existing_receipt.result_entity_id,
-      v_existing_receipt.result_payload,
-      v_existing_receipt.created_at;
+    if v_existing_receipt.params_hash <> v_params_hash then
+      raise exception 'Comando já executado com parâmetros divergentes.' using errcode = 'P0020';
+    end if;
+    return query
+    select v_existing_receipt.command_id, v_existing_receipt.action, v_existing_receipt.church_id,
+           v_existing_receipt.result_entity_id, v_existing_receipt.result_payload, v_existing_receipt.created_at;
     return;
   end if;
 
-  -- Lock no evento para atualização segura
-  select * into v_event
-  from app_private.events e
-  where e.church_id = p_church_id and e.id = p_event_id
+  select id, liturgy_leader_member_id, status, version
+  into v_event
+  from app_private.events
+  where church_id = p_church_id and id = p_event_id
   for update;
 
-  if not found then
-    raise exception 'Evento não encontrado.' using errcode = 'P0002';
+  if v_event.id is null then
+    raise exception 'Evento não encontrado nesta igreja.' using errcode = 'P0020';
   end if;
 
-  -- B2-03: Revalidação estrita de autoridade sob o lock
-  if not v_is_admin and v_event.liturgy_leader_member_id <> v_caller_member_id then
-    raise exception 'Apenas o líder designado da liturgia deste evento pode iniciar a execução do culto.' using errcode = '42501';
+  -- B2-03: Condução exclusiva da liturgia designada (PRD 101-111/184)
+  if v_event.liturgy_leader_member_id is null or v_event.liturgy_leader_member_id <> v_caller_member_id then
+    raise exception 'Apenas o líder de liturgia designado pode iniciar o culto.' using errcode = '42501';
   end if;
 
   if v_event.status <> 'scheduled' then
-    raise exception 'Apenas eventos agendados podem ser iniciados (status atual: %).' , v_event.status using errcode = 'P0020';
+    raise exception 'Apenas eventos em estado agendado podem ser iniciados.' using errcode = 'P0020';
   end if;
 
   if p_expected_version is not null and v_event.version <> p_expected_version then
-    raise exception 'Versão esperada do evento divergente da atual.' using errcode = 'P0019';
+    raise exception 'Versão esperada divergente da versão atual do evento.' using errcode = 'P0020';
   end if;
-
-  v_new_version := v_event.version + 1;
 
   update app_private.events
   set status = 'in_progress',
       actual_start_at = clock_timestamp(),
-      version = v_new_version
-  where id = p_event_id and church_id = p_church_id;
+      version = version + 1,
+      updated_at = clock_timestamp()
+  where church_id = p_church_id and id = p_event_id
+  returning updated_at into v_created_at;
 
   v_payload := jsonb_build_object(
     'event_id', p_event_id,
     'status', 'in_progress',
-    'actual_start_at', clock_timestamp(),
-    'version', v_new_version
+    'actual_start_at', v_created_at,
+    'version', v_event.version + 1
   );
 
-  insert into app_private.audit_entries (church_id, operator_user_id, action, entity_type, entity_id, payload)
-  values (p_church_id, v_user_id, c_action, 'event', p_event_id, v_payload);
+  insert into app_private.audit_entries (
+    church_id, action, actor_user_id, actor_source, maintenance_operator,
+    target_type, target_id, details, occurred_at
+  ) values (
+    p_church_id, c_action, v_user_id, 'application', null,
+    'event', p_event_id, v_payload, v_created_at
+  );
 
-  insert into app_private.command_receipts (command_id, church_id, action, result_entity_id, result_payload, parameters_hash)
-  values (p_command_id, p_church_id, c_action, p_event_id, v_payload, v_params_hash);
+  insert into app_private.command_receipts (
+    church_id, user_id, command_id, action, params_hash,
+    result_member_id, result_entity_id, result_payload, created_at
+  ) values (
+    p_church_id, v_user_id, p_command_id, c_action, v_params_hash,
+    null, p_event_id, v_payload, v_created_at
+  );
 
-  return query select p_command_id, c_action, p_church_id, p_event_id, v_payload, clock_timestamp();
+  return query
+  select p_command_id, c_action, p_church_id, p_event_id, v_payload, v_created_at;
 end;
 $function$;
 
--- 2.11 Encerrar Culto / Evento (Exclusivo Líder da Liturgia ou Admin)
+-- 2.11 finish_event_service (Restrito estritamente à liderança de liturgia designada - B2-03)
 create or replace function public.finish_event_service(
   p_church_id uuid,
   p_command_id uuid,
@@ -1652,11 +1888,10 @@ declare
   v_caller_member_id uuid;
   v_is_admin boolean;
   v_event record;
-  v_params_canonical text;
   v_params_hash bytea;
   v_existing_receipt record;
   v_payload jsonb;
-  v_new_version integer;
+  v_created_at timestamptz;
   c_action constant text := 'finish_event_service';
 begin
   v_user_id := (select auth.uid());
@@ -1671,13 +1906,19 @@ begin
   select ca.member_id, ca.is_admin
   into v_caller_member_id, v_is_admin
   from app_private.church_access ca
-  join app_private.members m on m.id = ca.member_id and m.church_id = ca.church_id
+  join auth.users u on u.id = ca.user_id
   join app_private.churches c on c.id = ca.church_id
+  join app_private.members m on m.id = ca.member_id and m.church_id = ca.church_id
   where ca.user_id = v_user_id
     and ca.church_id = p_church_id
     and ca.status = 'active'
+    and ca.onboarding_completed_at is not null
+    and c.status = 'active'
     and m.status = 'active'
-    and c.status = 'active';
+    and u.email_confirmed_at is not null
+    and u.deleted_at is null
+    and not coalesce(u.is_anonymous, false)
+    and (u.banned_until is null or u.banned_until <= clock_timestamp());
 
   if v_caller_member_id is null then
     raise exception 'Acesso não autorizado nesta igreja.' using errcode = '42501';
@@ -1685,91 +1926,96 @@ begin
 
   perform pg_advisory_xact_lock(hashtext(v_user_id::text), hashtext(p_command_id::text));
 
-  v_params_canonical := c_action || ':' || p_church_id::text || ':' || p_event_id::text || ':' || coalesce(p_expected_version::text, 'null');
-  v_params_hash := extensions.digest(v_params_canonical, 'sha256');
+  v_params_hash := pg_catalog.sha256(convert_to(jsonb_build_object(
+    'action', c_action,
+    'church_id', p_church_id,
+    'event_id', p_event_id,
+    'expected_version', p_expected_version
+  )::text, 'UTF8'));
 
-  select cr.command_id, cr.action, cr.church_id, cr.result_entity_id, cr.result_payload, cr.created_at, cr.parameters_hash
+  select cr.command_id, cr.action, cr.church_id, cr.result_entity_id, cr.result_payload, cr.created_at, cr.params_hash
   into v_existing_receipt
   from app_private.command_receipts cr
-  where cr.command_id = p_command_id;
+  where cr.user_id = v_user_id
+    and cr.command_id = p_command_id;
 
-  if found then
-    if v_existing_receipt.church_id <> p_church_id
-       or v_existing_receipt.action <> c_action
-       or v_existing_receipt.parameters_hash <> v_params_hash then
-      raise exception 'Comando já executado com parâmetros divergentes ou em outro contexto.' using errcode = '23505';
+  if v_existing_receipt.command_id is not null then
+    if v_existing_receipt.action <> c_action or v_existing_receipt.church_id <> p_church_id then
+      raise exception 'Identificador de comando já utilizado para outra operação.' using errcode = 'P0020';
     end if;
-
-    return query select
-      v_existing_receipt.command_id,
-      v_existing_receipt.action,
-      v_existing_receipt.church_id,
-      v_existing_receipt.result_entity_id,
-      v_existing_receipt.result_payload,
-      v_existing_receipt.created_at;
+    if v_existing_receipt.params_hash <> v_params_hash then
+      raise exception 'Comando já executado com parâmetros divergentes.' using errcode = 'P0020';
+    end if;
+    return query
+    select v_existing_receipt.command_id, v_existing_receipt.action, v_existing_receipt.church_id,
+           v_existing_receipt.result_entity_id, v_existing_receipt.result_payload, v_existing_receipt.created_at;
     return;
   end if;
 
-  select * into v_event
-  from app_private.events e
-  where e.church_id = p_church_id and e.id = p_event_id
+  select id, liturgy_leader_member_id, status, version
+  into v_event
+  from app_private.events
+  where church_id = p_church_id and id = p_event_id
   for update;
 
-  if not found then
-    raise exception 'Evento não encontrado.' using errcode = 'P0002';
+  if v_event.id is null then
+    raise exception 'Evento não encontrado nesta igreja.' using errcode = 'P0020';
   end if;
 
-  -- B2-03: Revalidação estrita de autoridade sob o lock do evento
-  if not v_is_admin and v_event.liturgy_leader_member_id <> v_caller_member_id then
-    raise exception 'Apenas o líder da liturgia deste evento ou administradores podem encerrar o culto.' using errcode = '42501';
+  -- B2-03: Condução exclusiva da liturgia designada (PRD 101-111/184)
+  if v_event.liturgy_leader_member_id is null or v_event.liturgy_leader_member_id <> v_caller_member_id then
+    raise exception 'Apenas o líder de liturgia designado pode finalizar o culto.' using errcode = '42501';
   end if;
 
-  -- B2-04: Preservação de estados terminais (não converter cancelado em concluído)
-  if v_event.status in ('completed', 'cancelled') then
-    raise exception 'Evento já se encontra encerrado em estado terminal (%).' , v_event.status using errcode = 'P0020';
+  if v_event.status <> 'in_progress' then
+    raise exception 'Apenas eventos em andamento podem ser finalizados.' using errcode = 'P0020';
   end if;
 
   if p_expected_version is not null and v_event.version <> p_expected_version then
-    raise exception 'Versão esperada do evento divergente da atual.' using errcode = 'P0019';
+    raise exception 'Versão esperada divergente da versão atual do evento.' using errcode = 'P0020';
   end if;
-
-  v_new_version := v_event.version + 1;
 
   update app_private.events
   set status = 'completed',
       actual_end_at = clock_timestamp(),
-      version = v_new_version
-  where id = p_event_id and church_id = p_church_id;
-
-  -- B2-04: Transição explícita dos itens conforme PRD M15
-  update app_private.event_items
-  set status = 'completed',
-      actual_end_at = clock_timestamp()
-  where church_id = p_church_id and event_id = p_event_id and status = 'in_progress';
+      version = version + 1,
+      updated_at = clock_timestamp()
+  where church_id = p_church_id and id = p_event_id
+  returning updated_at into v_created_at;
 
   update app_private.event_items
-  set status = 'cancelled',
-      cancel_reason = 'Culto encerrado antes do início da atividade'
-  where church_id = p_church_id and event_id = p_event_id and status = 'pending';
+  set status = 'completed', actual_end_at = coalesce(actual_end_at, clock_timestamp()), updated_at = clock_timestamp()
+  where church_id = p_church_id and event_id = p_event_id and status in ('pending', 'in_progress');
 
   v_payload := jsonb_build_object(
     'event_id', p_event_id,
     'status', 'completed',
-    'actual_end_at', clock_timestamp(),
-    'version', v_new_version
+    'actual_end_at', v_created_at,
+    'version', v_event.version + 1
   );
 
-  insert into app_private.audit_entries (church_id, operator_user_id, action, entity_type, entity_id, payload)
-  values (p_church_id, v_user_id, c_action, 'event', p_event_id, v_payload);
+  insert into app_private.audit_entries (
+    church_id, action, actor_user_id, actor_source, maintenance_operator,
+    target_type, target_id, details, occurred_at
+  ) values (
+    p_church_id, c_action, v_user_id, 'application', null,
+    'event', p_event_id, v_payload, v_created_at
+  );
 
-  insert into app_private.command_receipts (command_id, church_id, action, result_entity_id, result_payload, parameters_hash)
-  values (p_command_id, p_church_id, c_action, p_event_id, v_payload, v_params_hash);
+  insert into app_private.command_receipts (
+    church_id, user_id, command_id, action, params_hash,
+    result_member_id, result_entity_id, result_payload, created_at
+  ) values (
+    p_church_id, v_user_id, p_command_id, c_action, v_params_hash,
+    null, p_event_id, v_payload, v_created_at
+  );
 
-  return query select p_command_id, c_action, p_church_id, p_event_id, v_payload, clock_timestamp();
+  return query
+  select p_command_id, c_action, p_church_id, p_event_id, v_payload, v_created_at;
 end;
 $function$;
 
--- 2.12 Cancelar Culto / Evento (Admin ou Líder da Liturgia com motivo obrigatório)
+-- 2.12 cancel_church_event
 create or replace function public.cancel_church_event(
   p_church_id uuid,
   p_command_id uuid,
@@ -1796,11 +2042,10 @@ declare
   v_is_admin boolean;
   v_event record;
   v_reason_clean text;
-  v_params_canonical text;
   v_params_hash bytea;
   v_existing_receipt record;
   v_payload jsonb;
-  v_new_version integer;
+  v_created_at timestamptz;
   c_action constant text := 'cancel_church_event';
 begin
   v_user_id := (select auth.uid());
@@ -1813,20 +2058,26 @@ begin
   end if;
 
   v_reason_clean := btrim(normalize(p_cancel_reason, NFC));
-  if char_length(v_reason_clean) < 3 or char_length(v_reason_clean) > 500 then
-    raise exception 'Motivo do cancelamento deve ter entre 3 e 500 caracteres.' using errcode = '22000';
+  if char_length(v_reason_clean) < 1 then
+    raise exception 'Motivo de cancelamento obrigatório.' using errcode = '22000';
   end if;
 
   select ca.member_id, ca.is_admin
   into v_caller_member_id, v_is_admin
   from app_private.church_access ca
-  join app_private.members m on m.id = ca.member_id and m.church_id = ca.church_id
+  join auth.users u on u.id = ca.user_id
   join app_private.churches c on c.id = ca.church_id
+  join app_private.members m on m.id = ca.member_id and m.church_id = ca.church_id
   where ca.user_id = v_user_id
     and ca.church_id = p_church_id
     and ca.status = 'active'
+    and ca.onboarding_completed_at is not null
+    and c.status = 'active'
     and m.status = 'active'
-    and c.status = 'active';
+    and u.email_confirmed_at is not null
+    and u.deleted_at is null
+    and not coalesce(u.is_anonymous, false)
+    and (u.banned_until is null or u.banned_until <= clock_timestamp());
 
   if v_caller_member_id is null then
     raise exception 'Acesso não autorizado nesta igreja.' using errcode = '42501';
@@ -1834,84 +2085,307 @@ begin
 
   perform pg_advisory_xact_lock(hashtext(v_user_id::text), hashtext(p_command_id::text));
 
-  v_params_canonical := c_action || ':' || p_church_id::text || ':' || p_event_id::text || ':' || v_reason_clean || ':' || coalesce(p_expected_version::text, 'null');
-  v_params_hash := extensions.digest(v_params_canonical, 'sha256');
+  v_params_hash := pg_catalog.sha256(convert_to(jsonb_build_object(
+    'action', c_action,
+    'church_id', p_church_id,
+    'event_id', p_event_id,
+    'cancel_reason', v_reason_clean,
+    'expected_version', p_expected_version
+  )::text, 'UTF8'));
 
-  select cr.command_id, cr.action, cr.church_id, cr.result_entity_id, cr.result_payload, cr.created_at, cr.parameters_hash
+  select cr.command_id, cr.action, cr.church_id, cr.result_entity_id, cr.result_payload, cr.created_at, cr.params_hash
   into v_existing_receipt
   from app_private.command_receipts cr
-  where cr.command_id = p_command_id;
+  where cr.user_id = v_user_id
+    and cr.command_id = p_command_id;
 
-  if found then
-    if v_existing_receipt.church_id <> p_church_id
-       or v_existing_receipt.action <> c_action
-       or v_existing_receipt.parameters_hash <> v_params_hash then
-      raise exception 'Comando já executado com parâmetros divergentes ou em outro contexto.' using errcode = '23505';
+  if v_existing_receipt.command_id is not null then
+    if v_existing_receipt.action <> c_action or v_existing_receipt.church_id <> p_church_id then
+      raise exception 'Identificador de comando já utilizado para outra operação.' using errcode = 'P0020';
     end if;
-
-    return query select
-      v_existing_receipt.command_id,
-      v_existing_receipt.action,
-      v_existing_receipt.church_id,
-      v_existing_receipt.result_entity_id,
-      v_existing_receipt.result_payload,
-      v_existing_receipt.created_at;
+    if v_existing_receipt.params_hash <> v_params_hash then
+      raise exception 'Comando já executado com parâmetros divergentes.' using errcode = 'P0020';
+    end if;
+    return query
+    select v_existing_receipt.command_id, v_existing_receipt.action, v_existing_receipt.church_id,
+           v_existing_receipt.result_entity_id, v_existing_receipt.result_payload, v_existing_receipt.created_at;
     return;
   end if;
 
-  select * into v_event
-  from app_private.events e
-  where e.church_id = p_church_id and e.id = p_event_id
+  select id, liturgy_leader_member_id, status, version
+  into v_event
+  from app_private.events
+  where church_id = p_church_id and id = p_event_id
   for update;
 
-  if not found then
-    raise exception 'Evento não encontrado.' using errcode = 'P0002';
+  if v_event.id is null then
+    raise exception 'Evento não encontrado nesta igreja.' using errcode = 'P0020';
   end if;
 
-  if not v_is_admin and v_event.liturgy_leader_member_id <> v_caller_member_id then
-    raise exception 'Apenas o líder da liturgia deste evento ou administradores podem cancelar o culto.' using errcode = '42501';
+  -- B2-03: Checagem segura de autoridade (Admin ou Líder de Liturgia designado)
+  if not coalesce(v_is_admin, false) and (v_event.liturgy_leader_member_id is null or v_event.liturgy_leader_member_id <> v_caller_member_id) then
+    raise exception 'Apenas o líder de liturgia designado ou administrador pode cancelar o evento.' using errcode = '42501';
   end if;
 
   if v_event.status in ('completed', 'cancelled') then
-    raise exception 'Evento já se encontra encerrado em estado terminal (%).' , v_event.status using errcode = 'P0020';
+    raise exception 'Evento já finalizado ou previamente cancelado.' using errcode = 'P0020';
   end if;
 
   if p_expected_version is not null and v_event.version <> p_expected_version then
-    raise exception 'Versão esperada do evento divergente da atual.' using errcode = 'P0019';
+    raise exception 'Versão esperada divergente da versão atual do evento.' using errcode = 'P0020';
   end if;
-
-  v_new_version := v_event.version + 1;
 
   update app_private.events
   set status = 'cancelled',
       cancel_reason = v_reason_clean,
-      actual_end_at = clock_timestamp(),
-      version = v_new_version
-  where id = p_event_id and church_id = p_church_id;
+      version = version + 1,
+      updated_at = clock_timestamp()
+  where church_id = p_church_id and id = p_event_id
+  returning updated_at into v_created_at;
 
   update app_private.event_items
-  set status = 'cancelled',
-      cancel_reason = v_reason_clean
+  set status = 'cancelled', cancel_reason = v_reason_clean, updated_at = clock_timestamp()
   where church_id = p_church_id and event_id = p_event_id and status in ('pending', 'in_progress');
+
+  update app_private.assignments
+  set status = 'cancelled', updated_at = clock_timestamp()
+  where church_id = p_church_id and event_id = p_event_id and status = 'active';
 
   v_payload := jsonb_build_object(
     'event_id', p_event_id,
     'status', 'cancelled',
     'cancel_reason', v_reason_clean,
-    'version', v_new_version
+    'version', v_event.version + 1
   );
 
-  insert into app_private.audit_entries (church_id, operator_user_id, action, entity_type, entity_id, payload)
-  values (p_church_id, v_user_id, c_action, 'event', p_event_id, v_payload);
+  insert into app_private.audit_entries (
+    church_id, action, actor_user_id, actor_source, maintenance_operator,
+    target_type, target_id, details, occurred_at
+  ) values (
+    p_church_id, c_action, v_user_id, 'application', null,
+    'event', p_event_id, v_payload, v_created_at
+  );
 
-  insert into app_private.command_receipts (command_id, church_id, action, result_entity_id, result_payload, parameters_hash)
-  values (p_command_id, p_church_id, c_action, p_event_id, v_payload, v_params_hash);
+  insert into app_private.command_receipts (
+    church_id, user_id, command_id, action, params_hash,
+    result_member_id, result_entity_id, result_payload, created_at
+  ) values (
+    p_church_id, v_user_id, p_command_id, c_action, v_params_hash,
+    null, p_event_id, v_payload, v_created_at
+  );
 
-  return query select p_command_id, c_action, p_church_id, p_event_id, v_payload, clock_timestamp();
+  return query
+  select p_command_id, c_action, p_church_id, p_event_id, v_payload, v_created_at;
 end;
 $function$;
 
--- 2.13 Alocar Voluntário em Evento/Item (Líder da Equipe ou Liturgia/Admin)
+
+-- 2.13 create_event_item (Fonte real de itens de culto e responsabilidade nominal - B2-02)
+create or replace function public.create_event_item(
+  p_church_id uuid,
+  p_command_id uuid,
+  p_event_id uuid,
+  p_title text,
+  p_item_nature text default 'liturgical',
+  p_sequence_order integer default 1,
+  p_planned_duration_seconds integer default 300,
+  p_designated_team_id uuid default null,
+  p_nominal_leader_member_id uuid default null
+)
+returns table (
+  command_id uuid,
+  action text,
+  church_id uuid,
+  result_entity_id uuid,
+  result_payload jsonb,
+  created_at timestamptz
+)
+language plpgsql
+security definer
+set search_path = ''
+set statement_timeout = '5s'
+as $function$
+declare
+  v_user_id uuid;
+  v_caller_member_id uuid;
+  v_is_admin boolean;
+  v_event record;
+  v_team record;
+  v_title_clean text;
+  v_nature_clean text;
+  v_params_hash bytea;
+  v_existing_receipt record;
+  v_item_id uuid;
+  v_payload jsonb;
+  v_created_at timestamptz;
+  c_action constant text := 'create_event_item';
+begin
+  v_user_id := (select auth.uid());
+  if v_user_id is null then
+    raise exception 'Não autenticado.' using errcode = '28000';
+  end if;
+
+  if p_church_id is null or p_command_id is null or p_event_id is null or p_title is null then
+    raise exception 'Parâmetros obrigatórios ausentes.' using errcode = '22004';
+  end if;
+
+  v_title_clean := btrim(normalize(p_title, NFC));
+  if char_length(v_title_clean) < 1 or char_length(v_title_clean) > 200 then
+    raise exception 'Título do item deve ter entre 1 e 200 caracteres.' using errcode = '22000';
+  end if;
+
+  v_nature_clean := lower(coalesce(p_item_nature, 'liturgical'));
+  if v_nature_clean not in ('liturgical', 'parallel_support') then
+    raise exception 'Natureza do item deve ser liturgical ou parallel_support.' using errcode = '22000';
+  end if;
+
+  if coalesce(p_planned_duration_seconds, 0) <= 0 then
+    raise exception 'Duração planejada em segundos deve ser maior que zero.' using errcode = '22000';
+  end if;
+
+  select ca.member_id, ca.is_admin
+  into v_caller_member_id, v_is_admin
+  from app_private.church_access ca
+  join auth.users u on u.id = ca.user_id
+  join app_private.churches c on c.id = ca.church_id
+  join app_private.members m on m.id = ca.member_id and m.church_id = ca.church_id
+  where ca.user_id = v_user_id
+    and ca.church_id = p_church_id
+    and ca.status = 'active'
+    and ca.onboarding_completed_at is not null
+    and c.status = 'active'
+    and m.status = 'active'
+    and u.email_confirmed_at is not null
+    and u.deleted_at is null
+    and not coalesce(u.is_anonymous, false)
+    and (u.banned_until is null or u.banned_until <= clock_timestamp());
+
+  if v_caller_member_id is null then
+    raise exception 'Acesso não autorizado nesta igreja.' using errcode = '42501';
+  end if;
+
+  perform pg_advisory_xact_lock(hashtext(v_user_id::text), hashtext(p_command_id::text));
+
+  v_params_hash := pg_catalog.sha256(convert_to(jsonb_build_object(
+    'action', c_action,
+    'church_id', p_church_id,
+    'event_id', p_event_id,
+    'title', v_title_clean,
+    'item_nature', v_nature_clean,
+    'sequence_order', p_sequence_order,
+    'planned_duration_seconds', p_planned_duration_seconds,
+    'designated_team_id', p_designated_team_id,
+    'nominal_leader_member_id', p_nominal_leader_member_id
+  )::text, 'UTF8'));
+
+  select cr.command_id, cr.action, cr.church_id, cr.result_entity_id, cr.result_payload, cr.created_at, cr.params_hash
+  into v_existing_receipt
+  from app_private.command_receipts cr
+  where cr.user_id = v_user_id
+    and cr.command_id = p_command_id;
+
+  if v_existing_receipt.command_id is not null then
+    if v_existing_receipt.action <> c_action or v_existing_receipt.church_id <> p_church_id then
+      raise exception 'Identificador de comando já utilizado para outra operação.' using errcode = 'P0020';
+    end if;
+    if v_existing_receipt.params_hash <> v_params_hash then
+      raise exception 'Comando já executado com parâmetros divergentes.' using errcode = 'P0020';
+    end if;
+    return query
+    select v_existing_receipt.command_id, v_existing_receipt.action, v_existing_receipt.church_id,
+           v_existing_receipt.result_entity_id, v_existing_receipt.result_payload, v_existing_receipt.created_at;
+    return;
+  end if;
+
+  select id, liturgy_leader_member_id, status
+  into v_event
+  from app_private.events
+  where church_id = p_church_id and id = p_event_id
+  for share;
+
+  if v_event.id is null then
+    raise exception 'Evento não encontrado nesta igreja.' using errcode = 'P0020';
+  end if;
+
+  if v_event.status in ('completed', 'cancelled') then
+    raise exception 'Não é possível adicionar itens a eventos finalizados ou cancelados.' using errcode = 'P0020';
+  end if;
+
+  -- Checagem de autoridade (Admin, Líder de liturgia do evento ou líder da equipe designada)
+  if not coalesce(v_is_admin, false)
+     and (v_event.liturgy_leader_member_id is null or v_event.liturgy_leader_member_id <> v_caller_member_id) then
+    if p_designated_team_id is not null then
+      select id, leader_member_id into v_team
+      from app_private.teams where church_id = p_church_id and id = p_designated_team_id;
+      if v_team.leader_member_id is null or v_team.leader_member_id <> v_caller_member_id then
+        raise exception 'Apenas o líder de liturgia, líder da equipe designada ou administrador pode criar itens de cronograma.' using errcode = '42501';
+      end if;
+    else
+      raise exception 'Apenas o líder de liturgia ou administrador pode criar itens de cronograma.' using errcode = '42501';
+    end if;
+  end if;
+
+  if p_designated_team_id is not null then
+    if not exists (
+      select 1 from app_private.teams
+      where church_id = p_church_id and id = p_designated_team_id and status = 'active'
+    ) then
+      raise exception 'Equipe designada não encontrada ou inativa nesta igreja.' using errcode = 'P0020';
+    end if;
+  end if;
+
+  if p_nominal_leader_member_id is not null then
+    if not exists (
+      select 1 from app_private.members
+      where church_id = p_church_id and id = p_nominal_leader_member_id and status = 'active'
+    ) then
+      raise exception 'Responsável nominal não encontrado ou inativo nesta igreja.' using errcode = 'P0020';
+    end if;
+  end if;
+
+  insert into app_private.event_items (
+    church_id, event_id, title, item_nature, sequence_order,
+    planned_duration_seconds, designated_team_id, nominal_leader_member_id, status
+  ) values (
+    p_church_id, p_event_id, v_title_clean, v_nature_clean, coalesce(p_sequence_order, 1),
+    p_planned_duration_seconds, p_designated_team_id, p_nominal_leader_member_id, 'pending'
+  )
+  returning id, created_at into v_item_id, v_created_at;
+
+  v_payload := jsonb_build_object(
+    'item_id', v_item_id,
+    'event_id', p_event_id,
+    'title', v_title_clean,
+    'item_nature', v_nature_clean,
+    'sequence_order', p_sequence_order,
+    'planned_duration_seconds', p_planned_duration_seconds,
+    'designated_team_id', p_designated_team_id,
+    'nominal_leader_member_id', p_nominal_leader_member_id,
+    'status', 'pending'
+  );
+
+  insert into app_private.audit_entries (
+    church_id, action, actor_user_id, actor_source, maintenance_operator,
+    target_type, target_id, details, occurred_at
+  ) values (
+    p_church_id, c_action, v_user_id, 'application', null,
+    'event_item', v_item_id, v_payload, v_created_at
+  );
+
+  insert into app_private.command_receipts (
+    church_id, user_id, command_id, action, params_hash,
+    result_member_id, result_entity_id, result_payload, created_at
+  ) values (
+    p_church_id, v_user_id, p_command_id, c_action, v_params_hash,
+    null, v_item_id, v_payload, v_created_at
+  );
+
+  return query
+  select p_command_id, c_action, p_church_id, v_item_id, v_payload, v_created_at;
+end;
+$function$;
+
+-- 2.14 assign_event_participant
 create or replace function public.assign_event_participant(
   p_church_id uuid,
   p_command_id uuid,
@@ -1939,14 +2413,14 @@ declare
   v_user_id uuid;
   v_caller_member_id uuid;
   v_is_admin boolean;
-  v_team record;
   v_event record;
-  v_item record;
-  v_asg_id uuid;
-  v_params_canonical text;
+  v_team record;
+  v_notes_clean text;
   v_params_hash bytea;
   v_existing_receipt record;
+  v_asg_id uuid;
   v_payload jsonb;
+  v_created_at timestamptz;
   c_action constant text := 'assign_event_participant';
 begin
   v_user_id := (select auth.uid());
@@ -1958,17 +2432,26 @@ begin
     raise exception 'Parâmetros obrigatórios ausentes.' using errcode = '22004';
   end if;
 
-  -- B2-03: Contexto elegível ativo
+  if p_notes is not null then
+    v_notes_clean := btrim(normalize(p_notes, NFC));
+  end if;
+
   select ca.member_id, ca.is_admin
   into v_caller_member_id, v_is_admin
   from app_private.church_access ca
-  join app_private.members m on m.id = ca.member_id and m.church_id = ca.church_id
+  join auth.users u on u.id = ca.user_id
   join app_private.churches c on c.id = ca.church_id
+  join app_private.members m on m.id = ca.member_id and m.church_id = ca.church_id
   where ca.user_id = v_user_id
     and ca.church_id = p_church_id
     and ca.status = 'active'
+    and ca.onboarding_completed_at is not null
+    and c.status = 'active'
     and m.status = 'active'
-    and c.status = 'active';
+    and u.email_confirmed_at is not null
+    and u.deleted_at is null
+    and not coalesce(u.is_anonymous, false)
+    and (u.banned_until is null or u.banned_until <= clock_timestamp());
 
   if v_caller_member_id is null then
     raise exception 'Acesso não autorizado nesta igreja.' using errcode = '42501';
@@ -1976,158 +2459,150 @@ begin
 
   perform pg_advisory_xact_lock(hashtext(v_user_id::text), hashtext(p_command_id::text));
 
-  -- B2-03: Hash completo incluindo notas
-  v_params_canonical := c_action || ':' || p_church_id::text || ':' || p_event_id::text || ':' ||
-                        p_team_id::text || ':' || p_member_id::text || ':' ||
-                        coalesce(p_item_id::text, 'null') || ':' ||
-                        coalesce(p_team_role_id::text, 'null') || ':' ||
-                        coalesce(p_notes, 'null');
-  v_params_hash := extensions.digest(v_params_canonical, 'sha256');
+  v_params_hash := pg_catalog.sha256(convert_to(jsonb_build_object(
+    'action', c_action,
+    'church_id', p_church_id,
+    'event_id', p_event_id,
+    'team_id', p_team_id,
+    'member_id', p_member_id,
+    'item_id', p_item_id,
+    'team_role_id', p_team_role_id,
+    'notes', v_notes_clean
+  )::text, 'UTF8'));
 
-  select cr.command_id, cr.action, cr.church_id, cr.result_entity_id, cr.result_payload, cr.created_at, cr.parameters_hash
+  select cr.command_id, cr.action, cr.church_id, cr.result_entity_id, cr.result_payload, cr.created_at, cr.params_hash
   into v_existing_receipt
   from app_private.command_receipts cr
-  where cr.command_id = p_command_id;
+  where cr.user_id = v_user_id
+    and cr.command_id = p_command_id;
 
-  if found then
-    if v_existing_receipt.church_id <> p_church_id
-       or v_existing_receipt.action <> c_action
-       or v_existing_receipt.parameters_hash <> v_params_hash then
-      raise exception 'Comando já executado com parâmetros divergentes ou em outro contexto.' using errcode = '23505';
+  if v_existing_receipt.command_id is not null then
+    if v_existing_receipt.action <> c_action or v_existing_receipt.church_id <> p_church_id then
+      raise exception 'Identificador de comando já utilizado para outra operação.' using errcode = 'P0020';
     end if;
-
-    return query select
-      v_existing_receipt.command_id,
-      v_existing_receipt.action,
-      v_existing_receipt.church_id,
-      v_existing_receipt.result_entity_id,
-      v_existing_receipt.result_payload,
-      v_existing_receipt.created_at;
+    if v_existing_receipt.params_hash <> v_params_hash then
+      raise exception 'Comando já executado com parâmetros divergentes.' using errcode = 'P0020';
+    end if;
+    return query
+    select v_existing_receipt.command_id, v_existing_receipt.action, v_existing_receipt.church_id,
+           v_existing_receipt.result_entity_id, v_existing_receipt.result_payload, v_existing_receipt.created_at;
     return;
   end if;
 
-  -- B2-04: Ordem global de locks:
-  -- members (FOR SHARE) -> teams (FOR SHARE) -> team_memberships (FOR SHARE) -> team_roles (FOR SHARE) -> events (FOR UPDATE) -> event_items (FOR UPDATE)
-  perform 1 from app_private.members m
-  where m.church_id = p_church_id and m.id = p_member_id and m.status = 'active'
+  select id, status, planned_start_at, planned_end_at, liturgy_leader_member_id
+  into v_event
+  from app_private.events
+  where church_id = p_church_id and id = p_event_id
   for share;
 
-  if not found then
-    raise exception 'Voluntário não é membro ativo desta igreja.' using errcode = 'P0002';
+  if v_event.id is null then
+    raise exception 'Evento não encontrado nesta igreja.' using errcode = 'P0020';
   end if;
 
-  select * into v_team
-  from app_private.teams t
-  where t.church_id = p_church_id and t.id = p_team_id and t.status = 'active'
+  if v_event.status not in ('scheduled', 'in_progress') then
+    raise exception 'Não é possível alocar participantes em eventos finalizados ou cancelados.' using errcode = 'P0020';
+  end if;
+
+  select id, leader_member_id, status
+  into v_team
+  from app_private.teams
+  where church_id = p_church_id and id = p_team_id
   for share;
 
-  if not found then
-    raise exception 'Equipe não encontrada ou inativa.' using errcode = 'P0002';
+  if v_team.id is null or v_team.status <> 'active' then
+    raise exception 'Equipe não encontrada ou inativa nesta igreja.' using errcode = 'P0020';
   end if;
 
-  -- B2-04: Exigência estrita de vínculo ativo na equipe
+  -- B2-03: Antes do início a liderança da própria equipe escala; durante execução apenas liturgia designada
+  if v_event.status = 'scheduled' then
+    if not coalesce(v_is_admin, false) and (v_team.leader_member_id is null or v_team.leader_member_id <> v_caller_member_id) then
+      raise exception 'Apenas o líder desta equipe ou administrador pode alocar voluntários antes do culto.' using errcode = '42501';
+    end if;
+  elsif v_event.status = 'in_progress' then
+    if v_event.liturgy_leader_member_id is null or v_event.liturgy_leader_member_id <> v_caller_member_id then
+      raise exception 'Durante a execução do culto, apenas o líder de liturgia designado pode realizar alocações.' using errcode = '42501';
+    end if;
+  end if;
+
   if not exists (
-    select 1 from app_private.team_memberships tm
-    where tm.church_id = p_church_id and tm.team_id = p_team_id and tm.member_id = p_member_id and tm.status = 'active'
+    select 1 from app_private.members
+    where church_id = p_church_id and id = p_member_id and status = 'active'
   ) then
-    raise exception 'Membro não é integrante ativo da equipe indicada.' using errcode = 'P0020';
+    raise exception 'Membro não encontrado ou inativo nesta igreja.' using errcode = 'P0020';
   end if;
 
-  -- Se função técnica foi fornecida, exigir que seja ativa e que o membro tenha aptidão ativa homologada
+  -- Verifica se membro integra a equipe
+  if not exists (
+    select 1 from app_private.team_memberships
+    where church_id = p_church_id and team_id = p_team_id and member_id = p_member_id and status = 'active'
+  ) then
+    raise exception 'Membro não integra ativamente esta equipe.' using errcode = 'P0020';
+  end if;
+
+  -- Verifica se função pertence à equipe e se membro tem aptidão homologada
   if p_team_role_id is not null then
     if not exists (
-      select 1 from app_private.team_roles tr
-      where tr.church_id = p_church_id and tr.team_id = p_team_id and tr.id = p_team_role_id and tr.status = 'active'
+      select 1 from app_private.team_roles
+      where church_id = p_church_id and team_id = p_team_id and id = p_team_role_id and status = 'active'
     ) then
-      raise exception 'Função técnica não existe ou não está ativa nesta equipe.' using errcode = 'P0002';
+      raise exception 'Função técnica não pertence a esta equipe ou está inativa.' using errcode = 'P0020';
     end if;
 
     if not exists (
-      select 1 from app_private.member_qualifications mq
-      where mq.church_id = p_church_id and mq.member_id = p_member_id and mq.team_role_id = p_team_role_id and mq.status = 'active'
+      select 1 from app_private.member_qualifications
+      where church_id = p_church_id and team_id = p_team_id and team_role_id = p_team_role_id
+        and member_id = p_member_id and status = 'active'
     ) then
-      raise exception 'Membro não possui aptidão ativa homologada para a função.' using errcode = 'P0020';
+      raise exception 'Membro não possui aptidão ativa homologada para esta função.' using errcode = 'P0020';
     end if;
   end if;
 
-  select * into v_event
-  from app_private.events e
-  where e.church_id = p_church_id and e.id = p_event_id
-  for update;
-
-  if not found then
-    raise exception 'Evento não encontrado.' using errcode = 'P0002';
-  end if;
-
-  if v_event.status in ('completed', 'cancelled') then
-    raise exception 'Não é permitido alocar voluntário em evento encerrado ou cancelado.' using errcode = 'P0020';
-  end if;
-
-  -- Se item específico foi informado, travar item e validar fronteira de condução
   if p_item_id is not null then
-    select * into v_item
-    from app_private.event_items ei
-    where ei.church_id = p_church_id and ei.event_id = p_event_id and ei.id = p_item_id
-    for update;
-
-    if not found then
-      raise exception 'Etapa de culto não encontrada neste evento.' using errcode = 'P0002';
-    end if;
-
-    if v_item.status in ('completed', 'cancelled') then
-      raise exception 'Não é permitido alocar voluntário em etapa já concluída ou cancelada.' using errcode = 'P0020';
-    end if;
-
-    if v_item.designated_team_id is not null and v_item.designated_team_id <> p_team_id then
-      raise exception 'Equipe informada não corresponde à equipe designada para esta etapa.' using errcode = 'P0020';
-    end if;
-
-    -- Fronteira de condução: se a etapa já iniciou (in_progress), somente a liturgia do evento (ou admin) pode alocar
-    if v_item.status = 'in_progress' then
-      if not v_is_admin and v_event.liturgy_leader_member_id <> v_caller_member_id then
-        raise exception 'Atividade em andamento: alocação e substituição são exclusivas do líder da liturgia.' using errcode = '42501';
-      end if;
-    else
-      -- Se ainda pending: permitido a admin, liturgia do evento ou líder da equipe
-      if not v_is_admin and v_event.liturgy_leader_member_id <> v_caller_member_id and v_team.leader_member_id <> v_caller_member_id then
-        raise exception 'Apenas o líder da equipe, o líder da liturgia ou administradores podem alocar voluntários nesta etapa.' using errcode = '42501';
-      end if;
-    end if;
-  else
-    -- Sem item (escala geral do evento): se evento está em andamento, exige liturgia ou admin
-    if v_event.status = 'in_progress' then
-      if not v_is_admin and v_event.liturgy_leader_member_id <> v_caller_member_id then
-        raise exception 'Culto em andamento: alocação é exclusiva do líder da liturgia.' using errcode = '42501';
-      end if;
-    else
-      if not v_is_admin and v_event.liturgy_leader_member_id <> v_caller_member_id and v_team.leader_member_id <> v_caller_member_id then
-        raise exception 'Apenas o líder da equipe, o líder da liturgia ou administradores podem alocar voluntários no evento.' using errcode = '42501';
-      end if;
+    if not exists (
+      select 1 from app_private.event_items
+      where church_id = p_church_id and event_id = p_event_id and id = p_item_id
+        and status in ('pending', 'in_progress')
+    ) then
+      raise exception 'Item do cronograma não pertence a este evento ou já foi finalizado/cancelado.' using errcode = 'P0020';
     end if;
   end if;
 
-  -- B2-04: Checagem estrita de conflito de agenda (membro já alocado ativamente na mesma etapa/evento)
+  -- Verifica se membro já está alocado ativamente neste item ou evento
   if exists (
-    select 1 from app_private.assignments a
-    where a.church_id = p_church_id
-      and a.event_id = p_event_id
-      and a.member_id = p_member_id
-      and a.status = 'active'
+    select 1 from app_private.assignments
+    where church_id = p_church_id
+      and event_id = p_event_id
+      and member_id = p_member_id
+      and status = 'active'
       and (
-        (p_item_id is null and a.item_id is null)
-        or (p_item_id is not null and a.item_id = p_item_id)
+        (item_id is null and p_item_id is null)
+        or (item_id = p_item_id)
       )
   ) then
-    raise exception 'Membro já possui alocação ativa nesta atividade do evento (conflito de escala).' using errcode = 'P0025';
+    raise exception 'Membro já possui alocação ativa neste escopo.' using errcode = 'P0020';
+  end if;
+
+  -- Verifica conflito com outro evento sobreposto no mesmo horário (PRD 160)
+  if exists (
+    select 1
+    from app_private.assignments a2
+    join app_private.events e2 on e2.id = a2.event_id and e2.church_id = a2.church_id
+    where a2.church_id = p_church_id
+      and a2.member_id = p_member_id
+      and a2.status = 'active'
+      and e2.status in ('scheduled', 'in_progress')
+      and e2.id <> p_event_id
+      and (e2.planned_start_at < v_event.planned_end_at and e2.planned_end_at > v_event.planned_start_at)
+  ) then
+    raise exception 'Membro possui conflito de escala com outro evento sobreposto.' using errcode = 'P0020';
   end if;
 
   insert into app_private.assignments (
     church_id, event_id, item_id, team_id, team_role_id, member_id, status, notes
+  ) values (
+    p_church_id, p_event_id, p_item_id, p_team_id, p_team_role_id, p_member_id, 'active', v_notes_clean
   )
-  values (
-    p_church_id, p_event_id, p_item_id, p_team_id, p_team_role_id, p_member_id, 'active', btrim(p_notes)
-  )
-  returning id into v_asg_id;
+  returning id, created_at into v_asg_id, v_created_at;
 
   v_payload := jsonb_build_object(
     'assignment_id', v_asg_id,
@@ -2136,26 +2611,38 @@ begin
     'team_id', p_team_id,
     'team_role_id', p_team_role_id,
     'member_id', p_member_id,
-    'status', 'active'
+    'status', 'active',
+    'notes', v_notes_clean
   );
 
-  insert into app_private.audit_entries (church_id, operator_user_id, action, entity_type, entity_id, payload)
-  values (p_church_id, v_user_id, c_action, 'assignment', v_asg_id, v_payload);
+  insert into app_private.audit_entries (
+    church_id, action, actor_user_id, actor_source, maintenance_operator,
+    target_type, target_id, details, occurred_at
+  ) values (
+    p_church_id, c_action, v_user_id, 'application', null,
+    'assignment', v_asg_id, v_payload, v_created_at
+  );
 
-  insert into app_private.command_receipts (command_id, church_id, action, result_entity_id, result_payload, parameters_hash)
-  values (p_command_id, p_church_id, c_action, v_asg_id, v_payload, v_params_hash);
+  insert into app_private.command_receipts (
+    church_id, user_id, command_id, action, params_hash,
+    result_member_id, result_entity_id, result_payload, created_at
+  ) values (
+    p_church_id, v_user_id, p_command_id, c_action, v_params_hash,
+    null, v_asg_id, v_payload, v_created_at
+  );
 
-  return query select p_command_id, c_action, p_church_id, v_asg_id, v_payload, clock_timestamp();
+  return query
+  select p_command_id, c_action, p_church_id, v_asg_id, v_payload, v_created_at;
 end;
 $function$;
 
--- 2.14 Substituir Voluntário Escalado (Líder da Equipe antes do início / Liturgia em execução)
+-- 2.15 replace_event_participant (Ordem Canônica Estrita de Locks e UPDATE Condicional - B2-04)
 create or replace function public.replace_event_participant(
   p_church_id uuid,
   p_command_id uuid,
   p_assignment_id uuid,
   p_replacement_member_id uuid,
-  p_reason text default null,
+  p_reason text,
   p_notes text default null
 )
 returns table (
@@ -2175,18 +2662,28 @@ declare
   v_user_id uuid;
   v_caller_member_id uuid;
   v_is_admin boolean;
-  v_orig_asg record;
-  v_event record;
-  v_item record;
-  v_team record;
-  v_first_member uuid;
-  v_second_member uuid;
-  v_new_asg_id uuid;
+  v_orig_member_id uuid;
+  v_team_id uuid;
+  v_event_id uuid;
+  v_item_id uuid;
+  v_role_id uuid;
+  v_orig_status text;
+  v_event_status text;
+  v_event_planned_start timestamptz;
+  v_event_planned_end timestamptz;
+  v_event_liturgy_leader_id uuid;
+  v_team_leader_id uuid;
+  v_team_status text;
+  v_item_status text;
+  v_current_asg_status text;
   v_rows_updated integer;
-  v_params_canonical text;
+  v_reason_clean text;
+  v_notes_clean text;
   v_params_hash bytea;
   v_existing_receipt record;
+  v_new_asg_id uuid;
   v_payload jsonb;
+  v_created_at timestamptz;
   c_action constant text := 'replace_event_participant';
 begin
   v_user_id := (select auth.uid());
@@ -2194,21 +2691,35 @@ begin
     raise exception 'Não autenticado.' using errcode = '28000';
   end if;
 
-  if p_church_id is null or p_command_id is null or p_assignment_id is null or p_replacement_member_id is null then
+  if p_church_id is null or p_command_id is null or p_assignment_id is null or p_replacement_member_id is null or p_reason is null then
     raise exception 'Parâmetros obrigatórios ausentes.' using errcode = '22004';
   end if;
 
-  -- B2-03: Contexto elegível ativo
+  v_reason_clean := btrim(normalize(p_reason, NFC));
+  if char_length(v_reason_clean) < 1 then
+    raise exception 'Motivo de substituição obrigatório.' using errcode = '22000';
+  end if;
+
+  if p_notes is not null then
+    v_notes_clean := btrim(normalize(p_notes, NFC));
+  end if;
+
   select ca.member_id, ca.is_admin
   into v_caller_member_id, v_is_admin
   from app_private.church_access ca
-  join app_private.members m on m.id = ca.member_id and m.church_id = ca.church_id
+  join auth.users u on u.id = ca.user_id
   join app_private.churches c on c.id = ca.church_id
+  join app_private.members m on m.id = ca.member_id and m.church_id = ca.church_id
   where ca.user_id = v_user_id
     and ca.church_id = p_church_id
     and ca.status = 'active'
+    and ca.onboarding_completed_at is not null
+    and c.status = 'active'
     and m.status = 'active'
-    and c.status = 'active';
+    and u.email_confirmed_at is not null
+    and u.deleted_at is null
+    and not coalesce(u.is_anonymous, false)
+    and (u.banned_until is null or u.banned_until <= clock_timestamp());
 
   if v_caller_member_id is null then
     raise exception 'Acesso não autorizado nesta igreja.' using errcode = '42501';
@@ -2216,214 +2727,247 @@ begin
 
   perform pg_advisory_xact_lock(hashtext(v_user_id::text), hashtext(p_command_id::text));
 
-  v_params_canonical := c_action || ':' || p_church_id::text || ':' || p_assignment_id::text || ':' ||
-                        p_replacement_member_id::text || ':' ||
-                        coalesce(p_reason, 'null') || ':' ||
-                        coalesce(p_notes, 'null');
-  v_params_hash := extensions.digest(v_params_canonical, 'sha256');
+  v_params_hash := pg_catalog.sha256(convert_to(jsonb_build_object(
+    'action', c_action,
+    'church_id', p_church_id,
+    'assignment_id', p_assignment_id,
+    'replacement_member_id', p_replacement_member_id,
+    'reason', v_reason_clean,
+    'notes', v_notes_clean
+  )::text, 'UTF8'));
 
-  select cr.command_id, cr.action, cr.church_id, cr.result_entity_id, cr.result_payload, cr.created_at, cr.parameters_hash
+  select cr.command_id, cr.action, cr.church_id, cr.result_entity_id, cr.result_payload, cr.created_at, cr.params_hash
   into v_existing_receipt
   from app_private.command_receipts cr
-  where cr.command_id = p_command_id;
+  where cr.user_id = v_user_id
+    and cr.command_id = p_command_id;
 
-  if found then
-    if v_existing_receipt.church_id <> p_church_id
-       or v_existing_receipt.action <> c_action
-       or v_existing_receipt.parameters_hash <> v_params_hash then
-      raise exception 'Comando já executado com parâmetros divergentes ou em outro contexto.' using errcode = '23505';
+  if v_existing_receipt.command_id is not null then
+    if v_existing_receipt.action <> c_action or v_existing_receipt.church_id <> p_church_id then
+      raise exception 'Identificador de comando já utilizado para outra operação.' using errcode = 'P0020';
     end if;
-
-    return query select
-      v_existing_receipt.command_id,
-      v_existing_receipt.action,
-      v_existing_receipt.church_id,
-      v_existing_receipt.result_entity_id,
-      v_existing_receipt.result_payload,
-      v_existing_receipt.created_at;
+    if v_existing_receipt.params_hash <> v_params_hash then
+      raise exception 'Comando já executado com parâmetros divergentes.' using errcode = 'P0020';
+    end if;
+    return query
+    select v_existing_receipt.command_id, v_existing_receipt.action, v_existing_receipt.church_id,
+           v_existing_receipt.result_entity_id, v_existing_receipt.result_payload, v_existing_receipt.created_at;
     return;
   end if;
 
-  -- B2-04: Trava preliminar da alocação original para obter os membros envolvidos
-  select * into v_orig_asg
+  -- 1) Descoberta sem locks (B2-04)
+  select a.member_id, a.team_id, a.event_id, a.item_id, a.team_role_id, a.status
+  into v_orig_member_id, v_team_id, v_event_id, v_item_id, v_role_id, v_orig_status
+  from app_private.assignments a
+  where a.id = p_assignment_id and a.church_id = p_church_id;
+
+  if v_orig_member_id is null then
+    raise exception 'Alocação não encontrada nesta igreja.' using errcode = 'P0020';
+  end if;
+
+  if v_orig_status <> 'active' then
+    raise exception 'Alocação já substituída ou inativa.' using errcode = 'P0020';
+  end if;
+
+  if v_orig_member_id = p_replacement_member_id then
+    raise exception 'Membro substituto deve ser diferente do membro original.' using errcode = '22000';
+  end if;
+
+  -- 2) Ordem canônica rigorosa de aquisição de locks entre tabelas (B2-04):
+  -- members (ordenados por id) -> teams -> events -> event_items -> team_memberships -> member_qualifications -> assignments
+
+  -- Nível 1: Bloqueia members envolvidos em ordem ascendente de UUID
+  perform 1
+  from app_private.members
+  where church_id = p_church_id
+    and id in (v_orig_member_id, p_replacement_member_id)
+  order by id asc
+  for share;
+
+  if not exists (
+    select 1 from app_private.members
+    where church_id = p_church_id and id = p_replacement_member_id and status = 'active'
+  ) then
+    raise exception 'Membro substituto não encontrado ou inativo nesta igreja.' using errcode = 'P0020';
+  end if;
+
+  -- Nível 2: Bloqueia team
+  select t.leader_member_id, t.status
+  into v_team_leader_id, v_team_status
+  from app_private.teams t
+  where t.church_id = p_church_id and id = v_team_id
+  for share;
+
+  if v_team_status is null or v_team_status <> 'active' then
+    raise exception 'Equipe da alocação não encontrada ou inativa.' using errcode = 'P0020';
+  end if;
+
+  -- Nível 3: Bloqueia event
+  select e.status, e.planned_start_at, e.planned_end_at, e.liturgy_leader_member_id
+  into v_event_status, v_event_planned_start, v_event_planned_end, v_event_liturgy_leader_id
+  from app_private.events e
+  where e.church_id = p_church_id and e.id = v_event_id
+  for update;
+
+  if v_event_status is null or v_event_status not in ('scheduled', 'in_progress') then
+    raise exception 'Evento não permite alterações no estado atual.' using errcode = 'P0020';
+  end if;
+
+  -- B2-03: Autoridade sob o lock do evento
+  if v_event_status = 'scheduled' then
+    if not coalesce(v_is_admin, false) and (v_team_leader_id is null or v_team_leader_id <> v_caller_member_id) then
+      raise exception 'Apenas o líder desta equipe ou administrador pode substituir participantes antes do culto.' using errcode = '42501';
+    end if;
+  elsif v_event_status = 'in_progress' then
+    if v_event_liturgy_leader_id is null or v_event_liturgy_leader_id <> v_caller_member_id then
+      raise exception 'Durante a execução do culto, apenas o líder de liturgia designado pode realizar substituições.' using errcode = '42501';
+    end if;
+  end if;
+
+  -- Nível 4: Bloqueia event_item se aplicável
+  if v_item_id is not null then
+    select ei.status
+    into v_item_status
+    from app_private.event_items ei
+    where ei.church_id = p_church_id and ei.event_id = v_event_id and ei.id = v_item_id
+    for update;
+
+    if v_item_status is null or v_item_status not in ('pending', 'in_progress') then
+      raise exception 'Item do cronograma não permite alterações no estado atual.' using errcode = 'P0020';
+    end if;
+  end if;
+
+  -- Nível 5: Bloqueia vínculo de equipe do substituto
+  if not exists (
+    select 1
+    from app_private.team_memberships tm
+    where tm.church_id = p_church_id
+      and tm.team_id = v_team_id
+      and tm.member_id = p_replacement_member_id
+      and tm.status = 'active'
+    for share
+  ) then
+    raise exception 'Membro substituto não integra ativamente esta equipe.' using errcode = 'P0020';
+  end if;
+
+  -- Nível 6: Bloqueia aptidão do substituto se função especificada
+  if v_role_id is not null then
+    if not exists (
+      select 1
+      from app_private.member_qualifications mq
+      where mq.church_id = p_church_id
+        and mq.team_id = v_team_id
+        and mq.team_role_id = v_role_id
+        and mq.member_id = p_replacement_member_id
+        and mq.status = 'active'
+      for share
+    ) then
+      raise exception 'Membro substituto não possui aptidão ativa homologada para esta função.' using errcode = 'P0020';
+    end if;
+  end if;
+
+  -- Nível 7: Bloqueia alocação original para atualização
+  select a.status
+  into v_current_asg_status
   from app_private.assignments a
   where a.church_id = p_church_id and a.id = p_assignment_id
   for update;
 
-  if not found then
-    raise exception 'Alocação original não encontrada.' using errcode = 'P0002';
+  if v_current_asg_status <> 'active' then
+    raise exception 'Alocação já substituída ou inativa por outra transação.' using errcode = 'P0020';
   end if;
 
-  if v_orig_asg.status <> 'active' then
-    raise exception 'Alocação original não está ativa ou já foi substituída/cancelada.' using errcode = 'P0020';
-  end if;
-
-  if v_orig_asg.member_id = p_replacement_member_id then
-    raise exception 'O membro substituto deve ser diferente do participante atual.' using errcode = '22000';
-  end if;
-
-  -- B2-04: Ordem global de locks: members ordenados por ID asc FOR SHARE
-  v_first_member := least(v_orig_asg.member_id, p_replacement_member_id);
-  v_second_member := greatest(v_orig_asg.member_id, p_replacement_member_id);
-
-  perform 1 from app_private.members m
-  where m.church_id = p_church_id and m.id in (v_first_member, v_second_member) and m.status = 'active'
-  order by m.id asc
-  for share;
-
-  -- Validar que o substituto é membro ativo
-  if not exists (
-    select 1 from app_private.members m
-    where m.church_id = p_church_id and m.id = p_replacement_member_id and m.status = 'active'
-  ) then
-    raise exception 'Membro substituto não é membro ativo desta igreja.' using errcode = 'P0002';
-  end if;
-
-  -- Equipe da alocação
-  select * into v_team
-  from app_private.teams t
-  where t.church_id = p_church_id and t.id = v_orig_asg.team_id and t.status = 'active'
-  for share;
-
-  if not found then
-    raise exception 'Equipe da alocação não encontrada ou inativa.' using errcode = 'P0002';
-  end if;
-
-  -- B2-04: Substituto DEVE ser integrante ativo da equipe da alocação
-  if not exists (
-    select 1 from app_private.team_memberships tm
-    where tm.church_id = p_church_id and tm.team_id = v_orig_asg.team_id and tm.member_id = p_replacement_member_id and tm.status = 'active'
-  ) then
-    raise exception 'Membro substituto não é integrante ativo da equipe necessária.' using errcode = 'P0020';
-  end if;
-
-  -- Se a alocação possui função técnica, substituto DEVE possuir aptidão ativa homologada
-  if v_orig_asg.team_role_id is not null then
-    if not exists (
-      select 1 from app_private.member_qualifications mq
-      where mq.church_id = p_church_id and mq.member_id = p_replacement_member_id and mq.team_role_id = v_orig_asg.team_role_id and mq.status = 'active'
-    ) then
-      raise exception 'Membro substituto não possui aptidão ativa homologada para a função.' using errcode = 'P0020';
-    end if;
-  end if;
-
-  -- Lock no evento para atualização
-  select * into v_event
-  from app_private.events e
-  where e.church_id = p_church_id and e.id = v_orig_asg.event_id
-  for update;
-
-  if not found or v_event.status in ('completed', 'cancelled') then
-    raise exception 'Evento já se encontra encerrado ou cancelado.' using errcode = 'P0020';
-  end if;
-
-  -- B2-04: Fronteira temporal e autoridade de substituição
-  if v_orig_asg.item_id is not null then
-    select * into v_item
-    from app_private.event_items ei
-    where ei.church_id = p_church_id and ei.event_id = v_orig_asg.event_id and ei.id = v_orig_asg.item_id
-    for update;
-
-    if not found or v_item.status in ('completed', 'cancelled') then
-      raise exception 'Etapa de culto já concluída ou cancelada.' using errcode = 'P0020';
-    end if;
-
-    if v_item.status = 'in_progress' then
-      -- Em execução: exclusivo do líder da liturgia ou admin (PRD 7)
-      if not v_is_admin and v_event.liturgy_leader_member_id <> v_caller_member_id then
-        raise exception 'Atividade em andamento: substituição emergencial é exclusiva do líder da liturgia.' using errcode = '42501';
-      end if;
-    else
-      -- Pending: permitido a admin, líder da liturgia ou líder da equipe
-      if not v_is_admin and v_event.liturgy_leader_member_id <> v_caller_member_id and v_team.leader_member_id <> v_caller_member_id then
-        raise exception 'Apenas o líder da equipe, o líder da liturgia ou administradores podem substituir voluntários nesta etapa.' using errcode = '42501';
-      end if;
-    end if;
-  else
-    -- Alocação geral de evento
-    if v_event.status = 'in_progress' then
-      if not v_is_admin and v_event.liturgy_leader_member_id <> v_caller_member_id then
-        raise exception 'Culto em andamento: substituição é exclusiva do líder da liturgia.' using errcode = '42501';
-      end if;
-    else
-      if not v_is_admin and v_event.liturgy_leader_member_id <> v_caller_member_id and v_team.leader_member_id <> v_caller_member_id then
-        raise exception 'Apenas o líder da equipe, o líder da liturgia ou administradores podem substituir voluntários no evento.' using errcode = '42501';
-      end if;
-    end if;
-  end if;
-
-  -- B2-04: Checagem estrita de conflito de agenda do substituto
+  -- Verifica se membro substituto já possui alocação ativa no mesmo item/evento
   if exists (
-    select 1 from app_private.assignments a
-    where a.church_id = p_church_id
-      and a.event_id = v_orig_asg.event_id
-      and a.member_id = p_replacement_member_id
-      and a.status = 'active'
+    select 1 from app_private.assignments
+    where church_id = p_church_id
+      and event_id = v_event_id
+      and member_id = p_replacement_member_id
+      and status = 'active'
       and (
-        (v_orig_asg.item_id is null and a.item_id is null)
-        or (v_orig_asg.item_id is not null and a.item_id = v_orig_asg.item_id)
+        (item_id is null and v_item_id is null)
+        or (item_id = v_item_id)
       )
   ) then
-    raise exception 'Membro substituto já possui alocação ativa nesta atividade do evento (conflito de escala).' using errcode = 'P0025';
+    raise exception 'Membro substituto já possui alocação ativa neste escopo.' using errcode = 'P0020';
   end if;
 
-  -- Gerar novo identificador de alocação
-  v_new_asg_id := gen_random_uuid();
+  -- Verifica conflito com outro evento sobreposto no mesmo horário (PRD 160)
+  if exists (
+    select 1
+    from app_private.assignments a2
+    join app_private.events e2 on e2.id = a2.event_id and e2.church_id = a2.church_id
+    where a2.church_id = p_church_id
+      and a2.member_id = p_replacement_member_id
+      and a2.status = 'active'
+      and e2.status in ('scheduled', 'in_progress')
+      and e2.id <> v_event_id
+      and (e2.planned_start_at < v_event_planned_end and e2.planned_end_at > v_event_planned_start)
+  ) then
+    raise exception 'Membro substituto possui conflito de escala com outro evento sobreposto.' using errcode = 'P0020';
+  end if;
 
-  -- B2-04: UPDATE condicional com verificação atômica de linhas afetadas (previne dupla substituição concorrente)
+  -- Cria a nova alocação substituta
+  insert into app_private.assignments (
+    church_id, event_id, item_id, team_id, team_role_id, member_id, status,
+    replaced_assignment_id, notes
+  ) values (
+    p_church_id, v_event_id, v_item_id, v_team_id, v_role_id, p_replacement_member_id, 'active',
+    p_assignment_id, v_notes_clean
+  )
+  returning id, created_at into v_new_asg_id, v_created_at;
+
+  -- Atualização atômica condicional com verificação de afetação estrita de 1 linha (B2-04)
   update app_private.assignments
   set status = 'replaced',
       replacement_assignment_id = v_new_asg_id,
-      notes = coalesce(notes, '') || ' [Substituído por motivo: ' || coalesce(p_reason, 'não informado') || ']'
+      updated_at = clock_timestamp()
   where id = p_assignment_id
-    and church_id = p_church_id
     and status = 'active';
 
   get diagnostics v_rows_updated = row_count;
   if v_rows_updated <> 1 then
-    raise exception 'Alocação original foi substituída concorrentemente ou alterada.' using errcode = 'P0020';
+    raise exception 'Conflito de concorrência: alocação já substituída por outra transação.' using errcode = 'P0020';
   end if;
-
-  -- Inserir nova alocação ativa com referência à substituída
-  insert into app_private.assignments (
-    id, church_id, event_id, item_id, team_id, team_role_id, member_id, status, replaced_assignment_id, notes
-  )
-  values (
-    v_new_asg_id, p_church_id, v_orig_asg.event_id, v_orig_asg.item_id, v_orig_asg.team_id,
-    v_orig_asg.team_role_id, p_replacement_member_id, 'active', p_assignment_id, btrim(p_notes)
-  );
 
   v_payload := jsonb_build_object(
-    'assignment_id', v_new_asg_id,
     'original_assignment_id', p_assignment_id,
-    'event_id', v_orig_asg.event_id,
-    'item_id', v_orig_asg.item_id,
-    'team_id', v_orig_asg.team_id,
-    'team_role_id', v_orig_asg.team_role_id,
-    'previous_member_id', v_orig_asg.member_id,
+    'replacement_assignment_id', v_new_asg_id,
     'replacement_member_id', p_replacement_member_id,
-    'reason', p_reason,
-    'status', 'active'
+    'reason', v_reason_clean,
+    'notes', v_notes_clean,
+    'status', 'replaced'
   );
 
-  insert into app_private.audit_entries (church_id, operator_user_id, action, entity_type, entity_id, payload)
-  values (p_church_id, v_user_id, c_action, 'assignment', v_new_asg_id, v_payload);
+  insert into app_private.audit_entries (
+    church_id, action, actor_user_id, actor_source, maintenance_operator,
+    target_type, target_id, details, occurred_at
+  ) values (
+    p_church_id, c_action, v_user_id, 'application', null,
+    'assignment', p_assignment_id, v_payload, v_created_at
+  );
 
-  insert into app_private.command_receipts (command_id, church_id, action, result_entity_id, result_payload, parameters_hash)
-  values (p_command_id, p_church_id, c_action, v_new_asg_id, v_payload, v_params_hash);
+  insert into app_private.command_receipts (
+    church_id, user_id, command_id, action, params_hash,
+    result_member_id, result_entity_id, result_payload, created_at
+  ) values (
+    p_church_id, v_user_id, p_command_id, c_action, v_params_hash,
+    null, v_new_asg_id, v_payload, v_created_at
+  );
 
-  return query select p_command_id, c_action, p_church_id, v_new_asg_id, v_payload, clock_timestamp();
+  return query
+  select p_command_id, c_action, p_church_id, v_new_asg_id, v_payload, v_created_at;
 end;
 $function$;
 
 
--- =============================================================================
--- 3. Funções de Consulta / Leitura (STABLE, SECURITY DEFINER)
--- =============================================================================
-
--- 3.1 Listagem de Equipes da Igreja
-create or replace function public.list_church_teams(p_church_id uuid)
-returns table (teams jsonb)
+-- 2.16 list_church_members_for_team (Consulta mínima de membros para líderes de equipe - B2-02)
+create or replace function public.list_church_members_for_team(
+  p_church_id uuid
+)
+returns table (
+  members jsonb
+)
 language plpgsql
 stable
 security definer
@@ -2432,6 +2976,8 @@ set statement_timeout = '5s'
 as $function$
 declare
   v_user_id uuid;
+  v_caller_member_id uuid;
+  v_is_admin boolean;
   v_items jsonb;
 begin
   v_user_id := (select auth.uid());
@@ -2439,38 +2985,58 @@ begin
     raise exception 'Não autenticado.' using errcode = '28000';
   end if;
 
-  if not exists (
-    select 1 from app_private.church_access ca
-    where ca.church_id = p_church_id and ca.user_id = v_user_id and ca.status = 'active'
-  ) then
+  if p_church_id is null then
+    raise exception 'Identificador de igreja obrigatório.' using errcode = '22004';
+  end if;
+
+  -- Validação estrita de membro ativo da igreja com conta confirmada
+  select ca.member_id, ca.is_admin
+  into v_caller_member_id, v_is_admin
+  from app_private.church_access ca
+  join auth.users u on u.id = ca.user_id
+  join app_private.churches c on c.id = ca.church_id
+  join app_private.members m on m.id = ca.member_id and m.church_id = ca.church_id
+  where ca.user_id = v_user_id
+    and ca.church_id = p_church_id
+    and ca.status = 'active'
+    and ca.onboarding_completed_at is not null
+    and c.status = 'active'
+    and m.status = 'active'
+    and u.email_confirmed_at is not null
+    and u.deleted_at is null
+    and not coalesce(u.is_anonymous, false)
+    and (u.banned_until is null or u.banned_until <= clock_timestamp());
+
+  if v_caller_member_id is null then
     raise exception 'Acesso não autorizado nesta igreja.' using errcode = '42501';
   end if;
 
-  select coalesce(jsonb_agg(item_json), '[]'::jsonb)
+  -- Retorna lista mínima (member_id, display_name) para composição de equipes sem expor dados restritos
+  select coalesce(
+    jsonb_agg(
+      jsonb_build_object(
+        'member_id', m.id,
+        'display_name', m.display_name
+      ) order by m.display_name asc
+    ),
+    '[]'::jsonb
+  )
   into v_items
-  from (
-    select jsonb_build_object(
-      'team_id', t.id,
-      'name', t.name,
-      'status', t.status,
-      'version', t.version,
-      'leader_member_id', t.leader_member_id,
-      'leader_name', m.display_name,
-      'member_count', (select count(*) from app_private.team_memberships tm where tm.church_id = p_church_id and tm.team_id = t.id and tm.status = 'active')
-    ) as item_json
-    from app_private.teams t
-    left join app_private.members m on m.church_id = t.church_id and m.id = t.leader_member_id
-    where t.church_id = p_church_id and t.status = 'active'
-    order by lower(t.name) asc, t.id asc
-  ) sub;
+  from app_private.members m
+  where m.church_id = p_church_id
+    and m.status = 'active';
 
   return query select v_items;
 end;
 $function$;
 
--- 3.2 Listagem de Funções Técnicas de uma Equipe
-create or replace function public.list_church_team_roles(p_church_id uuid, p_team_id uuid)
-returns table (roles jsonb)
+-- 2.17 list_church_teams
+create or replace function public.list_church_teams(
+  p_church_id uuid
+)
+returns table (
+  teams jsonb
+)
 language plpgsql
 stable
 security definer
@@ -2479,6 +3045,8 @@ set statement_timeout = '5s'
 as $function$
 declare
   v_user_id uuid;
+  v_caller_member_id uuid;
+  v_is_admin boolean;
   v_items jsonb;
 begin
   v_user_id := (select auth.uid());
@@ -2486,35 +3054,65 @@ begin
     raise exception 'Não autenticado.' using errcode = '28000';
   end if;
 
-  if not exists (
-    select 1 from app_private.church_access ca
-    where ca.church_id = p_church_id and ca.user_id = v_user_id and ca.status = 'active'
-  ) then
+  if p_church_id is null then
+    raise exception 'Identificador de igreja obrigatório.' using errcode = '22004';
+  end if;
+
+  select ca.member_id, ca.is_admin
+  into v_caller_member_id, v_is_admin
+  from app_private.church_access ca
+  join auth.users u on u.id = ca.user_id
+  join app_private.churches c on c.id = ca.church_id
+  join app_private.members m on m.id = ca.member_id and m.church_id = ca.church_id
+  where ca.user_id = v_user_id
+    and ca.church_id = p_church_id
+    and ca.status = 'active'
+    and ca.onboarding_completed_at is not null
+    and c.status = 'active'
+    and m.status = 'active'
+    and u.email_confirmed_at is not null
+    and u.deleted_at is null
+    and not coalesce(u.is_anonymous, false)
+    and (u.banned_until is null or u.banned_until <= clock_timestamp());
+
+  if v_caller_member_id is null then
     raise exception 'Acesso não autorizado nesta igreja.' using errcode = '42501';
   end if;
 
-  select coalesce(jsonb_agg(item_json), '[]'::jsonb)
+  select coalesce(
+    jsonb_agg(
+      jsonb_build_object(
+        'id', t.id,
+        'church_id', t.church_id,
+        'name', t.name,
+        'leader_member_id', t.leader_member_id,
+        'leader_name', m.display_name,
+        'status', t.status,
+        'version', t.version,
+        'created_at', t.created_at,
+        'updated_at', t.updated_at
+      ) order by t.name asc
+    ),
+    '[]'::jsonb
+  )
   into v_items
-  from (
-    select jsonb_build_object(
-      'team_role_id', tr.id,
-      'team_id', tr.team_id,
-      'name', tr.name,
-      'description', tr.description,
-      'status', tr.status
-    ) as item_json
-    from app_private.team_roles tr
-    where tr.church_id = p_church_id and tr.team_id = p_team_id and tr.status = 'active'
-    order by lower(tr.name) asc, tr.id asc
-  ) sub;
+  from app_private.teams t
+  left join app_private.members m on m.id = t.leader_member_id and m.church_id = t.church_id
+  where t.church_id = p_church_id
+    and t.status = 'active';
 
   return query select v_items;
 end;
 $function$;
 
--- 3.3 Listagem de Integrantes de uma Equipe
-create or replace function public.list_team_members(p_church_id uuid, p_team_id uuid)
-returns table (members jsonb)
+-- 2.18 list_church_team_roles
+create or replace function public.list_church_team_roles(
+  p_church_id uuid,
+  p_team_id uuid
+)
+returns table (
+  roles jsonb
+)
 language plpgsql
 stable
 security definer
@@ -2523,6 +3121,8 @@ set statement_timeout = '5s'
 as $function$
 declare
   v_user_id uuid;
+  v_caller_member_id uuid;
+  v_is_admin boolean;
   v_items jsonb;
 begin
   v_user_id := (select auth.uid());
@@ -2530,38 +3130,64 @@ begin
     raise exception 'Não autenticado.' using errcode = '28000';
   end if;
 
-  if not exists (
-    select 1 from app_private.church_access ca
-    where ca.church_id = p_church_id and ca.user_id = v_user_id and ca.status = 'active'
-  ) then
+  if p_church_id is null or p_team_id is null then
+    raise exception 'Parâmetros obrigatórios ausentes.' using errcode = '22004';
+  end if;
+
+  select ca.member_id, ca.is_admin
+  into v_caller_member_id, v_is_admin
+  from app_private.church_access ca
+  join auth.users u on u.id = ca.user_id
+  join app_private.churches c on c.id = ca.church_id
+  join app_private.members m on m.id = ca.member_id and m.church_id = ca.church_id
+  where ca.user_id = v_user_id
+    and ca.church_id = p_church_id
+    and ca.status = 'active'
+    and ca.onboarding_completed_at is not null
+    and c.status = 'active'
+    and m.status = 'active'
+    and u.email_confirmed_at is not null
+    and u.deleted_at is null
+    and not coalesce(u.is_anonymous, false)
+    and (u.banned_until is null or u.banned_until <= clock_timestamp());
+
+  if v_caller_member_id is null then
     raise exception 'Acesso não autorizado nesta igreja.' using errcode = '42501';
   end if;
 
-  select coalesce(jsonb_agg(item_json), '[]'::jsonb)
+  select coalesce(
+    jsonb_agg(
+      jsonb_build_object(
+        'id', tr.id,
+        'church_id', tr.church_id,
+        'team_id', tr.team_id,
+        'name', tr.name,
+        'description', tr.description,
+        'status', tr.status,
+        'created_at', tr.created_at,
+        'updated_at', tr.updated_at
+      ) order by tr.name asc
+    ),
+    '[]'::jsonb
+  )
   into v_items
-  from (
-    select jsonb_build_object(
-      'membership_id', tm.id,
-      'team_id', tm.team_id,
-      'member_id', tm.member_id,
-      'display_name', m.display_name,
-      'status', tm.status,
-      'is_team_leader', (t.leader_member_id = tm.member_id)
-    ) as item_json
-    from app_private.team_memberships tm
-    join app_private.members m on m.church_id = tm.church_id and m.id = tm.member_id
-    join app_private.teams t on t.church_id = tm.church_id and t.id = tm.team_id
-    where tm.church_id = p_church_id and tm.team_id = p_team_id and tm.status = 'active'
-    order by lower(m.display_name) asc, tm.id asc
-  ) sub;
+  from app_private.team_roles tr
+  where tr.church_id = p_church_id
+    and tr.team_id = p_team_id
+    and tr.status = 'active';
 
   return query select v_items;
 end;
 $function$;
 
--- 3.4 Listagem de Aptidões / Qualificações de um Membro
-create or replace function public.list_member_qualifications(p_church_id uuid, p_member_id uuid)
-returns table (qualifications jsonb)
+-- 2.19 list_team_members
+create or replace function public.list_team_members(
+  p_church_id uuid,
+  p_team_id uuid
+)
+returns table (
+  members jsonb
+)
 language plpgsql
 stable
 security definer
@@ -2570,6 +3196,8 @@ set statement_timeout = '5s'
 as $function$
 declare
   v_user_id uuid;
+  v_caller_member_id uuid;
+  v_is_admin boolean;
   v_items jsonb;
 begin
   v_user_id := (select auth.uid());
@@ -2577,37 +3205,140 @@ begin
     raise exception 'Não autenticado.' using errcode = '28000';
   end if;
 
-  if not exists (
-    select 1 from app_private.church_access ca
-    where ca.church_id = p_church_id and ca.user_id = v_user_id and ca.status = 'active'
-  ) then
+  if p_church_id is null or p_team_id is null then
+    raise exception 'Parâmetros obrigatórios ausentes.' using errcode = '22004';
+  end if;
+
+  select ca.member_id, ca.is_admin
+  into v_caller_member_id, v_is_admin
+  from app_private.church_access ca
+  join auth.users u on u.id = ca.user_id
+  join app_private.churches c on c.id = ca.church_id
+  join app_private.members m on m.id = ca.member_id and m.church_id = ca.church_id
+  where ca.user_id = v_user_id
+    and ca.church_id = p_church_id
+    and ca.status = 'active'
+    and ca.onboarding_completed_at is not null
+    and c.status = 'active'
+    and m.status = 'active'
+    and u.email_confirmed_at is not null
+    and u.deleted_at is null
+    and not coalesce(u.is_anonymous, false)
+    and (u.banned_until is null or u.banned_until <= clock_timestamp());
+
+  if v_caller_member_id is null then
     raise exception 'Acesso não autorizado nesta igreja.' using errcode = '42501';
   end if;
 
-  select coalesce(jsonb_agg(item_json), '[]'::jsonb)
+  select coalesce(
+    jsonb_agg(
+      jsonb_build_object(
+        'id', tm.id,
+        'church_id', tm.church_id,
+        'team_id', tm.team_id,
+        'member_id', tm.member_id,
+        'display_name', m.display_name,
+        'status', tm.status,
+        'created_at', tm.created_at,
+        'updated_at', tm.updated_at
+      ) order by m.display_name asc
+    ),
+    '[]'::jsonb
+  )
   into v_items
-  from (
-    select jsonb_build_object(
-      'qualification_id', mq.id,
-      'member_id', mq.member_id,
-      'team_id', mq.team_id,
-      'team_name', t.name,
-      'team_role_id', mq.team_role_id,
-      'role_name', tr.name,
-      'status', mq.status
-    ) as item_json
-    from app_private.member_qualifications mq
-    join app_private.teams t on t.church_id = mq.church_id and t.id = mq.team_id
-    join app_private.team_roles tr on tr.church_id = mq.church_id and tr.id = mq.team_role_id
-    where mq.church_id = p_church_id and mq.member_id = p_member_id and mq.status = 'active'
-    order by lower(t.name) asc, lower(tr.name) asc
-  ) sub;
+  from app_private.team_memberships tm
+  join app_private.members m on m.id = tm.member_id and m.church_id = tm.church_id
+  where tm.church_id = p_church_id
+    and tm.team_id = p_team_id
+    and tm.status = 'active'
+    and m.status = 'active';
 
   return query select v_items;
 end;
 $function$;
 
--- 3.5 Listagem de Eventos (Cronograma Macro do Produto)
+-- 2.20 list_member_qualifications
+create or replace function public.list_member_qualifications(
+  p_church_id uuid,
+  p_member_id uuid
+)
+returns table (
+  qualifications jsonb
+)
+language plpgsql
+stable
+security definer
+set search_path = ''
+set statement_timeout = '5s'
+as $function$
+declare
+  v_user_id uuid;
+  v_caller_member_id uuid;
+  v_is_admin boolean;
+  v_items jsonb;
+begin
+  v_user_id := (select auth.uid());
+  if v_user_id is null then
+    raise exception 'Não autenticado.' using errcode = '28000';
+  end if;
+
+  if p_church_id is null or p_member_id is null then
+    raise exception 'Parâmetros obrigatórios ausentes.' using errcode = '22004';
+  end if;
+
+  select ca.member_id, ca.is_admin
+  into v_caller_member_id, v_is_admin
+  from app_private.church_access ca
+  join auth.users u on u.id = ca.user_id
+  join app_private.churches c on c.id = ca.church_id
+  join app_private.members m on m.id = ca.member_id and m.church_id = ca.church_id
+  where ca.user_id = v_user_id
+    and ca.church_id = p_church_id
+    and ca.status = 'active'
+    and ca.onboarding_completed_at is not null
+    and c.status = 'active'
+    and m.status = 'active'
+    and u.email_confirmed_at is not null
+    and u.deleted_at is null
+    and not coalesce(u.is_anonymous, false)
+    and (u.banned_until is null or u.banned_until <= clock_timestamp());
+
+  if v_caller_member_id is null then
+    raise exception 'Acesso não autorizado nesta igreja.' using errcode = '42501';
+  end if;
+
+  select coalesce(
+    jsonb_agg(
+      jsonb_build_object(
+        'id', mq.id,
+        'church_id', mq.church_id,
+        'member_id', mq.member_id,
+        'team_id', mq.team_id,
+        'team_name', t.name,
+        'team_role_id', mq.team_role_id,
+        'role_name', tr.name,
+        'status', mq.status,
+        'created_at', mq.created_at,
+        'updated_at', mq.updated_at
+      ) order by t.name asc, tr.name asc
+    ),
+    '[]'::jsonb
+  )
+  into v_items
+  from app_private.member_qualifications mq
+  join app_private.teams t on t.id = mq.team_id and t.church_id = mq.church_id
+  join app_private.team_roles tr on tr.id = mq.team_role_id and tr.church_id = mq.church_id
+  where mq.church_id = p_church_id
+    and mq.member_id = p_member_id
+    and mq.status = 'active'
+    and t.status = 'active'
+    and tr.status = 'active';
+
+  return query select v_items;
+end;
+$function$;
+
+-- 2.21 list_church_events
 create or replace function public.list_church_events(
   p_church_id uuid,
   p_status_filter text default 'all',
@@ -2626,6 +3357,8 @@ set statement_timeout = '5s'
 as $function$
 declare
   v_user_id uuid;
+  v_caller_member_id uuid;
+  v_is_admin boolean;
   v_status text;
   v_limit integer;
   v_offset integer;
@@ -2637,54 +3370,92 @@ begin
     raise exception 'Não autenticado.' using errcode = '28000';
   end if;
 
-  if not exists (
-    select 1 from app_private.church_access ca
-    where ca.church_id = p_church_id and ca.user_id = v_user_id and ca.status = 'active'
-  ) then
+  if p_church_id is null then
+    raise exception 'Identificador de igreja obrigatório.' using errcode = '22004';
+  end if;
+
+  select ca.member_id, ca.is_admin
+  into v_caller_member_id, v_is_admin
+  from app_private.church_access ca
+  join auth.users u on u.id = ca.user_id
+  join app_private.churches c on c.id = ca.church_id
+  join app_private.members m on m.id = ca.member_id and m.church_id = ca.church_id
+  where ca.user_id = v_user_id
+    and ca.church_id = p_church_id
+    and ca.status = 'active'
+    and ca.onboarding_completed_at is not null
+    and c.status = 'active'
+    and m.status = 'active'
+    and u.email_confirmed_at is not null
+    and u.deleted_at is null
+    and not coalesce(u.is_anonymous, false)
+    and (u.banned_until is null or u.banned_until <= clock_timestamp());
+
+  if v_caller_member_id is null then
     raise exception 'Acesso não autorizado nesta igreja.' using errcode = '42501';
   end if;
 
-  v_status := lower(coalesce(trim(p_status_filter), 'all'));
+  v_status := lower(coalesce(btrim(p_status_filter), 'all'));
+  if v_status not in ('all', 'scheduled', 'in_progress', 'completed', 'cancelled') then
+    raise exception 'Filtro de status inválido.' using errcode = '22000';
+  end if;
+
   v_limit := greatest(1, least(coalesce(p_limit, 20), 100));
   v_offset := greatest(0, coalesce(p_offset, 0));
 
-  select count(*) into v_total
+  select count(*)
+  into v_total
   from app_private.events e
   where e.church_id = p_church_id
     and (v_status = 'all' or e.status = v_status);
 
-  select coalesce(jsonb_agg(item_json), '[]'::jsonb)
+  select coalesce(
+    jsonb_agg(
+      jsonb_build_object(
+        'id', e.id,
+        'church_id', e.church_id,
+        'title', e.title,
+        'event_type', e.event_type,
+        'timezone', e.timezone,
+        'status', e.status,
+        'planned_start_at', e.planned_start_at,
+        'planned_end_at', e.planned_end_at,
+        'actual_start_at', e.actual_start_at,
+        'actual_end_at', e.actual_end_at,
+        'liturgy_leader_member_id', e.liturgy_leader_member_id,
+        'liturgy_leader_name', m.display_name,
+        'version', e.version,
+        'cancel_reason', e.cancel_reason,
+        'created_at', e.created_at,
+        'updated_at', e.updated_at
+      ) order by e.planned_start_at desc
+    ),
+    '[]'::jsonb
+  )
   into v_items
   from (
-    select jsonb_build_object(
-      'event_id', e.id,
-      'title', e.title,
-      'event_type', e.event_type,
-      'planned_start_at', e.planned_start_at,
-      'planned_end_at', e.planned_end_at,
-      'actual_start_at', e.actual_start_at,
-      'actual_end_at', e.actual_end_at,
-      'status', e.status,
-      'version', e.version,
-      'liturgy_leader_member_id', e.liturgy_leader_member_id,
-      'liturgy_leader_name', m.display_name
-    ) as item_json
+    select e.*
     from app_private.events e
-    left join app_private.members m on m.church_id = e.church_id and m.id = e.liturgy_leader_member_id
     where e.church_id = p_church_id
       and (v_status = 'all' or e.status = v_status)
-    order by e.planned_start_at desc, e.id asc
+    order by e.planned_start_at desc
     limit v_limit
     offset v_offset
-  ) sub;
+  ) e
+  left join app_private.members m on m.id = e.liturgy_leader_member_id and m.church_id = e.church_id;
 
   return query select v_items, v_total;
 end;
 $function$;
 
--- 3.6 Listagem de Alocações de um Evento
-create or replace function public.list_event_assignments(p_church_id uuid, p_event_id uuid)
-returns table (assignments jsonb)
+-- 2.22 list_event_assignments (Com filtro de bastidores e privacidade PRD 10 - B2-03)
+create or replace function public.list_event_assignments(
+  p_church_id uuid,
+  p_event_id uuid
+)
+returns table (
+  assignments jsonb
+)
 language plpgsql
 stable
 security definer
@@ -2693,6 +3464,9 @@ set statement_timeout = '5s'
 as $function$
 declare
   v_user_id uuid;
+  v_caller_member_id uuid;
+  v_is_admin boolean;
+  v_liturgy_leader_id uuid;
   v_items jsonb;
 begin
   v_user_id := (select auth.uid());
@@ -2700,49 +3474,99 @@ begin
     raise exception 'Não autenticado.' using errcode = '28000';
   end if;
 
-  if not exists (
-    select 1 from app_private.church_access ca
-    where ca.church_id = p_church_id and ca.user_id = v_user_id and ca.status = 'active'
-  ) then
+  if p_church_id is null or p_event_id is null then
+    raise exception 'Parâmetros obrigatórios ausentes.' using errcode = '22004';
+  end if;
+
+  select ca.member_id, ca.is_admin
+  into v_caller_member_id, v_is_admin
+  from app_private.church_access ca
+  join auth.users u on u.id = ca.user_id
+  join app_private.churches c on c.id = ca.church_id
+  join app_private.members m on m.id = ca.member_id and m.church_id = ca.church_id
+  where ca.user_id = v_user_id
+    and ca.church_id = p_church_id
+    and ca.status = 'active'
+    and ca.onboarding_completed_at is not null
+    and c.status = 'active'
+    and m.status = 'active'
+    and u.email_confirmed_at is not null
+    and u.deleted_at is null
+    and not coalesce(u.is_anonymous, false)
+    and (u.banned_until is null or u.banned_until <= clock_timestamp());
+
+  if v_caller_member_id is null then
     raise exception 'Acesso não autorizado nesta igreja.' using errcode = '42501';
   end if;
 
-  select coalesce(jsonb_agg(item_json), '[]'::jsonb)
+  select e.liturgy_leader_member_id
+  into v_liturgy_leader_id
+  from app_private.events e
+  where e.church_id = p_church_id and e.id = p_event_id;
+
+  select coalesce(
+    jsonb_agg(
+      jsonb_build_object(
+        'id', a.id,
+        'church_id', a.church_id,
+        'event_id', a.event_id,
+        'item_id', a.item_id,
+        'team_id', a.team_id,
+        'team_role_id', a.team_role_id,
+        'member_id', a.member_id,
+        'status', a.status,
+        'member_name', m.display_name,
+        'team_name', t.name,
+        'role_name', tr.name,
+        'item_title', ei.title,
+        -- Filtro de bastidores: notas visíveis a admin, liturgia, líder da equipe ou o próprio membro
+        'notes', case
+          when coalesce(v_is_admin, false)
+               or (v_liturgy_leader_id is not null and v_liturgy_leader_id = v_caller_member_id)
+               or (t.leader_member_id is not null and t.leader_member_id = v_caller_member_id)
+               or a.member_id = v_caller_member_id
+          then a.notes
+          else null
+        end,
+        -- Histórico de substituição visível apenas a admin, liturgia ou líder da equipe
+        'replaced_assignment_id', case
+          when coalesce(v_is_admin, false)
+               or (v_liturgy_leader_id is not null and v_liturgy_leader_id = v_caller_member_id)
+               or (t.leader_member_id is not null and t.leader_member_id = v_caller_member_id)
+          then a.replaced_assignment_id
+          else null
+        end,
+        'replacement_assignment_id', case
+          when coalesce(v_is_admin, false)
+               or (v_liturgy_leader_id is not null and v_liturgy_leader_id = v_caller_member_id)
+               or (t.leader_member_id is not null and t.leader_member_id = v_caller_member_id)
+          then a.replacement_assignment_id
+          else null
+        end,
+        'created_at', a.created_at,
+        'updated_at', a.updated_at
+      ) order by ei.sequence_order nulls last, a.created_at asc
+    ),
+    '[]'::jsonb
+  )
   into v_items
-  from (
-    select jsonb_build_object(
-      'assignment_id', a.id,
-      'event_id', a.event_id,
-      'item_id', a.item_id,
-      'team_id', a.team_id,
-      'team_name', t.name,
-      'team_role_id', a.team_role_id,
-      'role_name', tr.name,
-      'member_id', a.member_id,
-      'member_name', m.display_name,
-      'status', a.status,
-      'replaced_assignment_id', a.replaced_assignment_id,
-      'replacement_assignment_id', a.replacement_assignment_id,
-      'notes', a.notes
-    ) as item_json
-    from app_private.assignments a
-    join app_private.teams t on t.church_id = a.church_id and t.id = a.team_id
-    join app_private.members m on m.church_id = a.church_id and m.id = a.member_id
-    left join app_private.team_roles tr on tr.church_id = a.church_id and tr.id = a.team_role_id
-    where a.church_id = p_church_id and a.event_id = p_event_id
-    order by a.created_at asc, a.id asc
-  ) sub;
+  from app_private.assignments a
+  join app_private.members m on m.id = a.member_id and m.church_id = a.church_id
+  join app_private.teams t on t.id = a.team_id and t.church_id = a.church_id
+  left join app_private.team_roles tr on tr.id = a.team_role_id and tr.church_id = a.church_id
+  left join app_private.event_items ei on ei.id = a.item_id and ei.church_id = a.church_id and ei.event_id = a.event_id
+  where a.church_id = p_church_id
+    and a.event_id = p_event_id;
 
   return query select v_items;
 end;
 $function$;
 
-
 -- =============================================================================
--- 4. Endurecimento Estrito de Permissões
+-- 3. Endurecimento Estrito e Concessão de Privilégios (Todas as 22 RPCs)
 -- =============================================================================
 
--- Revogar permissões públicas/anônimas
+-- Revoga execução pública e anônima em todas as 22 RPCs operacionais
 revoke all on function public.create_church_team(uuid, uuid, text, uuid) from public, anon, service_role;
 revoke all on function public.assign_team_leader(uuid, uuid, uuid, uuid, integer) from public, anon, service_role;
 revoke all on function public.create_team_role(uuid, uuid, uuid, text, text) from public, anon, service_role;
@@ -2750,16 +3574,15 @@ revoke all on function public.add_team_member(uuid, uuid, uuid, uuid) from publi
 revoke all on function public.remove_team_member(uuid, uuid, uuid, uuid) from public, anon, service_role;
 revoke all on function public.grant_member_qualification(uuid, uuid, uuid, uuid, uuid) from public, anon, service_role;
 revoke all on function public.revoke_member_qualification(uuid, uuid, uuid, uuid, uuid) from public, anon, service_role;
-
 revoke all on function public.create_church_event(uuid, uuid, text, text, timestamptz, timestamptz, uuid) from public, anon, service_role;
 revoke all on function public.assign_event_liturgy_leader(uuid, uuid, uuid, uuid, integer) from public, anon, service_role;
 revoke all on function public.start_event_service(uuid, uuid, uuid, integer) from public, anon, service_role;
 revoke all on function public.finish_event_service(uuid, uuid, uuid, integer) from public, anon, service_role;
 revoke all on function public.cancel_church_event(uuid, uuid, uuid, text, integer) from public, anon, service_role;
-
+revoke all on function public.create_event_item(uuid, uuid, uuid, text, text, integer, integer, uuid, uuid) from public, anon, service_role;
 revoke all on function public.assign_event_participant(uuid, uuid, uuid, uuid, uuid, uuid, uuid, text) from public, anon, service_role;
 revoke all on function public.replace_event_participant(uuid, uuid, uuid, uuid, text, text) from public, anon, service_role;
-
+revoke all on function public.list_church_members_for_team(uuid) from public, anon, service_role;
 revoke all on function public.list_church_teams(uuid) from public, anon, service_role;
 revoke all on function public.list_church_team_roles(uuid, uuid) from public, anon, service_role;
 revoke all on function public.list_team_members(uuid, uuid) from public, anon, service_role;
@@ -2767,7 +3590,7 @@ revoke all on function public.list_member_qualifications(uuid, uuid) from public
 revoke all on function public.list_church_events(uuid, text, integer, integer) from public, anon, service_role;
 revoke all on function public.list_event_assignments(uuid, uuid) from public, anon, service_role;
 
--- Conceder exclusivamente ao papel authenticated
+-- Concede execução exclusiva à role autenticada
 grant execute on function public.create_church_team(uuid, uuid, text, uuid) to authenticated;
 grant execute on function public.assign_team_leader(uuid, uuid, uuid, uuid, integer) to authenticated;
 grant execute on function public.create_team_role(uuid, uuid, uuid, text, text) to authenticated;
@@ -2775,16 +3598,15 @@ grant execute on function public.add_team_member(uuid, uuid, uuid, uuid) to auth
 grant execute on function public.remove_team_member(uuid, uuid, uuid, uuid) to authenticated;
 grant execute on function public.grant_member_qualification(uuid, uuid, uuid, uuid, uuid) to authenticated;
 grant execute on function public.revoke_member_qualification(uuid, uuid, uuid, uuid, uuid) to authenticated;
-
 grant execute on function public.create_church_event(uuid, uuid, text, text, timestamptz, timestamptz, uuid) to authenticated;
 grant execute on function public.assign_event_liturgy_leader(uuid, uuid, uuid, uuid, integer) to authenticated;
 grant execute on function public.start_event_service(uuid, uuid, uuid, integer) to authenticated;
 grant execute on function public.finish_event_service(uuid, uuid, uuid, integer) to authenticated;
 grant execute on function public.cancel_church_event(uuid, uuid, uuid, text, integer) to authenticated;
-
+grant execute on function public.create_event_item(uuid, uuid, uuid, text, text, integer, integer, uuid, uuid) to authenticated;
 grant execute on function public.assign_event_participant(uuid, uuid, uuid, uuid, uuid, uuid, uuid, text) to authenticated;
 grant execute on function public.replace_event_participant(uuid, uuid, uuid, uuid, text, text) to authenticated;
-
+grant execute on function public.list_church_members_for_team(uuid) to authenticated;
 grant execute on function public.list_church_teams(uuid) to authenticated;
 grant execute on function public.list_church_team_roles(uuid, uuid) to authenticated;
 grant execute on function public.list_team_members(uuid, uuid) to authenticated;

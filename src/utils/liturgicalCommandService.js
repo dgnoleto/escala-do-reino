@@ -37,7 +37,34 @@ export function validateLiturgicalReceipt(data, commandId, churchId, action) {
 
   if (receipt.command_id !== commandId) return null;
   if (receipt.church_id !== churchId) return null;
-  if (action && receipt.action && receipt.action !== action) return null;
+  // Ação é obrigatória e deve coincidir estritamente com a esperada
+  if (!receipt.action || (action && receipt.action !== action)) return null;
+
+  // Entidade e payload são obrigatórios para comprovação de efeito (B2-05)
+  if (!receipt.result_entity_id) return null;
+  if (!receipt.result_payload || typeof receipt.result_payload !== 'object' || Array.isArray(receipt.result_payload)) return null;
+
+  // Coerência estrita entre entidade principal e identificador no payload
+  const payload = receipt.result_payload;
+  let payloadEntityId;
+  if (action === 'create_event_item') {
+    payloadEntityId = payload.item_id ?? payload.id;
+  } else {
+    payloadEntityId = payload.team_id ??
+      payload.role_id ??
+      payload.team_role_id ??
+      payload.membership_id ??
+      payload.qualification_id ??
+      payload.event_id ??
+      payload.assignment_id ??
+      payload.item_id ??
+      payload.member_id ??
+      payload.id;
+  }
+
+  if (payloadEntityId && String(payloadEntityId) !== String(receipt.result_entity_id)) {
+    return null;
+  }
 
   return receipt;
 }
@@ -567,6 +594,48 @@ export async function cancelChurchEvent({
       p_event_id: eventId,
       p_cancel_reason: cancelReason,
       p_expected_version: expectedVersion !== null ? Number(expectedVersion) : null,
+    },
+  });
+}
+
+/**
+ * Cria item de cronograma de culto ou apoio paralelo (Líder da Liturgia, Equipe designada ou Admin).
+ */
+export async function createEventItem({
+  supabase,
+  churchId,
+  commandId,
+  eventId,
+  title,
+  itemNature = 'liturgical',
+  sequenceOrder = 1,
+  plannedDurationSeconds = 300,
+  designatedTeamId = null,
+  nominalLeaderMemberId = null,
+}) {
+  if (!supabase || !churchId || !commandId || !eventId || !title) {
+    return {
+      status: 'DEFINITIVE_ERROR',
+      message: 'Parâmetros obrigatórios ausentes para criação de item do evento.',
+    };
+  }
+
+  return dispatchLiturgicalRpc({
+    supabase,
+    rpcName: 'create_event_item',
+    action: 'create_event_item',
+    churchId,
+    commandId,
+    params: {
+      p_church_id: churchId,
+      p_command_id: commandId,
+      p_event_id: eventId,
+      p_title: title,
+      p_item_nature: itemNature,
+      p_sequence_order: Number(sequenceOrder) || 1,
+      p_planned_duration_seconds: Number(plannedDurationSeconds) || 300,
+      p_designated_team_id: designatedTeamId || null,
+      p_nominal_leader_member_id: nominalLeaderMemberId || null,
     },
   });
 }

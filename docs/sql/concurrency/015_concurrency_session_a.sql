@@ -5,12 +5,12 @@
 -- Executar em uma conexão dedicada (Terminal 1 / psql Conexão A).
 -- Coordena passos com a Conexão B (Terminal 2) para demonstrar serialização real,
 -- resolução determinística da corrida de substituição concorrente (B2-04),
--- perda de autoridade durante espera e replay simultâneo.
+-- observação de barreira em pg_locks e integridade final.
 --
 -- ATENÇÃO E GOVERNANÇA:
--- 1. Executar apenas em base local autorizada de laboratório (127.0.0.1 / container local).
+-- 1. Executar apenas em base local autorizada de laboratório (127.0.0.1 / ::1).
 -- 2. NUNCA execute este script em banco de piloto remoto, homologação compartilhada ou produção.
--- 3. Scripts contêm barreiras síncronas via pg_advisory_lock para orquestração exata.
+-- 3. Scripts contêm barreiras síncronas via pg_advisory_lock e monitoramento de pg_locks.
 -- ============================================================================
 \set ON_ERROR_STOP on
 
@@ -20,7 +20,7 @@ begin
 end
 $set_app_name$;
 
--- GUARDA ANTECIPADA: Bloqueio estrito contra execução em piloto, produção ou base remota
+-- GUARDA ANTECIPADA: Bloqueio estrito contra execução fora do loopback local
 do $guard_target$
 declare
   v_server_addr inet;
@@ -33,11 +33,8 @@ begin
   if v_server_addr is not null and not (
     v_server_addr = '127.0.0.1'::inet
     or v_server_addr = '::1'::inet
-    or host(v_server_addr) like '172.%'
-    or host(v_server_addr) like '10.%'
-    or host(v_server_addr) like '192.168.%'
   ) then
-    raise exception 'EXECUÇÃO ABORTADA: Conexão não está em loopback ou rede de container efêmero (inet_server_addr = %).', v_server_addr;
+    raise exception 'EXECUÇÃO ABORTADA: Conexão deve ser estritamente loopback local (inet_server_addr = %).', v_server_addr;
   end if;
 end
 $guard_target$;
@@ -125,9 +122,9 @@ begin
     (v_church_id, v_vol3_member_id, v_team_id, v_role_id, 'active')
   on conflict (church_id, member_id, team_role_id) do update set status = 'active';
 
-  -- Inserir evento e item pendente
-  insert into app_private.events (id, church_id, title, event_type, status, planned_start_at, planned_end_at, liturgy_leader_member_id, version)
-  values (v_event_id, v_church_id, 'Culto Concorrência 015', 'culto', 'scheduled', clock_timestamp() + interval '1 day', clock_timestamp() + interval '1 day 2 hours', v_admin_member_id, 1)
+  -- Inserir evento com timezone herdado e item pendente
+  insert into app_private.events (id, church_id, title, event_type, timezone, status, planned_start_at, planned_end_at, liturgy_leader_member_id, version)
+  values (v_event_id, v_church_id, 'Culto Concorrência 015', 'culto', 'America/Sao_Paulo', 'scheduled', clock_timestamp() + interval '1 day', clock_timestamp() + interval '1 day 2 hours', v_admin_member_id, 1)
   on conflict (church_id, id) do nothing;
 
   insert into app_private.event_items (id, church_id, event_id, title, sequence_order, planned_duration_seconds, status, designated_team_id)
@@ -137,7 +134,7 @@ begin
   -- Inserir alocação ativa inicial do Voluntário 1
   insert into app_private.assignments (id, church_id, event_id, item_id, team_id, team_role_id, member_id, status)
   values (v_asg_id, v_church_id, v_event_id, v_item_id, v_team_id, v_role_id, v_vol1_member_id, 'active')
-  on conflict (church_id, id) do update set status = 'active';
+  on conflict (church_id, id) do update set status = 'active', replaced_assignment_id = null, replacement_assignment_id = null;
 end
 $setup_fixtures$;
 
@@ -167,8 +164,33 @@ select * from public.replace_event_participant(
 \echo 'SESSÃO A: Alocação atualizada sob lock. Liberando Sessão B...'
 select pg_advisory_unlock(1015001);
 
--- Aguarda 2 segundos para dar tempo da Sessão B tentar a substituição concorrente e enfileirar no lock
-select pg_sleep(2);
+-- BARREIRA OBSERVÁVEL (B2-06): Observa se a Conexão B enfileirou em pg_locks
+do $observe_lock_barrier$
+declare
+  v_waiting boolean := false;
+  v_attempts integer := 0;
+begin
+  loop
+    select exists (
+      select 1
+      from pg_locks l
+      join pg_stat_activity a on a.pid = l.pid
+      where a.application_name = 'rehearsal_015_session_b'
+        and not l.granted
+    ) into v_waiting;
+
+    exit when v_waiting or v_attempts >= 30;
+    perform pg_sleep(0.1);
+    v_attempts := v_attempts + 1;
+  end loop;
+
+  if v_waiting then
+    raise notice 'BARREIRA OBSERVÁVEL: Sessão B detectada em espera no lock da Sessão A.';
+  else
+    raise notice 'BARREIRA: Tempo limite de observação atingido; prosseguindo com commit.';
+  end if;
+end
+$observe_lock_barrier$;
 
 -- Confirma transação da Sessão A
 commit;

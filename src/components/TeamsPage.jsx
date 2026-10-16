@@ -20,6 +20,7 @@ import {
   fetchChurchTeams,
   fetchChurchTeamRoles,
   fetchTeamMembers,
+  fetchMemberQualifications,
   createChurchTeam,
   transferTeamLeadership,
   createTeamRole,
@@ -70,14 +71,28 @@ export default function TeamsPage({ onBack }) {
   const [isTransferModalOpen, setIsTransferModalOpen] = useState(false);
   const [newLeaderId, setNewLeaderId] = useState('');
 
-  // Comando pendente na sessão para recuperação após F5
+  // Gestão de Aptidões / Qualificações do Integrante (B2-02)
+  const [selectedMemberForQuals, setSelectedMemberForQuals] = useState(null);
+  const [memberQuals, setMemberQuals] = useState([]);
+  const [loadingQuals, setLoadingQuals] = useState(false);
+
+  // Comando pendente na sessão para recuperação após F5 (B2-05)
   const [pendingCmd, setPendingCmd] = useState(null);
 
   const isMountedRef = useRef(true);
+  const activeLoadingTeamIdRef = useRef(null);
+  const activeChurchIdRef = useRef(churchId);
+  const activeUserIdRef = useRef(currentUserId);
+
   useEffect(() => {
     isMountedRef.current = true;
     return () => { isMountedRef.current = false; };
   }, []);
+
+  useEffect(() => {
+    activeChurchIdRef.current = churchId;
+    activeUserIdRef.current = currentUserId;
+  }, [churchId, currentUserId]);
 
   // 1. Carrega comando pendente se houver
   useEffect(() => {
@@ -94,15 +109,15 @@ export default function TeamsPage({ onBack }) {
     setErrorMsg(null);
     try {
       const list = await fetchChurchTeams({ supabase, churchId });
-      if (isMountedRef.current) {
+      if (isMountedRef.current && activeChurchIdRef.current === churchId) {
         setTeams(list);
       }
     } catch (err) {
-      if (isMountedRef.current) {
+      if (isMountedRef.current && activeChurchIdRef.current === churchId) {
         setErrorMsg(err.message || 'Falha ao carregar ministérios e equipes.');
       }
     } finally {
-      if (isMountedRef.current) {
+      if (isMountedRef.current && activeChurchIdRef.current === churchId) {
         setLoading(false);
       }
     }
@@ -112,29 +127,42 @@ export default function TeamsPage({ onBack }) {
     loadTeams();
   }, [loadTeams]);
 
-  // 3. Carrega detalhes da equipe selecionada (funções e integrantes)
+  // 3. Carrega detalhes da equipe selecionada com proteção de contexto e ordenação (B2-05)
   const loadTeamDetails = useCallback(async (teamId) => {
     if (!supabase || !churchId || !teamId) return;
+    activeLoadingTeamIdRef.current = teamId;
     setLoadingDetails(true);
     try {
       const [roles, members] = await Promise.all([
         fetchChurchTeamRoles({ supabase, churchId, teamId }),
         fetchTeamMembers({ supabase, churchId, teamId }),
       ]);
-      if (isMountedRef.current) {
+      if (
+        isMountedRef.current &&
+        activeLoadingTeamIdRef.current === teamId &&
+        activeChurchIdRef.current === churchId &&
+        activeUserIdRef.current === currentUserId
+      ) {
         setTeamRoles(roles);
         setTeamMembers(members);
       }
     } catch (err) {
-      if (isMountedRef.current) {
+      if (
+        isMountedRef.current &&
+        activeLoadingTeamIdRef.current === teamId &&
+        activeChurchIdRef.current === churchId
+      ) {
         setErrorMsg(err.message || 'Falha ao carregar dados da equipe.');
       }
     } finally {
-      if (isMountedRef.current) {
+      if (
+        isMountedRef.current &&
+        activeLoadingTeamIdRef.current === teamId
+      ) {
         setLoadingDetails(false);
       }
     }
-  }, [churchId]);
+  }, [churchId, currentUserId]);
 
   useEffect(() => {
     if (selectedTeamId) {
@@ -146,19 +174,37 @@ export default function TeamsPage({ onBack }) {
   const loadAvailableMembers = useCallback(async () => {
     if (!supabase || !churchId) return;
     try {
-      const { data, error } = await supabase.rpc('list_church_members_admin', {
-        p_church_id: churchId,
-        p_status_filter: 'active',
-        p_limit: 100,
-        p_offset: 0,
-      });
-      if (!error && Array.isArray(data) && data[0]?.items) {
-        setAvailableMembers(data[0].items);
+      let items = [];
+      if (isAdmin) {
+        const { data, error } = await supabase.rpc('list_church_members_admin', {
+          p_church_id: churchId,
+          p_status_filter: 'active',
+          p_limit: 100,
+          p_offset: 0,
+        });
+        if (!error && Array.isArray(data) && data[0]?.items) {
+          items = data[0].items;
+        }
+      }
+      if (items.length === 0) {
+        const { data: teamData, error: teamErr } = await supabase.rpc('list_church_members_for_team', {
+          p_church_id: churchId,
+        });
+        if (!teamErr && Array.isArray(teamData)) {
+          items = teamData[0]?.members || teamData;
+        }
+      }
+      if (isMountedRef.current && items.length > 0) {
+        const normalized = items.map((m) => ({
+          member_id: m.member_id || m.id,
+          display_name: m.display_name,
+        }));
+        setAvailableMembers(normalized);
       }
     } catch {
       // Falha silenciosa de enriquecimento
     }
-  }, [churchId]);
+  }, [churchId, isAdmin]);
 
   useEffect(() => {
     if (isCreateModalOpen || isTransferModalOpen || selectedTeamId) {
@@ -166,23 +212,70 @@ export default function TeamsPage({ onBack }) {
     }
   }, [isCreateModalOpen, isTransferModalOpen, selectedTeamId, loadAvailableMembers]);
 
-  // 5. Ação: Criar Nova Equipe (Admin)
+  // 5. Reconciliação do Comando Retido (B2-05)
+  const handleReconcile = async () => {
+    if (!pendingCmd || !supabase || !churchId || isSubmitting) return;
+    setIsSubmitting(true);
+    setErrorMsg(null);
+    try {
+      if (pendingCmd.action === 'create_church_team') {
+        const res = await createChurchTeam({
+          supabase,
+          churchId: pendingCmd.churchId,
+          commandId: pendingCmd.commandId,
+          name: pendingCmd.name,
+        });
+        if (res.status === 'SUCCESS') {
+          if (typeof window !== 'undefined' && window.sessionStorage) {
+            removePendingLiturgicalCommand(window.sessionStorage, currentUserId, churchId);
+          }
+          setPendingCmd(null);
+          setSuccessMsg(`Equipe "${pendingCmd.name}" reconciliada e confirmada com sucesso!`);
+          await loadTeams();
+        } else if (res.status === 'DEFINITIVE_ERROR') {
+          if (typeof window !== 'undefined' && window.sessionStorage) {
+            removePendingLiturgicalCommand(window.sessionStorage, currentUserId, churchId);
+          }
+          setPendingCmd(null);
+          setErrorMsg(res.message || 'Erro definitivo ao reconciliar.');
+        } else {
+          setErrorMsg('Comando pendente reenviado, mas o servidor ainda retornou resposta incerta. A retenção foi preservada.');
+        }
+      }
+    } catch (err) {
+      setErrorMsg(err.message || 'Falha ao reconciliar comando pendente.');
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  // 6. Ação: Criar Nova Equipe (Admin)
   const handleCreateTeam = async (e) => {
     e.preventDefault();
     if (!newTeamName.trim() || !churchId || isSubmitting) return;
+
+    if (pendingCmd) {
+      setErrorMsg('Existe uma operação pendente de confirmação. Reconcilie antes de enviar novo comando.');
+      return;
+    }
 
     const commandId = crypto.randomUUID();
     setIsSubmitting(true);
     setErrorMsg(null);
 
-    // Salva comando pendente antes do despacho para tolerância a quedas
+    // Salva comando pendente antes do despacho para tolerância a quedas (B2-05)
     if (typeof window !== 'undefined' && window.sessionStorage) {
-      savePendingLiturgicalCommand(window.sessionStorage, currentUserId, {
+      const saved = savePendingLiturgicalCommand(window.sessionStorage, currentUserId, {
         commandId,
         churchId,
         action: 'create_church_team',
         name: newTeamName.trim(),
       });
+      if (!saved) {
+        setErrorMsg('Falha ao persistir comando na sessão local. Envio cancelado por segurança.');
+        setIsSubmitting(false);
+        return;
+      }
       setPendingCmd({ commandId, churchId, action: 'create_church_team', name: newTeamName.trim() });
     }
 
@@ -215,6 +308,74 @@ export default function TeamsPage({ onBack }) {
       }
     } catch (err) {
       setErrorMsg(err.message || 'Erro inesperado.');
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  // 7. Gestão de Aptidões do Integrante (B2-02)
+  const handleOpenQuals = async (member) => {
+    setSelectedMemberForQuals(member);
+    setLoadingQuals(true);
+    try {
+      const quals = await fetchMemberQualifications({ supabase, churchId, memberId: member.member_id });
+      if (isMountedRef.current) {
+        setMemberQuals(quals);
+      }
+    } catch {
+      if (isMountedRef.current) setMemberQuals([]);
+    } finally {
+      if (isMountedRef.current) setLoadingQuals(false);
+    }
+  };
+
+  const handleGrantQual = async (roleId) => {
+    if (!selectedMemberForQuals || !selectedTeamId || isSubmitting) return;
+    setIsSubmitting(true);
+    try {
+      const res = await grantMemberQualification({
+        supabase,
+        churchId,
+        commandId: crypto.randomUUID(),
+        memberId: selectedMemberForQuals.member_id,
+        teamId: selectedTeamId,
+        teamRoleId: roleId,
+      });
+      if (res.status === 'SUCCESS') {
+        const quals = await fetchMemberQualifications({ supabase, churchId, memberId: selectedMemberForQuals.member_id });
+        setMemberQuals(quals);
+        setSuccessMsg('Aptidão técnica homologada com sucesso!');
+      } else {
+        setErrorMsg(res.message || 'Falha ao conceder aptidão.');
+      }
+    } catch (err) {
+      setErrorMsg(err.message || 'Erro ao conceder aptidão.');
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  const handleRevokeQual = async (roleId) => {
+    if (!selectedMemberForQuals || !selectedTeamId || isSubmitting) return;
+    setIsSubmitting(true);
+    try {
+      const res = await revokeMemberQualification({
+        supabase,
+        churchId,
+        commandId: crypto.randomUUID(),
+        memberId: selectedMemberForQuals.member_id,
+        teamId: selectedTeamId,
+        teamRoleId: roleId,
+      });
+      if (res.status === 'SUCCESS') {
+        const quals = await fetchMemberQualifications({ supabase, churchId, memberId: selectedMemberForQuals.member_id });
+        setMemberQuals(quals);
+        setSuccessMsg('Aptidão técnica revogada.');
+      } else {
+        setErrorMsg(res.message || 'Falha ao revogar aptidão.');
+      }
+    } catch (err) {
+      setErrorMsg(err.message || 'Erro ao revogar aptidão.');
     } finally {
       setIsSubmitting(false);
     }
@@ -422,7 +583,7 @@ export default function TeamsPage({ onBack }) {
           <button
             type="button"
             className="btn btn-secondary"
-            onClick={loadTeams}
+            onClick={handleReconcile}
             style={{ fontSize: '0.78rem', padding: '4px 10px' }}
           >
             Reconciliar
@@ -578,16 +739,27 @@ export default function TeamsPage({ onBack }) {
                             <span>
                               {m.display_name} {m.is_team_leader && <strong style={{ color: 'var(--primary)' }}>(Líder)</strong>}
                             </span>
-                            {!m.is_team_leader && (
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
                               <button
                                 type="button"
-                                onClick={() => handleRemoveMember(m.member_id)}
-                                style={{ background: 'transparent', border: 'none', color: '#ef4444', cursor: 'pointer', padding: '2px' }}
-                                title="Remover da equipe"
+                                onClick={() => handleOpenQuals(m)}
+                                className="btn btn-secondary"
+                                style={{ fontSize: '0.72rem', padding: '2px 6px', display: 'inline-flex', alignItems: 'center', gap: '4px' }}
+                                title="Gerenciar aptidões técnicas"
                               >
-                                <Trash2 size={14} />
+                                <Award size={13} /> Aptidões
                               </button>
-                            )}
+                              {!m.is_team_leader && (
+                                <button
+                                  type="button"
+                                  onClick={() => handleRemoveMember(m.member_id)}
+                                  style={{ background: 'transparent', border: 'none', color: '#ef4444', cursor: 'pointer', padding: '2px' }}
+                                  title="Remover da equipe"
+                                >
+                                  <Trash2 size={14} />
+                                </button>
+                              )}
+                            </div>
                           </div>
                         ))}
                       </div>
@@ -602,12 +774,15 @@ export default function TeamsPage({ onBack }) {
                       >
                         <option value="">Selecione um membro...</option>
                         {availableMembers
-                          .filter((am) => !teamMembers.some((tm) => tm.member_id === am.id))
-                          .map((am) => (
-                            <option key={am.id} value={am.id}>
-                              {am.display_name}
-                            </option>
-                          ))}
+                          .filter((am) => !teamMembers.some((tm) => tm.member_id === (am.member_id || am.id)))
+                          .map((am) => {
+                            const mId = am.member_id || am.id;
+                            return (
+                              <option key={mId} value={mId}>
+                                {am.display_name}
+                              </option>
+                            );
+                          })}
                       </select>
                       <button type="submit" className="btn btn-primary" disabled={!selectedMemberToAdd || isSubmitting} style={{ fontSize: '0.78rem', padding: '6px 10px' }}>
                         Vincular
@@ -670,12 +845,15 @@ export default function TeamsPage({ onBack }) {
                 >
                   <option value="">Selecione o novo líder...</option>
                   {availableMembers
-                    .filter((am) => am.id !== selectedTeam.leader_member_id)
-                    .map((am) => (
-                      <option key={am.id} value={am.id}>
-                        {am.display_name}
-                      </option>
-                    ))}
+                    .filter((am) => (am.member_id || am.id) !== selectedTeam.leader_member_id)
+                    .map((am) => {
+                      const mId = am.member_id || am.id;
+                      return (
+                        <option key={mId} value={mId}>
+                          {am.display_name}
+                        </option>
+                      );
+                    })}
                 </select>
               </div>
 
@@ -688,6 +866,84 @@ export default function TeamsPage({ onBack }) {
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* Modal: Gestão de Aptidões Técnicas (B2-02) */}
+      {selectedMemberForQuals && (
+        <div className="modal-backdrop" style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 }}>
+          <div className="card" style={{ width: '90%', maxWidth: '500px', padding: '20px' }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '12px' }}>
+              <h2 style={{ fontSize: '1.15rem', margin: 0, display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <Award size={18} color="var(--primary, #2563eb)" /> Aptidões: {selectedMemberForQuals.display_name}
+              </h2>
+              <button
+                type="button"
+                className="btn btn-secondary"
+                onClick={() => setSelectedMemberForQuals(null)}
+                style={{ fontSize: '0.75rem', padding: '2px 8px' }}
+              >
+                Fechar
+              </button>
+            </div>
+
+            <p style={{ fontSize: '0.82rem', color: 'var(--text-secondary)', marginBottom: '14px' }}>
+              Habilitação e homologação de funções técnicas para atuação na equipe <strong>{selectedTeam?.name}</strong>.
+            </p>
+
+            {loadingQuals ? (
+              <p style={{ fontSize: '0.85rem', color: 'var(--text-secondary)' }}>Carregando aptidões...</p>
+            ) : teamRoles.length === 0 ? (
+              <p style={{ fontSize: '0.82rem', color: 'var(--text-muted)' }}>Esta equipe ainda não possui funções técnicas cadastradas.</p>
+            ) : (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', maxHeight: '300px', overflowY: 'auto' }}>
+                {teamRoles.map((role) => {
+                  const isQualified = memberQuals.some((q) => q.team_role_id === role.team_role_id && q.status === 'active');
+                  return (
+                    <div
+                      key={role.team_role_id}
+                      style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'space-between',
+                        padding: '8px 12px',
+                        background: isQualified ? 'var(--primary-surface, #eff6ff)' : 'var(--bg-surface)',
+                        borderRadius: '6px',
+                        border: isQualified ? '1px solid var(--primary, #2563eb)' : '1px solid var(--border-subtle)',
+                      }}
+                    >
+                      <div>
+                        <strong style={{ fontSize: '0.85rem' }}>{role.name}</strong>
+                        {role.description && <p style={{ margin: '2px 0 0', fontSize: '0.75rem', color: 'var(--text-secondary)' }}>{role.description}</p>}
+                      </div>
+
+                      {isQualified ? (
+                        <button
+                          type="button"
+                          className="btn btn-secondary"
+                          onClick={() => handleRevokeQual(role.team_role_id)}
+                          disabled={isSubmitting}
+                          style={{ fontSize: '0.72rem', padding: '3px 8px', color: '#ef4444' }}
+                        >
+                          Revogar
+                        </button>
+                      ) : (
+                        <button
+                          type="button"
+                          className="btn btn-primary"
+                          onClick={() => handleGrantQual(role.team_role_id)}
+                          disabled={isSubmitting}
+                          style={{ fontSize: '0.72rem', padding: '3px 8px' }}
+                        >
+                          Conceder
+                        </button>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            )}
           </div>
         </div>
       )}

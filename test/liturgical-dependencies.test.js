@@ -17,6 +17,7 @@ import {
   startEventService,
   finishEventService,
   cancelChurchEvent,
+  createEventItem,
   assignEventParticipant,
   replaceEventParticipant,
   fetchChurchTeams,
@@ -442,3 +443,128 @@ test('8. Mensagens Informativas em dispatchMemberDeactivation (P0015, P0016, P00
     });
   }
 });
+
+test('9. Validação Estrita de Recibos Litúrgicos (Contraprovas B2-05)', async (t) => {
+  const churchId = 'c0000000-0000-4000-8000-000000000001';
+  const commandId = 'd0000000-0000-4000-8000-000000000001';
+  const teamId = 't0000000-0000-4000-8000-000000000001';
+  const action = 'create_church_team';
+
+  await t.test('controle: recibo completo e coerente confirma criação', () => {
+    const rawData = [{
+      command_id: commandId,
+      action,
+      church_id: churchId,
+      result_entity_id: teamId,
+      result_payload: { team_id: teamId, name: 'Louvor', status: 'active' },
+      created_at: new Date().toISOString(),
+    }];
+
+    const receipt = validateLiturgicalReceipt(rawData, commandId, churchId, action);
+    assert.ok(receipt, 'Recibo canônico coerente deve ser aceito');
+    assert.equal(receipt.command_id, commandId);
+    assert.equal(receipt.result_entity_id, teamId);
+    assert.equal(receipt.result_payload.name, 'Louvor');
+  });
+
+  await t.test('contraprova: ação ausente mantém resultado incerto', () => {
+    const rawData = [{
+      command_id: commandId,
+      church_id: churchId,
+      result_entity_id: teamId,
+      result_payload: { team_id: teamId, name: 'Louvor' },
+    }];
+
+    const receipt = validateLiturgicalReceipt(rawData, commandId, churchId, action);
+    assert.equal(receipt, null, 'Recibo sem ação explícita deve ser rejeitado');
+  });
+
+  await t.test('contraprova: identidade do comando sem entidade/payload não confirma criação', () => {
+    const rawData = [{
+      command_id: commandId,
+      action,
+      church_id: churchId,
+    }];
+
+    const receipt = validateLiturgicalReceipt(rawData, commandId, churchId, action);
+    assert.equal(receipt, null, 'Recibo sem result_entity_id ou payload deve ser rejeitado');
+  });
+
+  await t.test('contraprova: entidade do recibo diverge da equipe no payload', () => {
+    const otherTeamId = 't0000000-0000-4000-8000-000000000099';
+    const rawData = [{
+      command_id: commandId,
+      action,
+      church_id: churchId,
+      result_entity_id: teamId,
+      result_payload: { team_id: otherTeamId, name: 'Louvor Divergente' },
+    }];
+
+    const receipt = validateLiturgicalReceipt(rawData, commandId, churchId, action);
+    assert.equal(receipt, null, 'Incoerência entre result_entity_id e payload deve ser rejeitada');
+  });
+});
+
+test('10. Despacho de Criação de Item de Evento (createEventItem - B2-02)', async (t) => {
+  await t.test('recusa envio se parâmetros obrigatórios estiverem ausentes', async () => {
+    const res = await createEventItem({
+      supabase: {},
+      churchId: 'church-1',
+      commandId: null,
+      eventId: 'event-1',
+      title: 'Momento da Palavra',
+    });
+    assert.equal(res.status, 'DEFINITIVE_ERROR');
+  });
+
+  await t.test('despacha RPC create_event_item com sucesso e recibo canônico', async () => {
+    const churchId = 'c0000000-0000-4000-8000-000000000001';
+    const commandId = 'd0000000-0000-4000-8000-000000000002';
+    const eventId = 'e0000000-0000-4000-8000-000000000001';
+    const itemId = 'i0000000-0000-4000-8000-000000000001';
+
+    const mockSupabase = {
+      async rpc(name, params) {
+        assert.equal(name, 'create_event_item');
+        assert.equal(params.p_church_id, churchId);
+        assert.equal(params.p_title, 'Momento de Louvor');
+        return {
+          data: [{
+            command_id: commandId,
+            action: 'create_event_item',
+            church_id: churchId,
+            result_entity_id: itemId,
+            result_payload: {
+              item_id: itemId,
+              event_id: eventId,
+              title: 'Momento de Louvor',
+              item_nature: 'liturgical',
+              sequence_order: 1,
+              planned_duration_seconds: 900,
+              status: 'pending',
+            },
+            created_at: new Date().toISOString(),
+          }],
+          error: null,
+        };
+      },
+    };
+
+    const res = await createEventItem({
+      supabase: mockSupabase,
+      churchId,
+      commandId,
+      eventId,
+      title: 'Momento de Louvor',
+      itemNature: 'liturgical',
+      sequenceOrder: 1,
+      plannedDurationSeconds: 900,
+    });
+
+    assert.equal(res.status, 'SUCCESS');
+    assert.ok(res.receipt);
+    assert.equal(res.receipt.result_entity_id, itemId);
+    assert.equal(res.data.title, 'Momento de Louvor');
+  });
+});
+
