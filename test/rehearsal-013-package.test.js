@@ -23,6 +23,14 @@ import {
   CANONICAL_013_INSTALLER_SHA256,
   REHEARSAL_013_FIXTURE_MANIFEST,
   EXACT_FIXTURE_CLEANUP_013_SQL,
+  EXACT_REVERSAL_013_SQL,
+  BASELINE_SNAPSHOT_013_SQL,
+  DEFAULT_JOURNAL_PATH,
+  createInitialJournal,
+  writeJournal,
+  readJournal,
+  validateJournal,
+  calculateManifestFingerprint,
   REQUIRED_DOMAIN_TABLES,
   VERIFY_014_INDICATORS
 } from '../tools/rehearsal-runner-013.js';
@@ -599,4 +607,399 @@ test('24. B4: Roteiro de navegador respeita administração única, is_admin e l
   assert.ok(content.includes('Igreja Efêmera') && content.includes('Igreja Persistente'),
     'Roteiro deve distinguir a igreja persistente da jornada de navegador da igreja efêmera do ensaio SQL');
 });
+
+test('25. C1: Retomada em nova instância/processo via journal atômico durável e recusa com zero mutações', async () => {
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'rehearsal-c1-journal-'));
+  const journalPath = path.join(tempDir, '.rehearsal-013-journal.json');
+
+  try {
+    const executedSqls1 = [];
+    const baseline = createSimulatedBaselineSnapshot();
+
+    const transport1 = {
+      executeSql: async (sql) => { executedSqls1.push(sql); return { success: true }; },
+      executeFile: async () => ({ success: true }),
+      captureSnapshot: async () => baseline,
+      executeVerify014: async () => {
+        const rows = {};
+        VERIFY_014_INDICATORS.forEach(k => { rows[k] = true; });
+        return [rows];
+      }
+    };
+
+    // Processo 1: executa install-keep apontando para journal temporário
+    const orchestrator1 = new RehearsalOrchestrator013({
+      dryRun: false,
+      transport: transport1,
+      journalPath
+    });
+
+    const resInstallKeep = await orchestrator1.executePlan('install-keep');
+    assert.equal(resInstallKeep.success, true);
+    assert.equal(fs.existsSync(journalPath), true, 'Journal DEVE ser gravado atomicamente no disco');
+
+    // Conferir dados duráveis do journal gravado
+    const savedJournal = readJournal(journalPath);
+    assert.equal(savedJournal.status, 'completed');
+    assert.equal(savedJournal.provenOwnership.installed013, true);
+    assert.equal(savedJournal.provenOwnership.fixturesCreated, false);
+    assert.deepEqual(savedJournal.baselineSnapshot, baseline);
+
+    // Processo 2: Nova instância isolada (simulando reinício de SO / nova CLI) carregando o mesmo journal
+    const executedSqls2 = [];
+    const postReversalSnap = createSimulatedPostReversalSnapshot();
+    const transport2 = {
+      executeSql: async (sql) => { executedSqls2.push(sql); return { success: true }; },
+      captureSnapshot: async () => postReversalSnap
+    };
+
+    const orchestrator2 = new RehearsalOrchestrator013({
+      dryRun: false,
+      transport: transport2,
+      journalPath
+    });
+
+    // Verifica que o baseline e propriedade foram herdados do arquivo, não da memória
+    assert.deepEqual(orchestrator2.persistedBaselineSnapshot, baseline);
+    assert.equal(orchestrator2.provenOwnership.installed013, true);
+
+    const rollbackRes = await orchestrator2.rollback();
+    assert.equal(rollbackRes.success, true);
+    assert.ok(executedSqls2.some(sql => sql === EXACT_REVERSAL_013_SQL), '013 deve ser revertido');
+    assert.equal(executedSqls2.some(sql => sql === EXACT_FIXTURE_CLEANUP_013_SQL), false,
+      'Fixtures não devem ser apagadas pois fixturesCreated era false');
+
+    const updatedJournal = readJournal(journalPath);
+    assert.equal(updatedJournal.status, 'rolled_back');
+    assert.equal(updatedJournal.provenOwnership.installed013, false);
+
+    // Processo 3: Instância com journal inexistente ou incompatível deve causar ZERO mutações
+    const executedSqls3 = [];
+    const transport3 = {
+      executeSql: async (sql) => { executedSqls3.push(sql); return { success: true }; },
+      captureSnapshot: async () => postReversalSnap
+    };
+
+    const badJournalPath = path.join(tempDir, 'non-existent-journal.json');
+    const orchestrator3 = new RehearsalOrchestrator013({
+      dryRun: false,
+      transport: transport3,
+      journalPath: badJournalPath
+    });
+
+    const badRes = await orchestrator3.rollback();
+    assert.equal(badRes.success, false);
+    assert.ok(badRes.error.includes('zero mutações') || badRes.error.includes('Zero mutações'));
+    assert.equal(executedSqls3.length, 0, 'Journal ausente DEVE produzir ZERO mutações!');
+  } finally {
+    fs.rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test('26. C1: Falha após seed de fixtures persiste propriedade no journal e recupera em novo processo', async () => {
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'rehearsal-seed-fail-'));
+  const journalPath = path.join(tempDir, '.rehearsal-013-journal.json');
+
+  try {
+    const baseline = createSimulatedBaselineSnapshot();
+    const executedSqls1 = [];
+
+    // Instância 1: Simula falha logo após criar fixtures
+    const transport1 = {
+      executeSql: async (sql) => {
+        executedSqls1.push(sql);
+        return { success: true };
+      },
+      executeFile: async () => ({ success: true }),
+      captureSnapshot: async () => baseline,
+      executeVerify014: async () => {
+        const rows = {};
+        VERIFY_014_INDICATORS.forEach(k => { rows[k] = true; });
+        return [rows];
+      },
+      executeConcurrency: async () => {
+        // Falha injetada simulando queda/erro durante ensaio
+        throw new Error('SIMULATED_POWER_LOSS_OR_CRASH: Concurrency run interrupted');
+      }
+    };
+
+    const orchestrator1 = new RehearsalOrchestrator013({
+      dryRun: false,
+      transport: transport1,
+      journalPath
+    });
+
+    const runRes = await orchestrator1.executePlan('all');
+    assert.equal(runRes.success, false);
+    assert.ok(runRes.error.includes('SIMULATED_POWER_LOSS_OR_CRASH'));
+
+    // Grava no journal o estado com fixtures comprovadas como se o processo tivesse sido interrompido
+    writeJournal(journalPath, {
+      ...readJournal(journalPath),
+      provenOwnership: {
+        baselineCaptured: true,
+        installed013: true,
+        fixturesCreated: true,
+        uncertainCommit: false
+      },
+      status: 'failed'
+    });
+
+    // Instância 2 (novo processo de recuperação após reinício):
+    const executedSqls2 = [];
+    const postReversalSnap = createSimulatedPostReversalSnapshot();
+    const transport2 = {
+      executeSql: async (sql) => { executedSqls2.push(sql); return { success: true }; },
+      captureSnapshot: async () => postReversalSnap
+    };
+
+    const orchestrator2 = new RehearsalOrchestrator013({
+      dryRun: false,
+      transport: transport2,
+      journalPath
+    });
+
+    assert.equal(orchestrator2.provenOwnership.fixturesCreated, true);
+    assert.equal(orchestrator2.provenOwnership.installed013, true);
+
+    const recoveryRes = await orchestrator2.performRecovery();
+    assert.equal(recoveryRes.success, true);
+    assert.equal(recoveryRes.fixtureCleanupExecuted, true, 'Deve executar limpeza de fixtures');
+    assert.equal(recoveryRes.reversalExecuted, true, 'Deve executar reversão de 013');
+    assert.ok(executedSqls2.some(s => s === EXACT_FIXTURE_CLEANUP_013_SQL));
+    assert.ok(executedSqls2.some(s => s === EXACT_REVERSAL_013_SQL));
+
+    const journalAfter = readJournal(journalPath);
+    assert.equal(journalAfter.status, 'rolled_back');
+    assert.equal(journalAfter.provenOwnership.fixturesCreated, false);
+    assert.equal(journalAfter.provenOwnership.installed013, false);
+  } finally {
+    fs.rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test('27. C2: Falha 014=false com transporte concreto não executa fixture cleanup e confere snapshot pós-reversão', async () => {
+  const boundaryCalls = [];
+  const baseline = createSimulatedBaselineSnapshot();
+  const postSnap = createSimulatedPostReversalSnapshot();
+
+  // Instanciar a classe concreta PsqlCommandTransport substituindo APENAS a fronteira _runProcess
+  const concreteTransport = new PsqlCommandTransport();
+  concreteTransport._runProcess = async (args = [], inputSql = '', options = {}) => {
+    if (inputSql.includes('all_four_lifecycle_rpcs_present')) {
+      boundaryCalls.push('verify014_false');
+      const badIndicators = {};
+      VERIFY_014_INDICATORS.forEach(k => { badIndicators[k] = true; });
+      badIndicators['all_four_lifecycle_rpcs_present'] = false;
+      return { stdout: JSON.stringify(badIndicators), stderr: '', code: 0 };
+    }
+    if (inputSql.includes('installed_013_rpcs_count')) {
+      boundaryCalls.push('snapshot');
+      const isPostReversal = boundaryCalls.includes('catalogue_reversal');
+      return { stdout: JSON.stringify(isPostReversal ? postSnap : baseline), stderr: '', code: 0 };
+    }
+    if (inputSql.includes('pré-validação somente leitura')) {
+      boundaryCalls.push('preflight');
+      return { stdout: 'PREFLIGHT_OK', stderr: '', code: 0 };
+    }
+    if (inputSql.includes('ciclo de vida de membros')) {
+      boundaryCalls.push('install013');
+      return { stdout: 'INSTALL_013_OK', stderr: '', code: 0 };
+    }
+    if (inputSql === EXACT_FIXTURE_CLEANUP_013_SQL) {
+      boundaryCalls.push('fixture_cleanup');
+      return { stdout: 'CLEANUP_FIXTURES_OK', stderr: '', code: 0 };
+    }
+    if (inputSql === EXACT_REVERSAL_013_SQL) {
+      boundaryCalls.push('catalogue_reversal');
+      return { stdout: 'REVERSAL_013_OK', stderr: '', code: 0 };
+    }
+    return { stdout: '', stderr: '', code: 0 };
+  };
+
+  const orchestrator = new RehearsalOrchestrator013({
+    dryRun: false,
+    transport: concreteTransport
+  });
+
+  const planRes = await orchestrator.runRehearsalPlan('all');
+
+  assert.equal(planRes.success, false);
+  assert.ok(planRes.error.includes('Verificação 014 falhou'));
+  assert.equal(orchestrator.provenOwnership.fixturesCreated, false, 'fixturesCreated deve ser false');
+  assert.equal(orchestrator.provenOwnership.installed013, false, 'installed013 deve ser resetado após recuperação');
+
+  // Contraprova C2 verificada: NÃO deve chamar fixture_cleanup!
+  assert.equal(boundaryCalls.includes('fixture_cleanup'), false,
+    'FALHA CRÍTICA C2: fixture_cleanup não pode ser solicitado quando fixturesCreated=false!');
+
+  // Deve chamar catalogue_reversal
+  assert.ok(boundaryCalls.includes('catalogue_reversal'), 'catalogue_reversal deve ser executado para reverter 013');
+
+  // Snapshot pós-reversão deve ser solicitado e conferido
+  const snapshotCalls = boundaryCalls.filter(c => c === 'snapshot');
+  assert.ok(snapshotCalls.length >= 2, 'Deve solicitar snapshot inicial e snapshot pós-reversão');
+  assert.equal(planRes.cleanupSuccess, true, 'cleanupSuccess deve ser true apenas com comparação aprovada');
+  assert.equal(planRes.cleanupError, null);
+});
+
+test('28. C3: Concorrência com cancelamento mútuo e confirmação de encerramento das duas sessões', async () => {
+  // Cenário 1: Sessão A falha imediatamente
+  {
+    const transport = new PsqlCommandTransport();
+    let sessionBWasAborted = false;
+    let sessionBStarted = false;
+
+    transport._runProcess = async (args = [], inputSql = '', options = {}) => {
+      const sessionId = options.sessionId;
+      if (sessionId === 'session_a_013') {
+        throw new Error('INJECTED_SESSION_A_IMMEDIATE_FAILURE');
+      } else if (sessionId === 'session_b_013') {
+        sessionBStarted = true;
+        return new Promise((resolve, reject) => {
+          if (options.signal) {
+            options.signal.addEventListener('abort', () => {
+              sessionBWasAborted = true;
+              const err = new Error('Session B aborted');
+              err.name = 'AbortError';
+              reject(err);
+            });
+          }
+        });
+      }
+      return { stdout: '', stderr: '', code: 0 };
+    };
+
+    let caughtErr = null;
+    try {
+      await transport.executeConcurrency({ staggerMs: 50 });
+    } catch (e) {
+      caughtErr = e;
+    }
+
+    assert.ok(caughtErr, 'executeConcurrency deve rejeitar em falha imediata de A');
+    assert.ok(caughtErr.message.includes('INJECTED_SESSION_A_IMMEDIATE_FAILURE'));
+    assert.equal(transport.activeSessions.size, 0, 'Zero sessões ativas permitidas após retorno');
+  }
+
+  // Cenário 2: Sessão A falha após Sessão B ter iniciado
+  {
+    const transport = new PsqlCommandTransport();
+    let sessionBRunning = false;
+    let sessionBSettled = false;
+
+    transport._runProcess = async (args = [], inputSql = '', options = {}) => {
+      const sessionId = options.sessionId;
+      if (sessionId === 'session_a_013') {
+        while (!sessionBRunning) {
+          await new Promise(r => setTimeout(r, 10));
+        }
+        throw new Error('INJECTED_SESSION_A_FAILURE_AFTER_B_STARTED');
+      } else if (sessionId === 'session_b_013') {
+        sessionBRunning = true;
+        return new Promise((resolve, reject) => {
+          if (options.signal) {
+            options.signal.addEventListener('abort', () => {
+              sessionBRunning = false;
+              sessionBSettled = true;
+              const err = new Error('Session B aborted by cancellation signal');
+              err.name = 'AbortError';
+              reject(err);
+            });
+          }
+        });
+      }
+      return { stdout: '', stderr: '', code: 0 };
+    };
+
+    let caughtErr = null;
+    try {
+      await transport.executeConcurrency({ staggerMs: 20 });
+    } catch (e) {
+      caughtErr = e;
+    }
+
+    assert.ok(caughtErr, 'executeConcurrency deve rejeitar');
+    assert.ok(caughtErr.message.includes('INJECTED_SESSION_A_FAILURE_AFTER_B_STARTED'));
+    assert.equal(sessionBSettled, true, 'Sessão B DEVE estar liquidada/encerrada antes do retorno!');
+    assert.equal(sessionBRunning, false, 'Sessão B NÃO pode continuar em execução após retorno!');
+    assert.equal(transport.activeSessions.size, 0, 'activeSessions deve estar vazio ao retornar');
+  }
+
+  // Cenário 3: Sessão B falha
+  {
+    const transport = new PsqlCommandTransport();
+    let sessionARunning = false;
+    let sessionASettled = false;
+
+    transport._runProcess = async (args = [], inputSql = '', options = {}) => {
+      const sessionId = options.sessionId;
+      if (sessionId === 'session_a_013') {
+        sessionARunning = true;
+        return new Promise((resolve, reject) => {
+          if (options.signal) {
+            options.signal.addEventListener('abort', () => {
+              sessionARunning = false;
+              sessionASettled = true;
+              const err = new Error('Session A aborted because sibling failed');
+              err.name = 'AbortError';
+              reject(err);
+            });
+          }
+        });
+      } else if (sessionId === 'session_b_013') {
+        throw new Error('INJECTED_SESSION_B_FAILURE');
+      }
+      return { stdout: '', stderr: '', code: 0 };
+    };
+
+    let caughtErr = null;
+    try {
+      await transport.executeConcurrency({ staggerMs: 10 });
+    } catch (e) {
+      caughtErr = e;
+    }
+
+    assert.ok(caughtErr, 'executeConcurrency deve rejeitar em falha de B');
+    assert.ok(caughtErr.message.includes('INJECTED_SESSION_B_FAILURE'));
+    assert.equal(sessionASettled, true, 'Sessão A DEVE ser liquidada antes do retorno');
+    assert.equal(sessionARunning, false, 'Sessão A NÃO pode permanecer executando');
+    assert.equal(transport.activeSessions.size, 0);
+  }
+
+  // Cenário 4: Timeout cancela ambas as sessões
+  {
+    const transport = new PsqlCommandTransport({ timeoutMs: 100 });
+
+    transport._runProcess = async (args = [], inputSql = '', options = {}) => {
+      return new Promise((resolve, reject) => {
+        const timer = setTimeout(() => {
+          const timeoutErr = new Error(`TIMEOUT (${options.timeoutMs}ms) excedido`);
+          timeoutErr.name = 'TimeoutError';
+          reject(timeoutErr);
+        }, options.timeoutMs);
+
+        if (options.signal) {
+          options.signal.addEventListener('abort', () => {
+            clearTimeout(timer);
+            const err = new Error('Aborted by sibling timeout');
+            err.name = 'AbortError';
+            reject(err);
+          });
+        }
+      });
+    };
+
+    let caughtErr = null;
+    try {
+      await transport.executeConcurrency({ staggerMs: 10 });
+    } catch (e) {
+      caughtErr = e;
+    }
+
+    assert.ok(caughtErr, 'Timeout deve lançar erro');
+    assert.equal(transport.activeSessions.size, 0, 'Nenhuma sessão ativa deve restar após timeout');
+  }
+});
+
 

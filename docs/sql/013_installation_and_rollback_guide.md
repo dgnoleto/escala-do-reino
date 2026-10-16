@@ -273,3 +273,50 @@ residual_fixtures_count: 0     = residual_fixtures_count: 0     -> ZERO RESIDUOS
 ```
 
 Qualquer divergência acusada pela comparação de snapshots constitui impedimento e bloqueia novas operações até saneamento.
+
+---
+
+## 7. Execução e Recuperação Automatizada via Runner com Journal Durável (C1, C2, C3)
+
+Para assegurar recuperação comprovável e eliminar a fragilidade de estado volátil em memória entre processos distintos (`baseline`, `install-keep`, `rehearsal`, `rollback`), o executor `tools/rehearsal-runner-013.js` opera sob as seguintes diretrizes normativas:
+
+### 7.1 Journal Atômico Durável (`--journal`) — C1
+- **Persistência atômica:** O estado operacional é gravado em disco no caminho especificado (padrão `tools/.rehearsal-013-journal.json`) via gravação em arquivo temporário (`.tmp`) seguida de renomeação atômica (`fs.renameSync`).
+- **Conteúdo auditável (sem PII):**
+  - Metadados canônicos: versão do formato (`1.0`), alvo autorizado (`localhost:55332/postgres`), hash SHA-256 do instalador `013_member_lifecycle.sql` e resumo dos arquivos do pacote.
+  - Snapshot completo de baseline pré-instalação (contagens, fingerprints de triggers/RLS/funções/ACLs e hashes de conteúdo das 8 tabelas).
+  - Propriedade comprovada (`provenOwnership`): `baselineCaptured`, `installed013`, `fixturesCreated`, `uncertainCommit`.
+  - Fases concluídas e status operacional.
+- **Validação estrita pré-mutação:** Qualquer processo subsequente que execute `--stage rollback` ou etapas duráveis valida o journal existente. Se o journal estiver ausente, corrompido ou apontar divergência de alvo ou instalador, o runner recusa imediatamente a execução com **zero mutações** no banco.
+
+### 7.2 Protocolo Unificado de Recuperação (`performRecovery`) — C2
+- **Sem deleções cegas:** Se `fixturesCreated === false` (por exemplo, falha em `phase_5_verify_014`), a limpeza de fixtures (`fixture_cleanup`) **não é executada**, preservando integridade e evitando toques espúrios no catálogo.
+- **Reversão cirúrgica de catálogo:** Se `installed013 === true` ou `uncertainCommit === true`, executa o script exato de reversão (`catalogue_reversal`), restaurando `touch_updated_at` e dropando as 4 RPCs e a tabela efêmera.
+- **Conferência obrigatória pós-reversão:** A recuperação só é declarada com sucesso (`cleanupSuccess: true`) se o snapshot capturado imediatamente após a reversão for **100% idêntico ao baseline** registrado no journal.
+
+### 7.3 Ciclo de Vida Independente e Concorrência Coordenada — C3
+- **Cancelamento mútuo imediato:** As conexões A e B possuem `AbortController` individuais. Se a Sessão A falhar, a Sessão B é cancelada imediatamente via sinal; se a Sessão B falhar, a Sessão A é cancelada imediatamente.
+- **Encerramento prévio à desmontagem:** O executor aguarda explicitamente o encerramento de **ambas as sessões** via `Promise.allSettled` antes de devolver controle à rotina de limpeza. Nenhuma sessão órfã permanece ativa no backend ou no mapa `activeSessions`.
+- **Tratamento de timeout e sinais:** O runner suporta cancelamento graceful e timeout determinístico com confirmação de término no socket.
+
+### 7.4 Comandos Concretos para Futura Execução Controlada
+
+> [!IMPORTANT]
+> A execução física durável abaixo só deve ser disparada após autorização expressa do responsável, reutilizando os containers existentes do laboratório local (porta 55332).
+
+1. **Captura do Baseline Inicial e Inicialização do Journal:**
+   ```bash
+   node tools/rehearsal-runner-013.js --stage baseline --journal tools/.rehearsal-013-journal.json --confirm-local
+   ```
+2. **Instalação Durável 013 Mantida para Ensaio ou Navegador:**
+   ```bash
+   node tools/rehearsal-runner-013.js --stage install-keep --journal tools/.rehearsal-013-journal.json --confirm-local
+   ```
+3. **Execução Coordenada de Concorrência (ou ciclo completo `all`):**
+   ```bash
+   node tools/rehearsal-runner-013.js --stage rehearsal --journal tools/.rehearsal-013-journal.json --confirm-local
+   ```
+4. **Reversão Cirúrgica e Recuperação em Processo Novo com o Mesmo Journal:**
+   ```bash
+   node tools/rehearsal-runner-013.js --stage rollback --journal tools/.rehearsal-013-journal.json --confirm-local
+   ```

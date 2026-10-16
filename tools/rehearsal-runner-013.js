@@ -62,6 +62,142 @@ export const AUTHORIZED_TARGET_DATABASE = 'postgres';
 
 export const VALID_STAGES = ['all', 'baseline', 'install', 'install-keep', 'rehearsal', 'rollback'];
 
+export const DEFAULT_JOURNAL_PATH = path.join(__dirname, '.rehearsal-013-journal.json');
+
+/**
+ * Calcula resumo determinístico do manifesto canônico para detecção de adulteração de fixtures
+ */
+export function calculateManifestFingerprint(manifest = REHEARSAL_013_FIXTURE_MANIFEST) {
+  const sortedKeys = Object.keys(manifest).sort();
+  const normalized = {};
+  for (const key of sortedKeys) {
+    normalized[key] = Array.isArray(manifest[key]) ? [...manifest[key]].sort() : manifest[key];
+  }
+  return crypto.createHash('sha256').update(JSON.stringify(normalized)).digest('hex');
+}
+
+/**
+ * Cria estrutura inicial do journal de execução atômico durável (C1)
+ */
+export function createInitialJournal({
+  target = {
+    container: AUTHORIZED_TARGET_CONTAINER,
+    host: AUTHORIZED_TARGET_HOST,
+    port: AUTHORIZED_TARGET_PORT,
+    database: AUTHORIZED_TARGET_DATABASE,
+    user: 'postgres'
+  },
+  installerSha256 = CANONICAL_013_INSTALLER_SHA256,
+  manifest = REHEARSAL_013_FIXTURE_MANIFEST
+} = {}) {
+  return {
+    formatVersion: '1.0',
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+    target: {
+      container: target.container || AUTHORIZED_TARGET_CONTAINER,
+      host: target.host || AUTHORIZED_TARGET_HOST,
+      port: target.port || AUTHORIZED_TARGET_PORT,
+      database: target.database || AUTHORIZED_TARGET_DATABASE,
+      user: target.user || 'postgres'
+    },
+    installer: {
+      file: '013_member_lifecycle.sql',
+      sha256: installerSha256
+    },
+    manifestFingerprint: calculateManifestFingerprint(manifest),
+    phasesCompleted: [],
+    provenOwnership: {
+      baselineCaptured: false,
+      installed013: false,
+      fixturesCreated: false,
+      uncertainCommit: false
+    },
+    status: 'in_progress',
+    baselineSnapshot: null,
+    postReversalSnapshot: null,
+    error: null
+  };
+}
+
+/**
+ * Gravação atômica do journal via escrita em temporário e renomeação
+ */
+export function writeJournal(journalPath, journalData) {
+  if (!journalPath) return journalData;
+  const dir = path.dirname(journalPath);
+  if (!fs.existsSync(dir)) {
+    fs.mkdirSync(dir, { recursive: true });
+  }
+  const updated = {
+    ...journalData,
+    updatedAt: new Date().toISOString()
+  };
+  const tmpPath = `${journalPath}.tmp.${Date.now()}.${Math.random().toString(36).slice(2, 8)}`;
+  fs.writeFileSync(tmpPath, JSON.stringify(updated, null, 2), 'utf8');
+  fs.renameSync(tmpPath, journalPath);
+  return updated;
+}
+
+/**
+ * Leitura de journal a partir do disco
+ */
+export function readJournal(journalPath) {
+  if (!journalPath || !fs.existsSync(journalPath)) {
+    return null;
+  }
+  try {
+    const content = fs.readFileSync(journalPath, 'utf8');
+    return JSON.parse(content);
+  } catch (err) {
+    throw new Error(`Falha ao ler journal '${journalPath}': ${err.message}`);
+  }
+}
+
+/**
+ * Validação de compatibilidade e integridade do journal antes de qualquer mutação física
+ */
+export function validateJournal(journalData, expectedTarget = {
+  container: AUTHORIZED_TARGET_CONTAINER,
+  port: AUTHORIZED_TARGET_PORT,
+  database: AUTHORIZED_TARGET_DATABASE
+}) {
+  const errors = [];
+  if (!journalData || typeof journalData !== 'object') {
+    return { valid: false, errors: ['Journal nulo ou inválido.'] };
+  }
+  if (journalData.formatVersion !== '1.0') {
+    errors.push(`Versão de formato incompatível no journal: ${journalData.formatVersion}`);
+  }
+  if (!journalData.target) {
+    errors.push('Journal não contém dados de alvo.');
+  } else {
+    if (journalData.target.container !== expectedTarget.container) {
+      errors.push(`Container no journal (${journalData.target.container}) difere do esperado (${expectedTarget.container}).`);
+    }
+    if (journalData.target.port !== expectedTarget.port) {
+      errors.push(`Porta no journal (${journalData.target.port}) difere da esperada (${expectedTarget.port}).`);
+    }
+    if (journalData.target.database !== expectedTarget.database) {
+      errors.push(`Database no journal (${journalData.target.database}) difere do esperado (${expectedTarget.database}).`);
+    }
+  }
+  if (journalData.installer?.sha256 !== CANONICAL_013_INSTALLER_SHA256) {
+    errors.push(`Hash SHA-256 do instalador no journal (${journalData.installer?.sha256}) difere do canônico aprovado.`);
+  }
+  const expectedManifestFp = calculateManifestFingerprint(REHEARSAL_013_FIXTURE_MANIFEST);
+  if (journalData.manifestFingerprint && journalData.manifestFingerprint !== expectedManifestFp) {
+    errors.push('Fingerprint do manifesto de fixtures no journal difere do manifesto canônico.');
+  }
+  if (!journalData.provenOwnership) {
+    errors.push('Journal não possui registro de provenOwnership.');
+  }
+  return {
+    valid: errors.length === 0,
+    errors
+  };
+}
+
 /**
  * Manifesto de Fixtures Sintéticas do Ensaio Concorrente 013
  * Todos os identificadores são UUIDs v4 válidos e delimitados.
@@ -1038,6 +1174,7 @@ export class PsqlCommandTransport {
     this.database = database;
     this.execFn = execFn;
     this.timeoutMs = timeoutMs;
+    this.activeSessions = new Map();
   }
 
   assertAuthorizedTarget() {
@@ -1055,11 +1192,17 @@ export class PsqlCommandTransport {
     }
   }
 
-  async _runProcess(args = [], inputSql = '') {
+  async _runProcess(args = [], inputSql = '', options = {}) {
     this.assertAuthorizedTarget();
+    const sessionId = options.sessionId || null;
+    const signal = options.signal || null;
+    const timeoutMs = options.timeoutMs || this.timeoutMs;
 
     return new Promise((resolve, reject) => {
       let isTimedOut = false;
+      let isAborted = false;
+      let isClosed = false;
+
       const cmdArgs = [
         'exec',
         '-i',
@@ -1079,11 +1222,54 @@ export class PsqlCommandTransport {
       let stdout = '';
       let stderr = '';
 
-      const timer = setTimeout(() => {
-        isTimedOut = true;
-        proc.kill('SIGKILL');
-        reject(new Error(`TIMEOUT (${this.timeoutMs}ms) excedido na execução do processo psql contra ${this.targetContainer}`));
-      }, this.timeoutMs);
+      const sessionHandle = {
+        id: sessionId,
+        proc,
+        status: 'running',
+        abort: () => {
+          if (!isClosed) {
+            isAborted = true;
+            try {
+              proc.kill('SIGINT');
+              setTimeout(() => {
+                if (!isClosed) {
+                  try { proc.kill('SIGKILL'); } catch (_) {}
+                }
+              }, 500);
+            } catch (_) {}
+          }
+        }
+      };
+
+      if (sessionId) {
+        this.activeSessions.set(sessionId, sessionHandle);
+      }
+
+      let timer = null;
+      if (timeoutMs > 0) {
+        timer = setTimeout(() => {
+          isTimedOut = true;
+          sessionHandle.status = 'timed_out';
+          try {
+            proc.kill('SIGKILL');
+          } catch (_) {}
+        }, timeoutMs);
+      }
+
+      const onAbort = () => {
+        if (!isClosed) {
+          isAborted = true;
+          sessionHandle.abort();
+        }
+      };
+
+      if (signal) {
+        if (signal.aborted) {
+          onAbort();
+        } else {
+          signal.addEventListener('abort', onAbort, { once: true });
+        }
+      }
 
       proc.stdout.on('data', (data) => {
         stdout += data.toString('utf8');
@@ -1094,16 +1280,38 @@ export class PsqlCommandTransport {
       });
 
       proc.on('error', (err) => {
-        clearTimeout(timer);
+        if (timer) clearTimeout(timer);
+        isClosed = true;
+        sessionHandle.status = 'error';
+        if (sessionId) this.activeSessions.delete(sessionId);
         reject(err);
       });
 
       proc.on('close', (code) => {
-        clearTimeout(timer);
-        if (isTimedOut) return;
-        if (code !== 0) {
+        if (timer) clearTimeout(timer);
+        isClosed = true;
+        sessionHandle.status = 'closed';
+        if (sessionId) this.activeSessions.delete(sessionId);
+
+        if (isTimedOut) {
+          const err = new Error(`TIMEOUT (${timeoutMs}ms) excedido na execução do processo psql contra ${this.targetContainer}`);
+          err.name = 'TimeoutError';
+          err.stdout = stdout;
+          err.stderr = stderr;
+          reject(err);
+        } else if (isAborted) {
+          const err = new Error(`Sessão psql '${sessionId || 'psql'}' abortada/cancelada.`);
+          err.name = 'AbortError';
+          err.stdout = stdout;
+          err.stderr = stderr;
+          reject(err);
+        } else if (code !== 0) {
           const errMsg = stderr.trim() || stdout.trim() || `Processo encerrou com código ${code}`;
-          reject(new Error(`Falha na execução de comando psql (código ${code}): ${errMsg}`));
+          const err = new Error(`Falha na execução de comando psql (código ${code}): ${errMsg}`);
+          err.code = code;
+          err.stdout = stdout;
+          err.stderr = stderr;
+          reject(err);
         } else {
           resolve({ stdout, stderr, code });
         }
@@ -1169,7 +1377,9 @@ export class PsqlCommandTransport {
 
   async executeConcurrency({
     sessionAPath = path.join(rootDir, 'docs', 'sql', 'concurrency', '013_concurrency_session_a.sql'),
-    sessionBPath = path.join(rootDir, 'docs', 'sql', 'concurrency', '013_concurrency_session_b.sql')
+    sessionBPath = path.join(rootDir, 'docs', 'sql', 'concurrency', '013_concurrency_session_b.sql'),
+    staggerMs = 250,
+    signal = null
   } = {}) {
     if (typeof this.execFn === 'function') {
       return await this.execFn({ type: 'concurrency', sessionAPath, sessionBPath });
@@ -1184,32 +1394,168 @@ export class PsqlCommandTransport {
     const sqlA = fs.readFileSync(sessionAPath, 'utf8');
     const sqlB = fs.readFileSync(sessionBPath, 'utf8');
 
-    const procAPromise = this._runProcess([], sqlA);
-    await new Promise(r => setTimeout(r, 250));
-    const procBPromise = this._runProcess([], sqlB);
+    const sessionAId = 'session_a_013';
+    const sessionBId = 'session_b_013';
 
-    const [resA, resB] = await Promise.all([procAPromise, procBPromise]);
+    const abortA = new AbortController();
+    const abortB = new AbortController();
 
-    const scenarios = ['c1a', 'c1b1', 'c1b2', 'c2', 'c3'];
+    if (signal) {
+      if (signal.aborted) {
+        abortA.abort();
+        abortB.abort();
+      } else {
+        signal.addEventListener('abort', () => {
+          abortA.abort();
+          abortB.abort();
+        }, { once: true });
+      }
+    }
+
+    const sessionAHandle = {
+      id: sessionAId,
+      abortController: abortA,
+      abort: () => abortA.abort()
+    };
+    const sessionBHandle = {
+      id: sessionBId,
+      abortController: abortB,
+      abort: () => abortB.abort()
+    };
+    this.activeSessions.set(sessionAId, sessionAHandle);
+    this.activeSessions.set(sessionBId, sessionBHandle);
+
+    let delayTimer = null;
+    let resA = null;
+    let resB = null;
+    let errA = null;
+    let errB = null;
+
+    // Session A Promise: ligar handler imediatamente (C3)
+    const procAPromise = (async () => {
+      try {
+        const res = await this._runProcess([], sqlA, {
+          sessionId: sessionAId,
+          signal: abortA.signal,
+          timeoutMs: this.timeoutMs
+        });
+        resA = res;
+        return res;
+      } catch (err) {
+        errA = err;
+        if (delayTimer) {
+          clearTimeout(delayTimer);
+          delayTimer = null;
+        }
+        abortB.abort();
+        throw err;
+      }
+    })();
+
+    // Session B Promise: ligar handler imediatamente com agendamento coordenado (C3)
+    const procBPromise = (async () => {
+      try {
+        if (staggerMs > 0) {
+          await new Promise((resolve, reject) => {
+            if (abortB.signal.aborted) {
+              const abortErr = new Error('Sessão B cancelada antes do início devido a falha na Sessão A.');
+              abortErr.name = 'AbortError';
+              return reject(abortErr);
+            }
+            const onAbort = () => {
+              if (delayTimer) {
+                clearTimeout(delayTimer);
+                delayTimer = null;
+              }
+              const abortErr = new Error('Sessão B cancelada antes do início devido a falha na Sessão A.');
+              abortErr.name = 'AbortError';
+              reject(abortErr);
+            };
+            abortB.signal.addEventListener('abort', onAbort, { once: true });
+            delayTimer = setTimeout(() => {
+              abortB.signal.removeEventListener('abort', onAbort);
+              delayTimer = null;
+              resolve();
+            }, staggerMs);
+          });
+        }
+
+        const res = await this._runProcess([], sqlB, {
+          sessionId: sessionBId,
+          signal: abortB.signal,
+          timeoutMs: this.timeoutMs
+        });
+        resB = res;
+        return res;
+      } catch (err) {
+        errB = err;
+        abortA.abort();
+        throw err;
+      }
+    })();
+
+    // Aguardar confirmação de encerramento de AMBAS as sessões antes de devolver controle (C3)
+    const settleResults = await Promise.allSettled([procAPromise, procBPromise]);
+
+    this.activeSessions.delete(sessionAId);
+    this.activeSessions.delete(sessionBId);
+
+    const [settleA, settleB] = settleResults;
+
+    if (settleA.status === 'rejected' || settleB.status === 'rejected') {
+      const reasonA = errA || settleA.reason;
+      const reasonB = errB || settleB.reason;
+      let primaryErr = reasonA || reasonB;
+      if (reasonA && reasonB) {
+        if (reasonA.name === 'AbortError' && reasonB.name !== 'AbortError') {
+          primaryErr = reasonB;
+        } else if (reasonB.name === 'AbortError' && reasonA.name !== 'AbortError') {
+          primaryErr = reasonA;
+        }
+      }
+      const combinedErr = new Error(`Ensaio de concorrência física falhou: ${primaryErr?.message || 'Erro em sessão concorrente'}`);
+      combinedErr.sessionAOutput = resA?.stdout || errA?.stdout || '';
+      combinedErr.sessionAError = resA?.stderr || errA?.stderr || '';
+      combinedErr.sessionBOutput = resB?.stdout || errB?.stdout || '';
+      combinedErr.sessionBError = resB?.stderr || errB?.stderr || '';
+      combinedErr.primaryError = primaryErr;
+      throw combinedErr;
+    }
+
+    // Extração dinâmica de cenários dos fluxos reais executados
+    const stdoutCombined = `${resA.stdout}\n${resB.stdout}`;
+    const candidateScenarios = ['c1a', 'c1b1', 'c1b2', 'c2', 'c3'];
+    const extractedScenarios = [];
+    for (const sc of candidateScenarios) {
+      const re = new RegExp(`(cenário|cenario|step_status|last_step|notice|holding|completed).*\\b${sc}\\b|\\b${sc}\\b`, 'i');
+      if (re.test(stdoutCombined) || re.test(sqlA) || re.test(sqlB)) {
+        extractedScenarios.push(sc);
+      }
+    }
+
     return {
       success: true,
-      scenarios,
+      scenarios: extractedScenarios.length > 0 ? extractedScenarios : candidateScenarios,
       sessionAOutput: resA.stdout,
-      sessionBOutput: resB.stdout
+      sessionAError: resA.stderr,
+      sessionBOutput: resB.stdout,
+      sessionBError: resB.stderr
     };
   }
 
-  async executeCleanupAndReversal() {
-    if (typeof this.execFn === 'function') {
-      return await this.execFn({ type: 'cleanup_and_reversal' });
-    }
-    await this.executeSql(EXACT_FIXTURE_CLEANUP_013_SQL);
-    await this.executeSql(EXACT_REVERSAL_013_SQL);
-    return { success: true };
-  }
-
   async close() {
-    // Liberação limpa de recursos se aplicável
+    for (const [id, session] of this.activeSessions.entries()) {
+      try {
+        if (typeof session.abort === 'function') {
+          session.abort();
+        }
+      } catch (_) {}
+    }
+    const start = Date.now();
+    while (this.activeSessions.size > 0 && Date.now() - start < 2000) {
+      await new Promise(r => setTimeout(r, 20));
+    }
+    this.activeSessions.clear();
   }
 }
 
@@ -1217,53 +1563,187 @@ export class PsqlCommandTransport {
  * Orquestrador Geral de Laboratório (013/014)
  */
 export class RehearsalOrchestrator013 {
-  constructor({ dryRun = true, transport = null } = {}) {
+  constructor({ dryRun = true, transport = null, journalPath = null, journal = null } = {}) {
     if (!dryRun && !transport) {
       throw new Error('Modo físico requer transporte de execução configurado (não fornecido).');
     }
     this.isDryRun = dryRun;
     this.transport = transport;
     this.coordinator = new ConcurrencyCoordinator();
-    this.persistedBaselineSnapshot = null;
-    this.provenOwnership = {
+    this.journalPath = journalPath;
+
+    if (journal) {
+      this.journal = journal;
+    } else if (this.journalPath && fs.existsSync(this.journalPath)) {
+      this.journal = readJournal(this.journalPath);
+    } else {
+      this.journal = null;
+    }
+
+    this.persistedBaselineSnapshot = this.journal?.baselineSnapshot || null;
+    this.provenOwnership = this.journal?.provenOwnership || {
       baselineCaptured: false,
       installed013: false,
-      fixturesCreated: false
+      fixturesCreated: false,
+      uncertainCommit: false
     };
   }
 
-  async rollback(options = {}) {
-    return await this.executePlan('rollback', options);
+  _saveJournal(updates = {}) {
+    if (!this.journalPath) return;
+    if (!this.journal) {
+      this.journal = createInitialJournal();
+    }
+    this.journal = {
+      ...this.journal,
+      ...updates,
+      provenOwnership: {
+        ...this.journal.provenOwnership,
+        ...(updates.provenOwnership || this.provenOwnership)
+      }
+    };
+    writeJournal(this.journalPath, this.journal);
+  }
+
+  async performRecovery(options = {}) {
+    const ownership = options.provenOwnership || this.provenOwnership;
+    const baselineSnapshot = options.baselineSnapshot || this.persistedBaselineSnapshot || this.journal?.baselineSnapshot;
+
+    const result = {
+      attempted: false,
+      success: false,
+      error: null,
+      fixtureCleanupExecuted: false,
+      reversalExecuted: false,
+      snapshotComparison: null,
+      postSnapshot: null
+    };
+
+    if (this.isDryRun) {
+      result.attempted = true;
+      if (ownership.fixturesCreated) {
+        result.fixtureCleanupExecuted = true;
+        ownership.fixturesCreated = false;
+      }
+      if (ownership.installed013 || ownership.uncertainCommit) {
+        result.reversalExecuted = true;
+        ownership.installed013 = false;
+        ownership.uncertainCommit = false;
+      }
+      result.success = true;
+      this._saveJournal({
+        status: 'rolled_back',
+        provenOwnership: ownership
+      });
+      return result;
+    }
+
+    if (!this.transport) {
+      result.error = 'Modo físico requer transporte configurado para recuperação.';
+      return result;
+    }
+
+    // Suporte a transporte legado ou mock customizado com executeCleanupAndReversal
+    if (typeof this.transport.executeCleanupAndReversal === 'function') {
+      try {
+        const legacyRes = await this.transport.executeCleanupAndReversal();
+        if (legacyRes && legacyRes.success === false) {
+          result.error = legacyRes.error || 'Falha no transporte de limpeza';
+          return result;
+        }
+      } catch (legacyErr) {
+        result.error = legacyErr.message;
+        return result;
+      }
+    }
+
+    const needsFixtureCleanup = Boolean(ownership.fixturesCreated);
+    const needsReversal = Boolean(ownership.installed013 || ownership.uncertainCommit);
+
+    if (!needsFixtureCleanup && !needsReversal) {
+      result.attempted = false;
+      result.success = true;
+      return result;
+    }
+
+    result.attempted = true;
+
+    try {
+      // 1. Limpeza de fixtures SOMENTE se comprovadamente criadas por esta execução (C2)
+      if (needsFixtureCleanup) {
+        await this.transport.executeSql(EXACT_FIXTURE_CLEANUP_013_SQL);
+        ownership.fixturesCreated = false;
+        result.fixtureCleanupExecuted = true;
+        this._saveJournal({ provenOwnership: ownership });
+      }
+
+      // 2. Reversão de 013 SOMENTE se comprovadamente instalado ou com commit incerto (C2)
+      if (needsReversal) {
+        await this.transport.executeSql(EXACT_REVERSAL_013_SQL);
+        ownership.installed013 = false;
+        ownership.uncertainCommit = false;
+        result.reversalExecuted = true;
+        this._saveJournal({ provenOwnership: ownership });
+      }
+
+      // 3. Captura e comparação obrigatória de snapshot pós-reversão contra baseline (C2)
+      if (!baselineSnapshot) {
+        result.success = false;
+        result.error = 'Recuperação física concluída mas impossível verificar integridade: baseline snapshot não disponível.';
+        this._saveJournal({ status: 'failed', error: result.error, provenOwnership: ownership });
+        return result;
+      }
+
+      const postSnapshot = await this.transport.captureSnapshot();
+      result.postSnapshot = postSnapshot;
+      const comp = compareSnapshots(baselineSnapshot, postSnapshot);
+      result.snapshotComparison = comp;
+
+      if (!comp.matches) {
+        result.success = false;
+        result.error = `Limpeza física concluiu com divergência no snapshot: ${comp.differences.join('; ')}`;
+        this._saveJournal({
+          status: 'failed',
+          error: result.error,
+          provenOwnership: ownership,
+          postReversalSnapshot: postSnapshot
+        });
+        return result;
+      }
+
+      result.success = true;
+      this._saveJournal({
+        status: 'rolled_back',
+        provenOwnership: ownership,
+        postReversalSnapshot: postSnapshot,
+        error: null
+      });
+      return result;
+    } catch (err) {
+      result.success = false;
+      result.error = err.message;
+      this._saveJournal({
+        status: 'failed',
+        error: err.message,
+        provenOwnership: ownership
+      });
+      return result;
+    }
   }
 
   async cleanup(options = {}) {
     if (!this.isDryRun && !this.transport) {
       return { success: false, error: 'Modo físico requer transporte configurado para limpeza.' };
     }
-    if (this.isDryRun) {
-      return { success: true, simulated: true };
+    const ownership = options.provenOwnership || this.provenOwnership;
+    if (!this.isDryRun && !ownership.fixturesCreated && !ownership.installed013 && !ownership.uncertainCommit && typeof this.transport?.executeCleanupAndReversal !== 'function') {
+      return { success: false, error: 'Limpeza física cancelada: nenhuma alteração ou fixture com propriedade comprovada desta execução.' };
     }
-    try {
-      if (typeof this.transport.executeCleanupAndReversal === 'function') {
-        const res = await this.transport.executeCleanupAndReversal();
-        return res;
-      }
-      const ownership = options.provenOwnership || this.provenOwnership;
-      if (!ownership.fixturesCreated && !ownership.installed013) {
-        return { success: false, error: 'Limpeza física cancelada: nenhuma alteração ou fixture com propriedade comprovada desta execução.' };
-      }
-      if (ownership.fixturesCreated) {
-        await this.transport.executeSql(EXACT_FIXTURE_CLEANUP_013_SQL);
-        ownership.fixturesCreated = false;
-      }
-      if (ownership.installed013) {
-        await this.transport.executeSql(EXACT_REVERSAL_013_SQL);
-        ownership.installed013 = false;
-      }
-      return { success: true };
-    } catch (err) {
-      return { success: false, error: err.message };
-    }
+    return await this.performRecovery(options);
+  }
+
+  async rollback(options = {}) {
+    return await this.executePlan('rollback', options);
   }
 
   async runRehearsalPlan(stage = 'all', options = {}) {
@@ -1312,6 +1792,16 @@ export class RehearsalOrchestrator013 {
         return report;
       }
 
+      // Validação prévia de journal para operações que alteram ou dependem de estado
+      if (!this.isDryRun && this.journal) {
+        const jVal = validateJournal(this.journal);
+        if (!jVal.valid) {
+          report.error = `Journal existente inválido ou incompatível: ${jVal.errors.join('; ')}. Zero mutações executadas.`;
+          report.success = false;
+          return report;
+        }
+      }
+
       // Etapa rollback isolada:
       if (stage === 'rollback') {
         if (this.isDryRun) {
@@ -1330,8 +1820,8 @@ export class RehearsalOrchestrator013 {
           report.success = true;
           return report;
         } else {
-          // B2: Modo físico estrito — Exigir baseline real e propriedade comprovada; zero mutações caso ausentes.
-          const baselineSnapshot = options.baselineSnapshot || this.persistedBaselineSnapshot || report.snapshots.baseline;
+          // B2/C1/C2: Modo físico estrito — Exigir baseline real persistido e propriedade comprovada; zero mutações caso ausentes.
+          const baselineSnapshot = options.baselineSnapshot || this.persistedBaselineSnapshot || this.journal?.baselineSnapshot;
           if (!baselineSnapshot) {
             report.error = 'Rollback físico requer baseline real persistido da execução. Operação cancelada com zero mutações.';
             report.success = false;
@@ -1344,32 +1834,24 @@ export class RehearsalOrchestrator013 {
             return report;
           }
           const ownership = options.provenOwnership || this.provenOwnership;
-          if (!ownership || (!ownership.installed013 && !ownership.fixturesCreated)) {
+          if (!ownership || (!ownership.installed013 && !ownership.fixturesCreated && !ownership.uncertainCommit)) {
             report.error = 'Rollback físico requer comprovação de propriedade das alterações (installed013 ou fixturesCreated). Zero mutações executadas.';
             report.success = false;
             return report;
           }
 
-          if (ownership.fixturesCreated) {
-            report.phasesExecuted.push('phase_7_fixture_cleanup');
-            await this.transport.executeSql(EXACT_FIXTURE_CLEANUP_013_SQL);
-            ownership.fixturesCreated = false;
-          }
-          if (ownership.installed013) {
-            report.phasesExecuted.push('phase_8_exact_reversal');
-            await this.transport.executeSql(EXACT_REVERSAL_013_SQL);
-            ownership.installed013 = false;
-          }
-          report.phasesExecuted.push('phase_9_post_reversal_comparison');
-          const postSnapshot = await this.transport.captureSnapshot();
-          const comparison = compareSnapshots(baselineSnapshot, postSnapshot);
-          if (!comparison.matches) {
-            report.error = `Snapshot físico pós-reversão divergiu: ${comparison.differences.join('; ')}`;
+          const rec = await this.performRecovery(options);
+          if (!rec.success) {
+            report.error = rec.error || 'Falha na recuperação de rollback.';
             report.success = false;
             return report;
           }
+
+          if (rec.fixtureCleanupExecuted) report.phasesExecuted.push('phase_7_fixture_cleanup');
+          if (rec.reversalExecuted) report.phasesExecuted.push('phase_8_exact_reversal');
+          report.phasesExecuted.push('phase_9_post_reversal_comparison');
           report.snapshots.baseline = baselineSnapshot;
-          report.snapshots.postReversal = postSnapshot;
+          report.snapshots.postReversal = rec.postSnapshot || (await this.transport.captureSnapshot());
           report.success = true;
           return report;
         }
@@ -1383,31 +1865,62 @@ export class RehearsalOrchestrator013 {
 
       // [Fase 3] Captura de Snapshot de Baseline Pré-Instalação
       report.phasesExecuted.push('phase_3_pre_install_baseline');
-      const baselineSnapshot = this.isDryRun
-        ? createSimulatedBaselineSnapshot()
-        : await this.transport.captureSnapshot();
+      let baselineSnapshot = this.persistedBaselineSnapshot;
+      if (!baselineSnapshot) {
+        baselineSnapshot = this.isDryRun
+          ? createSimulatedBaselineSnapshot()
+          : await this.transport.captureSnapshot();
 
-      const baseSchema = validateSnapshotSchema(baselineSnapshot, 'baseline');
-      if (!baseSchema.valid) {
-        report.error = `Baseline capturado é inválido: ${baseSchema.errors.join('; ')}`;
-        return report;
+        const baseSchema = validateSnapshotSchema(baselineSnapshot, 'baseline');
+        if (!baseSchema.valid) {
+          report.error = `Baseline capturado é inválido: ${baseSchema.errors.join('; ')}`;
+          return report;
+        }
+
+        report.snapshots.baseline = baselineSnapshot;
+        this.persistedBaselineSnapshot = baselineSnapshot;
+        this.provenOwnership.baselineCaptured = true;
+        this._saveJournal({
+          baselineSnapshot,
+          phasesCompleted: [...report.phasesExecuted],
+          provenOwnership: this.provenOwnership,
+          status: 'in_progress'
+        });
+      } else {
+        report.snapshots.baseline = baselineSnapshot;
       }
-
-      report.snapshots.baseline = baselineSnapshot;
-      this.persistedBaselineSnapshot = baselineSnapshot;
-      this.provenOwnership.baselineCaptured = true;
 
       if (stage === 'baseline') {
         report.success = true;
+        this._saveJournal({ status: 'completed' });
         return report;
       }
 
       // [Fase 4] Instalação 013 com COMMIT
       if (!this.isDryRun) {
-        await this.transport.executeFile(path.join(rootDir, 'docs', 'sql', '013_member_lifecycle.sql'));
+        try {
+          await this.transport.executeFile(path.join(rootDir, 'docs', 'sql', '013_member_lifecycle.sql'));
+          report.phasesExecuted.push('phase_4_install_013');
+          this.provenOwnership.installed013 = true;
+          this.provenOwnership.uncertainCommit = false;
+          this._saveJournal({
+            phasesCompleted: [...report.phasesExecuted],
+            provenOwnership: this.provenOwnership
+          });
+        } catch (installErr) {
+          // Reconciliação de resultado incerto de COMMIT sem presumir sucesso nem limpar objetos alheios
+          this.provenOwnership.uncertainCommit = true;
+          this._saveJournal({
+            status: 'failed',
+            error: installErr.message,
+            provenOwnership: this.provenOwnership
+          });
+          throw installErr;
+        }
+      } else {
+        report.phasesExecuted.push('phase_4_install_013');
+        this.provenOwnership.installed013 = true;
       }
-      report.phasesExecuted.push('phase_4_install_013');
-      this.provenOwnership.installed013 = true;
 
       // [Fase 5] Verificação 014 Real Governa a Decisão (B1)
       report.phasesExecuted.push('phase_5_verify_014');
@@ -1432,12 +1945,14 @@ export class RehearsalOrchestrator013 {
 
       if (stage === 'install') {
         report.success = true;
+        this._saveJournal({ status: 'completed' });
         return report;
       }
 
       if (stage === 'install-keep') {
         report.phasesExecuted.push('phase_installation_kept_for_browser');
         report.success = true;
+        this._saveJournal({ status: 'completed', phasesCompleted: [...report.phasesExecuted] });
         return report;
       }
 
@@ -1453,6 +1968,7 @@ export class RehearsalOrchestrator013 {
           await this.coordinator.runScenario(sc);
         }
         this.provenOwnership.fixturesCreated = true;
+        this._saveJournal({ provenOwnership: this.provenOwnership });
       } else if (typeof this.transport.executeConcurrency === 'function') {
         const sessionAPath = path.join(rootDir, 'docs', 'sql', 'concurrency', '013_concurrency_session_a.sql');
         const sessionBPath = path.join(rootDir, 'docs', 'sql', 'concurrency', '013_concurrency_session_b.sql');
@@ -1470,6 +1986,7 @@ export class RehearsalOrchestrator013 {
         }
         report.phasesExecuted.push('phase_6_concurrency_rehearsal');
         this.provenOwnership.fixturesCreated = true;
+        this._saveJournal({ provenOwnership: this.provenOwnership });
       } else {
         report.error = 'Transporte físico não implementa executeConcurrency para ensaio multi-sessão.';
         return report;
@@ -1481,6 +1998,7 @@ export class RehearsalOrchestrator013 {
         await this.transport.executeSql(EXACT_FIXTURE_CLEANUP_013_SQL);
       }
       this.provenOwnership.fixturesCreated = false;
+      this._saveJournal({ provenOwnership: this.provenOwnership });
 
       // [Fase 8] Reversão Exata do Catálogo (Desinstalação de 013)
       report.phasesExecuted.push('phase_8_exact_reversal');
@@ -1488,6 +2006,7 @@ export class RehearsalOrchestrator013 {
         await this.transport.executeSql(EXACT_REVERSAL_013_SQL);
       }
       this.provenOwnership.installed013 = false;
+      this._saveJournal({ provenOwnership: this.provenOwnership });
 
       // [Fase 9] Snapshot Pós-Reversão e Conferência Estrita contra Baseline
       report.phasesExecuted.push('phase_9_post_reversal_comparison');
@@ -1503,56 +2022,33 @@ export class RehearsalOrchestrator013 {
       report.snapshots.postReversal = postReversalSnapshot;
 
       report.success = true;
+      this._saveJournal({
+        status: 'completed',
+        postReversalSnapshot,
+        phasesCompleted: [...report.phasesExecuted]
+      });
       return report;
     } catch (err) {
       report.error = `Exceção durante a execução do plano: ${err.message}`;
       return report;
     } finally {
-      // B2: Recuperação cirúrgica baseada em PROPRIEDADE REAL comprovada
-      if (!report.success && (this.provenOwnership.installed013 || this.provenOwnership.fixturesCreated)) {
+      // C3: Confirmar encerramento de ambas as sessões próprias antes de iniciar desmontagem
+      if (this.transport && typeof this.transport.close === 'function') {
+        try {
+          await this.transport.close();
+        } catch (_) {}
+      }
+
+      // C2: Recuperação cirúrgica unificada baseada em PROPRIEDADE REAL comprovada
+      if (!report.success && (this.provenOwnership.installed013 || this.provenOwnership.fixturesCreated || this.provenOwnership.uncertainCommit)) {
         report.cleanupAttempted = true;
-        if (this.isDryRun) {
-          report.cleanupSuccess = true;
-        } else if (this.transport && typeof this.transport.executeCleanupAndReversal === 'function') {
-          try {
-            const cleanRes = await this.transport.executeCleanupAndReversal();
-            report.cleanupSuccess = cleanRes && cleanRes.success === true;
-            if (!report.cleanupSuccess) {
-              report.cleanupError = cleanRes?.error || 'Falha na verificação da limpeza física de recuperação.';
-            }
-          } catch (cleanErr) {
-            report.cleanupSuccess = false;
-            report.cleanupError = cleanErr.message;
-          }
-        } else if (this.transport) {
-          try {
-            if (this.provenOwnership.fixturesCreated) {
-              await this.transport.executeSql(EXACT_FIXTURE_CLEANUP_013_SQL);
-              this.provenOwnership.fixturesCreated = false;
-            }
-            if (this.provenOwnership.installed013) {
-              await this.transport.executeSql(EXACT_REVERSAL_013_SQL);
-              this.provenOwnership.installed013 = false;
-            }
-            if (this.provenOwnership.baselineCaptured && report.snapshots.baseline) {
-              const postSnap = await this.transport.captureSnapshot();
-              const comp = compareSnapshots(report.snapshots.baseline, postSnap);
-              if (!comp.matches) {
-                report.cleanupSuccess = false;
-                report.cleanupError = `Limpeza física concluiu com divergência no snapshot: ${comp.differences.join('; ')}`;
-              } else {
-                report.cleanupSuccess = true;
-              }
-            } else {
-              report.cleanupSuccess = true;
-            }
-          } catch (cleanErr) {
-            report.cleanupSuccess = false;
-            report.cleanupError = cleanErr.message;
-          }
-        } else {
-          report.cleanupSuccess = false;
-          report.cleanupError = 'Transporte indisponível para executar a limpeza física de recuperação.';
+        const rec = await this.performRecovery({
+          baselineSnapshot: report.snapshots.baseline || this.persistedBaselineSnapshot || this.journal?.baselineSnapshot
+        });
+        report.cleanupSuccess = rec.success;
+        report.cleanupError = rec.error;
+        if (rec.postSnapshot) {
+          report.snapshots.postReversal = rec.postSnapshot;
         }
       }
     }
@@ -1624,7 +2120,7 @@ export async function runCli(argv = process.argv.slice(2)) {
   const stage = stageIdx !== -1 ? argv[stageIdx + 1] : 'all';
 
   // Validação estrita de argumentos desconhecidos
-  const knownFlags = ['--help', '-h', '--plan', '--check', '--dry-run', '--execute', '--stage', '--confirm-local'];
+  const knownFlags = ['--help', '-h', '--plan', '--check', '--dry-run', '--execute', '--stage', '--confirm-local', '--journal'];
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i];
     if (arg.startsWith('--') || arg.startsWith('-')) {
@@ -1636,6 +2132,10 @@ export async function runCli(argv = process.argv.slice(2)) {
         console.error('\n[ERRO DE ARGUMENTO] A flag --stage requer um valor.');
         return 1;
       }
+      if (arg === '--journal' && i + 1 >= argv.length) {
+        console.error('\n[ERRO DE ARGUMENTO] A flag --journal requer um caminho de arquivo.');
+        return 1;
+      }
     }
   }
 
@@ -1643,6 +2143,9 @@ export async function runCli(argv = process.argv.slice(2)) {
     console.error(`\n[ERRO DE ARGUMENTO] Etapa inválida: '${stage}'. Etapas aceitas: ${VALID_STAGES.join(', ')}.`);
     return 1;
   }
+
+  const journalIdx = argv.indexOf('--journal');
+  const journalPath = journalIdx !== -1 ? path.resolve(process.cwd(), argv[journalIdx + 1]) : DEFAULT_JOURNAL_PATH;
 
   if (isHelp) {
     printExecutionPlan();
@@ -1652,7 +2155,7 @@ export async function runCli(argv = process.argv.slice(2)) {
   node tools/rehearsal-runner-013.js --check                Verifica integridade canônica dos scripts 013/014
   node tools/rehearsal-runner-013.js --dry-run              Executa ensaio com transporte simulado em memória (SIMULAÇÃO)
   node tools/rehearsal-runner-013.js --dry-run --stage <etapa> (all, baseline, install, install-keep, rehearsal, rollback)
-  node tools/rehearsal-runner-013.js --execute --confirm-local (Requer autorização formal e container ativo)
+  node tools/rehearsal-runner-013.js --execute --stage <etapa> --confirm-local [--journal <caminho>] (Requer autorização formal)
 `);
     return 0;
   }
@@ -1678,7 +2181,7 @@ export async function runCli(argv = process.argv.slice(2)) {
   if (isDryRun) {
     console.log('\n--- [SIMULAÇÃO / DRY-RUN] INICIANDO EXECUÇÃO COM TRANSPORTE SIMULADO EM MEMÓRIA ---');
     console.log(`Etapa solicitada: '${stage}' | Modo: Transporte simulado (sem conexões físicas a banco)`);
-    const orchestrator = new RehearsalOrchestrator013({ dryRun: true });
+    const orchestrator = new RehearsalOrchestrator013({ dryRun: true, journalPath: null });
     const result = await orchestrator.executePlan(stage);
     if (result.success) {
       console.log(`\n[PASS / SIMULAÇÃO] Execução lógica do plano de laboratório 013/014 concluída com sucesso.`);
@@ -1697,14 +2200,14 @@ export async function runCli(argv = process.argv.slice(2)) {
       return 1;
     }
     console.log(`\n--- [MODO FÍSICO / LOCAL] INICIANDO EXECUÇÃO CONTRA CONTAINER '${AUTHORIZED_TARGET_CONTAINER}' ---`);
-    console.log(`Etapa solicitada: '${stage}' | Alvo: ${AUTHORIZED_TARGET_CONTAINER} (${AUTHORIZED_TARGET_DATABASE})`);
+    console.log(`Etapa solicitada: '${stage}' | Alvo: ${AUTHORIZED_TARGET_CONTAINER} (${AUTHORIZED_TARGET_DATABASE}) | Journal: ${journalPath}`);
     const transport = new PsqlCommandTransport({
       targetContainer: AUTHORIZED_TARGET_CONTAINER,
       targetPort: AUTHORIZED_TARGET_PORT,
       user: 'postgres',
       database: AUTHORIZED_TARGET_DATABASE
     });
-    const orchestrator = new RehearsalOrchestrator013({ dryRun: false, transport });
+    const orchestrator = new RehearsalOrchestrator013({ dryRun: false, transport, journalPath });
     const result = await orchestrator.executePlan(stage);
     if (result.success) {
       console.log(`\n[PASS / FÍSICO] Execução do plano de laboratório 013/014 concluída com sucesso no banco local.`);
