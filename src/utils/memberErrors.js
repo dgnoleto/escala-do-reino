@@ -18,5 +18,13 @@ export {
   applyMemberListTransition,
   getMemberListViewState,
   createListRequestCoordinator,
+  getMemberLifecycleStorageKey,
+  savePendingLifecycleCommand,
+  loadPendingLifecycleCommand,
+  removePendingLifecycleCommand,
+  loadAnyPendingMemberCommand,
+  classifyLifecycleReceiptCheckResult,
+  dispatchMemberRestoration,
+  dispatchMemberDeactivation,
 } from './memberCommandService.js';
 

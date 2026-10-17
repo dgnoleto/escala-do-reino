@@ -365,7 +365,7 @@ describe('Validação Estática e Proteção contra Recorrência (Incremento 011
   });
 
   test('19. Contraprova (Entrega 1): Coluna ausente em returns table é rejeitada com diagnóstico de contagem e nome', () => {
-    const origRpc = fs.readFileSync(path.join(rootDir, 'docs', 'sql', 'src_011', '03_rpcs', '01_issue_church_invitation.sql'), 'utf8');
+    const origRpc = fs.readFileSync(path.join(rootDir, 'docs', 'sql', 'src_011', '03_rpcs', '01_issue_church_invitation.sql'), 'utf8').replace(/\r\n/g, '\n');
     const mutatedRpc = origRpc.replace(',\n  previous_request_cancelled boolean', '');
 
     const { installSql, validateSql } = generateArtifacts({
@@ -392,7 +392,7 @@ describe('Validação Estática e Proteção contra Recorrência (Incremento 011
   });
 
   test('20. Contraprova (Entrega 1): Ordem ou nomes divergentes de colunas em returns table são rejeitados', () => {
-    const origRpc = fs.readFileSync(path.join(rootDir, 'docs', 'sql', 'src_011', '03_rpcs', '01_issue_church_invitation.sql'), 'utf8');
+    const origRpc = fs.readFileSync(path.join(rootDir, 'docs', 'sql', 'src_011', '03_rpcs', '01_issue_church_invitation.sql'), 'utf8').replace(/\r\n/g, '\n');
     // Inverter church_id e member_id
     const mutatedRpc = origRpc.replace(
       'church_id uuid,\n  member_id uuid,',
