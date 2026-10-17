@@ -44,25 +44,49 @@ export function validateLiturgicalReceipt(data, commandId, churchId, action) {
   if (!receipt.result_entity_id) return null;
   if (!receipt.result_payload || typeof receipt.result_payload !== 'object' || Array.isArray(receipt.result_payload)) return null;
 
-  // Coerência estrita entre entidade principal e identificador no payload
+  // Coerência estrita entre entidade principal e identificador no payload (B2-05)
   const payload = receipt.result_payload;
-  let payloadEntityId;
-  if (action === 'create_event_item') {
-    payloadEntityId = payload.item_id ?? payload.id;
-  } else {
-    payloadEntityId = payload.team_id ??
-      payload.role_id ??
-      payload.team_role_id ??
-      payload.membership_id ??
-      payload.qualification_id ??
-      payload.event_id ??
-      payload.assignment_id ??
-      payload.item_id ??
-      payload.member_id ??
-      payload.id;
+  let payloadEntityId = null;
+
+  switch (action || receipt.action) {
+    case 'create_church_team':
+    case 'assign_team_leader':
+      payloadEntityId = payload.team_id ?? payload.id;
+      break;
+    case 'create_team_role':
+      payloadEntityId = payload.role_id ?? payload.team_role_id ?? payload.id;
+      break;
+    case 'add_team_member':
+    case 'remove_team_member':
+      payloadEntityId = payload.membership_id ?? payload.id;
+      break;
+    case 'grant_member_qualification':
+    case 'revoke_member_qualification':
+      payloadEntityId = payload.qualification_id ?? payload.id;
+      break;
+    case 'create_church_event':
+    case 'assign_event_liturgy_leader':
+    case 'start_event_service':
+    case 'finish_event_service':
+    case 'cancel_church_event':
+      payloadEntityId = payload.event_id ?? payload.id;
+      break;
+    case 'create_event_item':
+      payloadEntityId = payload.item_id ?? payload.event_item_id ?? payload.id;
+      break;
+    case 'assign_event_participant':
+      payloadEntityId = payload.assignment_id ?? payload.id;
+      break;
+    case 'replace_event_participant':
+      payloadEntityId = payload.replacement_assignment_id ?? payload.assignment_id ?? payload.id;
+      break;
+    default:
+      payloadEntityId = payload.id;
+      break;
   }
 
-  if (payloadEntityId && String(payloadEntityId) !== String(receipt.result_entity_id)) {
+  // Identificador principal é obrigatório no payload e deve coincidir estritamente com result_entity_id
+  if (!payloadEntityId || String(payloadEntityId) !== String(receipt.result_entity_id)) {
     return null;
   }
 

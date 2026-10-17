@@ -87,37 +87,43 @@ select
       -- Unique hierárquico em event_items
       exists (
         select 1 from pg_catalog.pg_constraint con
-        where con.conname = 'ei_church_event_item_unique'
+        where con.conrelid = 'app_private.event_items'::regclass
+          and con.conname = 'ei_church_event_item_unique'
           and pg_get_constraintdef(con.oid) ~* 'UNIQUE \(church_id, event_id, id\)'
       )
       -- FK hierárquica de assignments referenciando event_items por (church_id, event_id, item_id)
       and exists (
         select 1 from pg_catalog.pg_constraint con
-        where con.conname = 'asg_church_event_item_fkey'
+        where con.conrelid = 'app_private.assignments'::regclass
+          and con.conname = 'asg_church_event_item_fkey'
           and pg_get_constraintdef(con.oid) ~* 'FOREIGN KEY \(church_id, event_id, item_id\) REFERENCES app_private\.event_items\(church_id, event_id, id\)'
       )
       -- FK de evento em assignments
       and exists (
         select 1 from pg_catalog.pg_constraint con
-        where con.conname = 'asg_church_event_fkey'
+        where con.conrelid = 'app_private.assignments'::regclass
+          and con.conname = 'asg_church_event_fkey'
           and pg_get_constraintdef(con.oid) ~* 'FOREIGN KEY \(church_id, event_id\) REFERENCES app_private\.events\(church_id, id\)'
       )
       -- FK de equipe em assignments
       and exists (
         select 1 from pg_catalog.pg_constraint con
-        where con.conname = 'asg_church_team_fkey'
+        where con.conrelid = 'app_private.assignments'::regclass
+          and con.conname = 'asg_church_team_fkey'
           and pg_get_constraintdef(con.oid) ~* 'FOREIGN KEY \(church_id, team_id\) REFERENCES app_private\.teams\(church_id, id\)'
       )
       -- FK de função em assignments
       and exists (
         select 1 from pg_catalog.pg_constraint con
-        where con.conname = 'asg_church_team_role_fkey'
+        where con.conrelid = 'app_private.assignments'::regclass
+          and con.conname = 'asg_church_team_role_fkey'
           and pg_get_constraintdef(con.oid) ~* 'FOREIGN KEY \(church_id, team_id, team_role_id\) REFERENCES app_private\.team_roles\(church_id, team_id, id\)'
       )
       -- FK de membros em assignments
       and exists (
         select 1 from pg_catalog.pg_constraint con
-        where con.conname = 'asg_church_member_fkey'
+        where con.conrelid = 'app_private.assignments'::regclass
+          and con.conname = 'asg_church_member_fkey'
           and pg_get_constraintdef(con.oid) ~* 'FOREIGN KEY \(church_id, member_id\) REFERENCES app_private\.members\(church_id, id\)'
       )
       -- Coluna timezone em events
@@ -131,7 +137,8 @@ select
       -- Check constraint de timezone
       and exists (
         select 1 from pg_catalog.pg_constraint con
-        where con.conname = 'events_timezone_clean'
+        where con.conrelid = 'app_private.events'::regclass
+          and con.conname = 'events_timezone_clean'
       )
   ), false) as hierarchical_integrity_and_timezone_verified,
 
@@ -150,7 +157,7 @@ select
 
   -- 6. Verificação de presença e assinaturas exatas de todas as 22 RPCs operacionais
   coalesce((
-    select not bool_or(x is null) and array_length(ao.oids, 1) = 22
+    select count(distinct x) = 22 and bool_and(x is not null)
     from all_oids ao, unnest(ao.oids) as x
   ), false) as all_twenty_two_rpcs_present,
 

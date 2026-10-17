@@ -568,3 +568,112 @@ test('10. Despacho de Criação de Item de Evento (createEventItem - B2-02)', as
   });
 });
 
+test('11. Contrato de Recibo por Operação — Entidade Principal vs Referência (B2-05)', async (t) => {
+  const churchId = '11111111-1111-4111-8111-111111111111';
+  const commandId = '22222222-2222-4222-8222-222222222222';
+  const teamId = '33333333-3333-4333-8333-333333333333';
+  const memberId = '44444444-4444-4444-8444-444444444444';
+  const entityId = '55555555-5555-4555-8555-555555555555';
+  const eventId = '66666666-6666-4666-8666-666666666666';
+
+  function makeClient(action, payload) {
+    return {
+      rpc: async () => ({
+        data: [{
+          command_id: commandId,
+          church_id: churchId,
+          action,
+          result_entity_id: entityId,
+          result_payload: payload,
+        }],
+        error: null,
+      }),
+    };
+  }
+
+  await t.test('createTeamRole: role_id é entidade e team_id é referência', async () => {
+    const res = await createTeamRole({
+      supabase: makeClient('create_team_role', { role_id: entityId, team_id: teamId, name: 'Vocal', description: null, status: 'active' }),
+      churchId,
+      commandId,
+      teamId,
+      name: 'Vocal',
+    });
+    assert.equal(res.status, 'SUCCESS');
+    assert.equal(res.receipt.result_entity_id, entityId);
+  });
+
+  await t.test('addTeamMember: membership_id é entidade e team_id é referência', async () => {
+    const res = await addTeamMember({
+      supabase: makeClient('add_team_member', { membership_id: entityId, team_id: teamId, member_id: memberId, status: 'active' }),
+      churchId,
+      commandId,
+      teamId,
+      memberId,
+    });
+    assert.equal(res.status, 'SUCCESS');
+    assert.equal(res.receipt.result_entity_id, entityId);
+  });
+
+  await t.test('grantMemberQualification: qualification_id é entidade e team_id é referência', async () => {
+    const res = await grantMemberQualification({
+      supabase: makeClient('grant_member_qualification', { qualification_id: entityId, member_id: memberId, team_id: teamId, team_role_id: entityId, status: 'active' }),
+      churchId,
+      commandId,
+      teamId,
+      memberId,
+      teamRoleId: entityId,
+    });
+    assert.equal(res.status, 'SUCCESS');
+    assert.equal(res.receipt.result_entity_id, entityId);
+  });
+
+  await t.test('assignEventParticipant: assignment_id é entidade e team_id é referência', async () => {
+    const res = await assignEventParticipant({
+      supabase: makeClient('assign_event_participant', { assignment_id: entityId, event_id: eventId, item_id: null, team_id: teamId, team_role_id: null, member_id: memberId, status: 'active', notes: null }),
+      churchId,
+      commandId,
+      eventId,
+      teamId,
+      memberId,
+    });
+    assert.equal(res.status, 'SUCCESS');
+    assert.equal(res.receipt.result_entity_id, entityId);
+  });
+
+  await t.test('replaceEventParticipant: replacement_assignment_id é entidade', async () => {
+    const res = await replaceEventParticipant({
+      supabase: makeClient('replace_event_participant', {
+        original_assignment_id: '77777777-7777-4777-8777-777777777777',
+        replacement_assignment_id: entityId,
+        replacement_member_id: memberId,
+        status: 'active',
+      }),
+      churchId,
+      commandId,
+      assignmentId: '77777777-7777-4777-8777-777777777777',
+      replacementMemberId: memberId,
+      reason: 'Imprevisto de saúde',
+    });
+    assert.equal(res.status, 'SUCCESS');
+    assert.equal(res.receipt.result_entity_id, entityId);
+  });
+
+  await t.test('recusa UNCERTAIN quando campo de entidade principal estiver ausente do payload', () => {
+    const receipt = validateLiturgicalReceipt(
+      [{
+        command_id: commandId,
+        church_id: churchId,
+        action: 'create_team_role',
+        result_entity_id: entityId,
+        result_payload: { team_id: teamId, name: 'Vocal' }, // falta role_id / id
+      }],
+      commandId,
+      churchId,
+      'create_team_role'
+    );
+    assert.equal(receipt, null, 'Recibo sem a entidade principal da ação deve ser recusado');
+  });
+});
+
+

@@ -1,42 +1,8 @@
--- ============================================================================
--- Escala do Reino — Ensaio de Concorrência Física: Conexão B (Sessão 2)
--- Incremento: 015 (Fonte Real de Dependências Litúrgicas)
--- ============================================================================
--- Executar em uma conexão dedicada (Terminal 2 / psql Conexão B).
--- Coordena passos com a Conexão A (Terminal 1) para demonstrar serialização real,
--- rejeição determinística de dupla substituição concorrente (B2-04),
--- assertivas exatas de estado final e limpeza total de fixtures sintéticas.
---
--- ATENÇÃO E GOVERNANÇA:
--- 1. Executar apenas em base local autorizada de laboratório (127.0.0.1 / ::1).
--- 2. NUNCA execute este script em banco de piloto remoto, homologação compartilhada ou produção.
--- ============================================================================
+-- Corrida A/B: segundo escritor; exigir PASS das duas sessões.
 \set ON_ERROR_STOP on
-
-do $set_app_name$
-begin
-  perform set_config('application_name', 'rehearsal_015_session_b', false);
-end
-$set_app_name$;
-
--- GUARDA ANTECIPADA: Bloqueio estrito contra execução fora do loopback local
-do $guard_target$
-declare
-  v_server_addr inet;
-begin
-  if current_database() ~* 'prod|pilot|jvpctgqudvjealzileib' then
-    raise exception 'EXECUÇÃO ABORTADA: Base potencialmente compartilhada ou remota: %', current_database();
-  end if;
-
-  v_server_addr := inet_server_addr();
-  if v_server_addr is not null and not (
-    v_server_addr = '127.0.0.1'::inet
-    or v_server_addr = '::1'::inet
-  ) then
-    raise exception 'EXECUÇÃO ABORTADA: Conexão deve ser estritamente loopback local (inet_server_addr = %).', v_server_addr;
-  end if;
-end
-$guard_target$;
+\ir 015_concurrency_guard.sql
+set application_name='rehearsal_015_session_b';
+set statement_timeout='15s';
 
 \echo '----------------------------------------------------------------------'
 \echo 'SESSÃO B: Aguardando sinal de sincronização da Sessão A (Barreira 1015001)...'
@@ -99,7 +65,7 @@ begin
   from app_private.assignments
   where id = v_asg_orig_id and church_id = v_church_id;
 
-  if v_orig_status <> 'replaced' then
+  if v_orig_status is distinct from 'replaced' then
     raise exception 'FALHA: Alocação original deveria ter status=replaced, encontrado: %', v_orig_status;
   end if;
 
@@ -112,7 +78,7 @@ begin
   from app_private.assignments
   where id = v_replacement_id and church_id = v_church_id and status = 'active';
 
-  if v_sub_member_id <> '01500000-0000-4000-8000-000000000015'::uuid then
+  if v_sub_member_id is distinct from '01500000-0000-4000-8000-000000000015'::uuid then
     raise exception 'FALHA: Substituto ativo deveria ser o Voluntário 2 (Sessão A), encontrado: %', v_sub_member_id;
   end if;
 
@@ -128,42 +94,41 @@ begin
     raise exception 'FALHA: Esperado exatamente 1 alocação ativa neste item, encontrado: %', v_active_count;
   end if;
 
+  if not exists(select 1 from app_private.assignments where id=v_replacement_id and church_id=v_church_id
+    and replaced_assignment_id=v_asg_orig_id and status='active') then
+    raise exception 'FALHA: encadeamento recíproco da substituição ausente';
+  end if;
+  if (select count(*) from app_private.command_receipts where church_id=v_church_id
+    and command_id='01500000-0000-4000-8000-0000000000aa')<>1
+    or exists(select 1 from app_private.command_receipts where church_id=v_church_id
+    and command_id='01500000-0000-4000-8000-0000000000bb')
+    or (select count(*) from app_private.audit_entries where church_id=v_church_id
+    and action='replace_event_participant')<>1 then
+    raise exception 'FALHA: recibos/auditoria não correspondem a um único vencedor';
+  end if;
+
   raise notice 'ASSERTIVAS FINAIS CONFIRMADAS: Exatamente 1 substituto ativo homologado. Zero duplicações ou inconsistências.';
 end
 $assert_final_state$;
 
--- PASSO 3: Limpeza completa de todas as fixtures sintéticas do ensaio (Zero Resíduos - B2-06)
-do $cleanup_fixtures$
-declare
-  v_church_id uuid := '01500000-0000-4000-8000-000000000001'::uuid;
+-- PASSO 3: Validação da Integridade dos Gatilhos de Segurança e Conclusão do Ensaio
+-- Preservação irrestrita das garantias de último administrador (church_access_protect_last_admin e members_protect_last_admin).
+-- Nenhuma diretiva DISABLE TRIGGER é executada.
+do $verify_triggers_intact$
 begin
-  delete from app_private.command_receipts where church_id = v_church_id;
-  delete from app_private.audit_entries where church_id = v_church_id;
-  delete from app_private.assignments where church_id = v_church_id;
-  delete from app_private.event_items where church_id = v_church_id;
-  delete from app_private.events where church_id = v_church_id;
-  delete from app_private.member_qualifications where church_id = v_church_id;
-  delete from app_private.team_memberships where church_id = v_church_id;
-  delete from app_private.team_roles where church_id = v_church_id;
-  delete from app_private.teams where church_id = v_church_id;
-  delete from app_private.church_access where church_id = v_church_id;
-  delete from app_private.members where church_id = v_church_id;
-  delete from app_private.churches where id = v_church_id;
+  if (
+    select count(*) from pg_catalog.pg_trigger t
+    join pg_class c on c.oid=t.tgrelid join pg_namespace n on n.oid=c.relnamespace
+    where n.nspname='app_private' and t.tgname in ('church_access_protect_last_admin', 'members_protect_last_admin')
+      and tgenabled = 'O'
+  ) <> 2 then
+    raise exception 'FALHA DE GOVERNANÇA: Os gatilhos de proteção do último admin não estão em estado normal (O)!';
+  end if;
 
-  delete from auth.users where id in (
-    '01500000-0000-4000-8000-000000000002'::uuid,
-    '01500000-0000-4000-8000-000000000003'::uuid,
-    '01500000-0000-4000-8000-000000000004'::uuid,
-    '01500000-0000-4000-8000-000000000005'::uuid,
-    '01500000-0000-4000-8000-000000000006'::uuid
-  );
-
-  raise notice 'TEARDOWN COMPLETO: Todas as fixtures sintéticas do ensaio foram removidas com sucesso. Zero resíduos no banco.';
-end
-$cleanup_fixtures$;
-
-\echo '----------------------------------------------------------------------'
-\echo 'SESSÃO B: Ensaio de concorrência física concluído com PASS determinístico.'
-\echo 'Apenas uma única substituição foi homologada (Sessão A); a Sessão B foi rejeitada com P0020.'
-\echo 'Fixtures sintéticas limpas com sucesso.'
-\echo '----------------------------------------------------------------------'
+  raise notice '======================================================================';
+  raise notice 'ENSAIO DE CONCORRÊNCIA A/B CONCLUÍDO COM SUCESSO.';
+  raise notice 'Gatilhos de segurança permanecem 100%% ativos (tgenabled = O).';
+  raise notice 'Descarte e limpeza do laboratório efêmero devem ser realizados via dropdb da base dedicada.';
+  raise notice '======================================================================';
+end;
+$verify_triggers_intact$;
