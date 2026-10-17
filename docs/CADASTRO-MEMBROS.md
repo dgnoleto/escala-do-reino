@@ -65,9 +65,9 @@ Conforme decisões explícitas do responsável pelo projeto:
    - Restaurar um membro não restaura automaticamente seu vínculo de acesso anterior (`church_access`).
    - A exclusão lógica de um membro vinculado à administração **não pode contornar a proteção do último administrador**: o último administrador ativo de uma igreja não pode ser excluído ou desativado sem que outro administrador elegível assuma previamente.
 
-3. **Pendente para o incremento de exclusão lógica (etapa 4 da governança):**
-   - Avaliação da relação com o status `active` / `inactive` já existente na tabela `members`, evitando criar mecanismos redundantes (como `deleted_at` concorrendo com `status = 'inactive'`).
-   - A implementação continua em incremento separado (etapa 4 oficial, após criação de igreja e convites).
+3. **Pendências registradas antes do incremento de exclusão lógica (histórico da etapa 4):**
+   - No registro original, estava pendente a avaliação da relação com o status `active` / `inactive` já existente na tabela `members`, evitando criar mecanismos redundantes (como `deleted_at` concorrendo com `status = 'inactive'`).
+   - O incremento separado da etapa 4, após criação de igreja e convites, adotou `active`/`inactive` e foi validado no laboratório conforme a seção 5. Revisão e integração final ainda pendentes; isso não libera o piloto.
    - A limpeza de fixtures dos ensaios e scripts SQL (`007_validate_member_management.sql`) permanece com rollback/remoção transacional das fixtures de teste e não deve ser alterada.
 
 4. **Distinção de entidades:**
@@ -118,7 +118,11 @@ Conforme informado pelo responsável pelo projeto, a aplicação dos scripts em 
 
 > [!IMPORTANT]
 > **Estado conferido em 17/10/2026:** implementação 013/015/016 com provas SQL reversíveis e concorrentes aprovadas em bases descartáveis locais. O lote integrado aprovou 42 disputas com espera real e vinte recusas de isolamento; membro, acesso, tentativas, auditoria e recibo foram conferidos. Fonte e gatilhos preservados, descarte concluído.
-> O instalador 013 canônico permanece intacto; 016 substitui as funções necessárias sem conceder acesso direto às tabelas privadas. **A instalação permanente foi aprovada e verificada somente no laboratório HTTP existente**, após ensaio com ROLLBACK e COMMIT atômico da cadeia 013/015/016. Os registros das 34 tabelas anteriores foram preservados e as sete tabelas novas permanecem vazias. **HTTP, navegador, integração final e liberação no piloto continuam pendentes.** A issue #18, E20/E21 e a etapa 4 integral continuam abertas até os aceites restantes. Ver [estado atual](ESTADO-ATUAL.md) e [roteiro 016](sql/016_rehearsal_guide.md).
+> O instalador 013 canônico permanece intacto; 016 substitui as funções necessárias sem conceder acesso direto às tabelas privadas. A instalação permanente foi aprovada e verificada somente no laboratório HTTP existente, após ensaio com ROLLBACK e COMMIT atômico. As tabelas operacionais estavam vazias no checkpoint de instalação e receberam depois somente os dados fictícios identificados da prova.
+>
+> O lote autorizado de aplicação de 17/10/2026 aprovou A01–A14 no laboratório existente: Auth nativo, convites manuais, exclusão/restauração sem retorno de acesso, paginação, troca de igreja/conta, recuperação por comando/recibo original e recusa 42501 após perda de autoridade. A integração delimitada E20/E21 foi complementada por P0022/P0023 reais, transferência explícita de liderança, encerramento pela liturgia designada e histórico preservado. Não representa entrega da jornada de cultos. A12 usa contraprovas controladas de transporte; retenção e recarga complementam a queda de conexão que provocou reenvio automático idempotente.
+>
+> A primeira tentativa permanece reprovada por isolamento de sessão: três linhas anteriores de Auth foram alteradas e três registros Auth adicionais foram criados por renovação automática de sessão antiga; registros anteriores de aplicação preservados. A causa foi corrigida somente na cópia do laboratório, com chave SDK própria. A retomada e o encerramento preservaram o baseline posterior de 214 registros, 42 funções, duas proteções e 86 entradas de segurança; isso não apaga a falha do baseline original de 211 registros. Interfaces/ponte encerradas e Auth novamente parado. Dados fictícios e histórico da prova foram retidos. Piloto e porta 3000 não foram alterados; revisão/integração final e encerramento de #12/#18 continuam pendentes. Ver [estado atual](ESTADO-ATUAL.md) e [roteiro 016](sql/016_rehearsal_guide.md).
 
 ### 5.1 Endpoints do Ciclo de Vida (Especificação 013/014)
 
@@ -158,6 +162,8 @@ Conforme informado pelo responsável pelo projeto, a aplicação dos scripts em 
 - **Proteção de Contexto Vivo Pós-Await:** Todas as operações assíncronas avaliam a identidade, igreja e geração vigentes por ref/getter após await, protegendo UI, refresh, catch/finally e storage contra alterações em contexto desatualizado.
 
 ### 5.3 Testes Automatizados Locais de Cliente
+
+> **Referências históricas do recorte 013:** os guias, scripts, executor e matriz citados abaixo preservam o planejamento e os resultados daquele recorte. A matriz antiga e o roteiro 013 não são o estado vigente do fechamento conjunto e não autorizam reinstalar SQL/fixtures no laboratório já instalado nem separar E20/E21 da #18. Para o aceite posterior SQL/HTTP/interface e seus limites, consultar o [guia 016](sql/016_rehearsal_guide.md) e o [estado atual](ESTADO-ATUAL.md).
 
 - Suíte `test/member-lifecycle-cycle.test.js` cobrindo classificação de erros, isolamento de comandos, ciclo de despacho, reconciliação estrita, validação de retornos por operação, tolerância a falhas no storage, integridade pós-await com troca de igreja e testes reais de componente de `MembersPage` com `react-test-renderer`.
 - Planejamento e scripts de concorrência real com duas sessões detalhados em `docs/sql/013_concurrency_rehearsal_guide.md`, `docs/sql/concurrency/013_concurrency_session_a.sql` e `docs/sql/concurrency/013_concurrency_session_b.sql`.
