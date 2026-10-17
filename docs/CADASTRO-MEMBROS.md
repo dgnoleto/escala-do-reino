@@ -117,9 +117,8 @@ Conforme informado pelo responsável pelo projeto, a aplicação dos scripts em 
 ## 5. Incremento de Ciclo de Vida de Membros (Issue #18)
 
 > [!IMPORTANT]
-> **Status de Governança e Limite de Execução:**
-> A especificação dos scripts SQL (`docs/sql/013_member_lifecycle.sql`, `docs/sql/013_validate_member_lifecycle.sql`, `docs/sql/014_verify_member_lifecycle.sql`) e a implementação correspondente na interface (`src/components/MembersPage.jsx`, `src/utils/memberCommandService.js`) encontram-se em **implementação local em revisão, sem validação em banco**.
-> **Nenhum comando SQL foi executado contra o banco de dados físico (piloto ou laboratório), nenhuma fixture foi criada e nenhum teste de banco foi aplicado.** A issue #18 permanece aberta; as etapas E20/E21 e a etapa 4 integral não estão concluídas.
+> **Estado conferido em 17/10/2026:** implementação 013/015/016 com provas SQL reversíveis e concorrentes aprovadas em bases descartáveis locais. O lote integrado aprovou 42 disputas com espera real e vinte recusas de isolamento; membro, acesso, tentativas, auditoria e recibo foram conferidos. Fonte e gatilhos preservados, descarte concluído.
+> O instalador 013 canônico permanece intacto; 016 substitui as funções necessárias sem conceder acesso direto às tabelas privadas. **A instalação permanente foi aprovada e verificada somente no laboratório HTTP existente**, após ensaio com ROLLBACK e COMMIT atômico da cadeia 013/015/016. Os registros das 34 tabelas anteriores foram preservados e as sete tabelas novas permanecem vazias. **HTTP, navegador, integração final e liberação no piloto continuam pendentes.** A issue #18, E20/E21 e a etapa 4 integral continuam abertas até os aceites restantes. Ver [estado atual](ESTADO-ATUAL.md) e [roteiro 016](sql/016_rehearsal_guide.md).
 
 ### 5.1 Endpoints do Ciclo de Vida (Especificação 013/014)
 
@@ -139,8 +138,9 @@ Conforme informado pelo responsável pelo projeto, a aplicação dos scripts em 
 3. **Consulta de Recibo de Ciclo de Vida:** `public.get_member_lifecycle_receipt(p_command_id uuid)`
    - Retorna o recibo registrado em `app_private.command_receipts` para a reconciliação segura após respostas incertas.
 
-4. **Trava de Dependência Litúrgica (Exclusão):** `public.deactivate_church_member(p_church_id uuid, p_command_id uuid, p_member_id uuid, p_expected_updated_at text)`
-   - Revalida autorização administrativa (`42501`) e recusa a operação com código `P0021` em razão de a validação de dependências litúrgicas e histórico de escalas pertencer ao módulo de escalas ainda não integrado ao banco. Nenhuma exclusão efetiva ou bypass manual é permitido.
+4. **Exclusão Lógica e Verificação de Dependências:** `public.deactivate_church_member(p_church_id uuid, p_command_id uuid, p_member_id uuid, p_expected_updated_at text)`
+   - No instalador 013, a operação continua protegida por P0021. Em ambientes com 015/016 integrados, revalida autorização atual, contexto, autoexclusão, revisão, continuidade administrativa e dependências reais antes da transação efetiva. Liderança ativa exige transferência prévia; participações/responsabilidades em evento aberto bloqueiam; histórico encerrado não é apagado. Ausência da fonte mantém P0021.
+   - A transação inativa o membro, revoga somente o vínculo ativo desta igreja, invalida convite aberto válido, finaliza pending válida como cancelled e expirada como expired, e grava auditorias/recibo. Preserva Auth, outra igreja, UUIDs, tentativas consumidas/fechadas e revogação anterior. Restaurar nunca reabre acesso, tentativas ou liderança.
 
 ### 5.2 Implementação no Cliente Web e Resposta Incerta
 
@@ -153,8 +153,7 @@ Conforme informado pelo responsável pelo projeto, a aplicação dos scripts em 
 - **Aviso Exato sobre Vínculo Revogado:** No modal de restauração de membro com histórico de acesso revogado, a aplicação exibe rigorosamente:
   > *"A restauração reativa apenas o cadastro do membro nesta igreja. O acesso a esta igreja permanece revogado. A recuperação desse acesso depende de um fluxo separado, ainda não disponível nesta etapa."*
   Sem promessa de novos convites e sem alegações sobre revogação de login global.
-- **Aviso Exato de Exclusão:** No modal de exclusão, a mensagem informa expressamente:
-  > *"A exclusão de membros está indisponível nesta etapa. Ela depende da verificação de participações e liderança em eventos futuros ou em andamento. O cadastro permanece inalterado."*
+- **Confirmação de exclusão:** O modal informa que o cadastro ficará inativo, o acesso apenas à igreja será revogado, histórico/conta serão preservados e restauração não devolverá acesso ou liderança. O servidor decide se as dependências permitem concluir. Se o ambiente ainda responder P0021, o cliente apresenta a indisponibilidade sem confirmar a exclusão.
 - **Reposicionamento de Paginação:** Caso uma página superior retorne vazia com total de membros igual a zero, a paginação reposiciona automaticamente para a página 1.
 - **Proteção de Contexto Vivo Pós-Await:** Todas as operações assíncronas avaliam a identidade, igreja e geração vigentes por ref/getter após await, protegendo UI, refresh, catch/finally e storage contra alterações em contexto desatualizado.
 

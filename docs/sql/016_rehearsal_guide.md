@@ -1,6 +1,8 @@
 # Aceite do ciclo de vida efetivo — candidato 016
 
-Estado em 17/10/2026: primeira prova SQL reversível 016 aprovada em dez grupos (r016_d9387ecd40de8c64). ROLLBACK, comparação e descarte confirmados; fonte inalterado. Concorrência integrada/HTTP/navegador ainda não executados para 016. Issues #12/#18 abertas. Base local inicial: 250880eddb7779a6725f3647b67cc95242e33aca.
+> **Checkpoint posterior de instalação no laboratório (17/10/2026):** Após autorização específica, a cadeia 013/015/016 foi instalada com COMMIT único no banco postgres do laboratório HTTP existente. Ensaio prévio com ROLLBACK e comparação externa aprovados; 34 tabelas anteriores preservadas, sete tabelas novas vazias, 42 definições públicas coincidentes entre ensaio/aplicação/verificação e duas proteções administrativas habilitadas. A primeira tentativa parou antes do COMMIT por colisão de variável no wrapper de verificação; somente esse wrapper foi corrigido. Auth continuou parado; nenhuma conta ou fixture foi criada. HTTP, navegador, integração final e piloto permanecem fora deste aceite. Não reaplicar os instaladores sobre esse alvo. As instruções abaixo descrevem o ensaio descartável histórico e seu escopo original.
+
+Estado em 17/10/2026: primeira prova SQL reversível 016 aprovada em dez grupos (r016_d9387ecd40de8c64). ROLLBACK, comparação e descarte confirmados; fonte inalterado. Concorrência integrada aprovada em 42 disputas e vinte recusas de isolamento, somente em bases descartáveis do contêiner existente. HTTP/navegador ainda não executados para 016. Issues #12/#18 abertas. Base local inicial: 250880eddb7779a6725f3647b67cc95242e33aca.
 
 ## Primeira prova reversível executada — procedimento preservado
 
@@ -25,7 +27,7 @@ As fixtures/as chamadas RPC usam identidades fictícias, o papel authenticated e
 
 ## Aceites adicionais obrigatórios antes do fechamento
 
-Após a prova reversível: instalar 016 somente em base descartável para corridas reais A/B com espera observada por pg_blocking_pids e identidades distintas. Cobrir ambos os vencedores de exclusão versus novas lideranças/alocação, convites/resgates/decisão, restauração e mesma revisão; exclusões cruzadas de administradores; perda de autorização enquanto aguarda o gate e locks tardios. Incluir controles positivos e verificação final de efeitos, recibo e auditoria. Um roteiro não equivale a uma corrida executada.
+O lote concorrente autorizado foi executado: 42 disputas com ambos os vencedores, esperas observadas por pg_blocking_pids, PIDs distintos e conferência final de dados/recibos/auditorias; vinte recusas de isolamento. Inclui controles positivos e revogação/inelegibilidade durante espera. Dez casos aprovados foram preservados e os 32 restantes executados após corrigir a ordem de parâmetros de uma chamada do teste, sem alterar o SQL de produto. Bases próprias e temporários removidos; fonte comparado nas duas execuções. O próximo aceite obrigatório é HTTP e jornada real.
 
 Depois, prova HTTP de COMMIT com resposta perdida e reconciliação; jornada no navegador com recarga/filtros/paginação, troca de conta/igreja, exclusão e restauração sem acesso. Identificar frontend/backend reais antes do teste, preservar a porta 3000 e o piloto. Instalação permanente, commit/push/PR/merge/deploy e encerramento continuam autorizações distintas.
 

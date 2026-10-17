@@ -4,7 +4,7 @@
 - **Status de Governança:** Desenho Técnico e Contrato Operacional do Bloco 2 (Implementação Local)
 - **Documentos Normativos de Referência:** `docs/PRD.md`, `docs/ARQUITETURA-BANCO.md`, `docs/CADASTRO-MEMBROS.md`, `docs/CONTRATO-CONVITES-ACESSO.md`, `MATRIZ-ACEITE.md`, `PARECER-CODEX.md`, `DECISAO-REVISAO.md`
 - **Atendimento de Critérios da Matriz:** `M18-01`, `M18-05`, `M18-06`, `M18-07`, `M18-10`, `M18-12`
-- **Limites Estritos do Bloco:** Implementação local em código e scripts versionados; sem execução de SQL contra banco físico (laboratório ou piloto), sem alteração de contêineres e sem publicação.
+- **Limites originais do Bloco 1 (histórico):** implementação local em código e scripts versionados, então sem execução física de SQL. Os aceites físicos posteriores e a instalação autorizada no laboratório estão registrados ao final deste contrato; nenhuma dessas etapas autoriza piloto ou publicação.
 
 ---
 
@@ -52,7 +52,7 @@ Equipe ativa liderada pelo alvo bloqueia com P0022 até transferência. Liturgia
 
 Eventos formalmente concluídos/cancelados e suas referências permanecem intactos e não impedem a exclusão. Convites abertos válidos são revogados; consumidos, revogados e expirados não são reescritos. Solicitação pending válida é cancelada com decisor; pending expirada é finalizada como expired sem decisor. Prazo original é preservado. Membro, acesso da igreja, tentativas, auditorias e recibo pertencem à mesma transação.
 
-Em 17/10/2026, os dez grupos do ensaio reversível 016 passaram fisicamente na base descartável (r016_d9387ecd40de8c64), com ROLLBACK e comparação de dados/catálogos. Isso comprova as asserções sequenciais executadas, inclusive dependências/histórico E20/E21 e atomicidade. **As novas corridas simultâneas, HTTP e navegador continuam pendentes**; os aceites 013/015 não as substituem. Ver [roteiro de aceite](sql/016_rehearsal_guide.md).
+Em 17/10/2026, os dez grupos do ensaio reversível 016 passaram fisicamente na base descartável (r016_d9387ecd40de8c64), com ROLLBACK e comparação de dados/catálogos. Isso comprova as asserções sequenciais executadas, inclusive dependências/histórico E20/E21 e atomicidade. O lote integrado posterior aprovou **42 disputas com bloqueio real e vinte recusas de isolamento**, cobrindo dependências, convites/resgates/decisões, comandos/revisões, restauração, exclusões cruzadas de administradores e perda de autorização após espera. Os casos foram conferidos individualmente, incluindo estado final, recibos e auditoria. Fonte e gatilhos preservados, descarte identificado concluído. **HTTP, navegador e integração final continuam pendentes**; o aceite SQL não os substitui. Após autorização específica, a cadeia 013/015/016 foi instalada com COMMIT único no banco postgres do laboratório HTTP existente. Ensaio prévio com ROLLBACK e comparação externa aprovados; 34 tabelas anteriores preservadas, sete tabelas novas vazias, 42 definições públicas coincidentes entre ensaio/aplicação/verificação e duas proteções administrativas habilitadas. A primeira tentativa parou antes do COMMIT por colisão de variável no wrapper de verificação; somente esse wrapper foi corrigido. Auth continuou parado; nenhuma conta ou fixture foi criada. HTTP, navegador, integração final e piloto permanecem fora deste aceite. Ver [roteiro de aceite](sql/016_rehearsal_guide.md).
 
 ---
 
