@@ -1424,7 +1424,7 @@ export default function MembersPage({ onBack }) {
           </div>
         )}
 
-        {/* Modal de Exclusão (com aviso da trava de dependência litúrgica P0021) */}
+        {/* Modal de confirmação de exclusão lógica */}
         {deactivateModalMember && (
           <div className="modal-backdrop" role="dialog" aria-modal="true" aria-labelledby="modal-deactivate-title">
             <div className="modal-card">
@@ -1451,9 +1451,9 @@ export default function MembersPage({ onBack }) {
                   Solicitação de exclusão para o membro <strong>{deactivateModalMember.display_name}</strong>.
                 </p>
                 <div style={{ marginTop: '12px', padding: '12px', background: '#fffbeb', borderRadius: '6px', border: '1px solid #fef3c7', color: '#92400e', fontSize: '0.85rem' }}>
-                  <strong>Exclusão indisponível nesta etapa:</strong>
+                  <strong>Confirme a exclusão do cadastro nesta igreja</strong>
                   <p style={{ marginTop: '4px' }}>
-                    A exclusão de membros está indisponível nesta etapa. Ela depende da verificação de participações e liderança em eventos futuros ou em andamento. O cadastro permanece inalterado.
+                    O cadastro ficará inativo e o acesso a esta igreja será revogado. O histórico e a conta da pessoa serão preservados. Convites abertos válidos serão invalidados e solicitações pendentes serão encerradas. A restauração reativa apenas o cadastro, sem devolver acesso ou liderança.
                   </p>
                 </div>
               </div>
@@ -1486,7 +1486,7 @@ export default function MembersPage({ onBack }) {
                       <RefreshCw size={14} className="spin-icon" /> Solicitando…
                     </>
                   ) : (
-                    'Solicitar exclusão'
+                    'Confirmar exclusão'
                   )}
                 </button>
               </div>

@@ -1273,7 +1273,7 @@ describe('11. Integração Real de Componente: MembersPage', () => {
     assert.doesNotMatch(modalText, /login.*revogado/i, 'Não pode alegar revogação de login global');
   });
 
-  it('11.5 Modal de exclusão apresenta aviso simplificado para o usuário sem código P0021 ou detalhes do banco', async (t) => {
+  it('11.5 Modal de exclusão explica efeitos e limites sem expor códigos ou detalhes do banco', async (t) => {
     setupEnvironment({
       members: [
         {
@@ -1305,8 +1305,11 @@ describe('11. Integração Real de Componente: MembersPage', () => {
     });
 
     const modalText = visibleText(renderer.root);
-    assert.match(modalText, /Exclusão indisponível nesta etapa/);
-    assert.match(modalText, /depende da verificação de participações e liderança em eventos futuros ou em andamento/);
+    assert.match(modalText, /Confirme a exclusão do cadastro nesta igreja/);
+    assert.match(modalText, /acesso a esta igreja será revogado/);
+    assert.match(modalText, /histórico e a conta da pessoa serão preservados/);
+    assert.match(modalText, /sem devolver acesso ou liderança/);
+    assert.match(modalText, /Convites abertos válidos serão invalidados e solicitações pendentes serão encerradas/);
     assert.doesNotMatch(modalText, /P0021/i, 'Não pode exibir código técnico P0021');
     assert.doesNotMatch(modalText, /banco de dados/i, 'Não pode expor detalhes internos do banco de dados');
   });

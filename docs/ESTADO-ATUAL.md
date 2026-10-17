@@ -1,6 +1,6 @@
 # Estado atual — Escala do Reino
 
-Atualização de referência: 11/10/2026. Este documento resume o estado conhecido e deve ser atualizado a cada entrega relevante. Relatórios históricos preservam os fatos de sua própria data; consultar também as issues abertas.
+Atualização do checkpoint local: 17/10/2026. As versões de main e provas históricas abaixo conservam a data de sua conferência original. Este documento resume o estado conhecido e deve ser atualizado a cada entrega relevante. Relatórios históricos preservam os fatos de sua própria data; consultar também as issues abertas.
 
 ## Versão de referência
 
@@ -25,11 +25,11 @@ Não há deploy do novo frontend demonstrado por esta entrega. PR #9 não altera
 ## Organização documental e trabalho pendente
 
 - [Issue #10](https://github.com/dgnoleto/escala-do-reino/issues/10): alinhar declarações de andamento no README, PRD e contrato, organizar guia de QA, mapa de ambientes e evidências portáveis.
-- [Issue #18](https://github.com/dgnoleto/escala-do-reino/issues/18): Ciclo de Vida de Membros (Listagem com Filtros, Restauração Elegível sem Devolver Acesso, Recibo Idempotente e Trava Litúrgica P0021). Status: **implementação local em revisão, sem validação em banco**. Artefatos SQL 013/014 especificados, integração da interface e serviços de comando ajustados, 39 testes locais de cliente aprovados (`test/member-lifecycle-cycle.test.js`) e build concluído com sucesso. Nenhum comando SQL foi executado contra banco de dados físico (piloto ou laboratório) e nenhuma fixture foi criada. A issue permanece aberta; E20/E21 e etapa 4 integral não estão concluídas.
+- [Issue #18](https://github.com/dgnoleto/escala-do-reino/issues/18): **integração efetiva 016 candidata local com primeira prova SQL reversível aprovada; concorrência integrada, HTTP e jornada ainda pendentes.** A cadeia 013/014/015 passou no laboratório descartável em 17/10, incluindo 19 cenários concorrentes da fonte e oito recusas de isolamento. O candidato 016 integra exclusão lógica, acesso da igreja, convites, solicitações, auditoria e recibo; alinha bloqueios dos escritores e preserva o instalador 013 canônico. A execução r016_d9387ecd40de8c64 aprovou dez grupos, incluindo dependências/histórico E20/E21, transferência prévia de liderança, restauração sem acesso, replay e atomicidade. ROLLBACK conferido nas 41 tabelas medidas da base descartável e em nove categorias de metadados; fonte preservado nas 34 tabelas medidas, dois gatilhos administrativos habilitados e descarte concluído. Ainda exige corridas de exclusão/continuidade/convites, HTTP e navegação real. E20/E21 e a issue permanecem abertos. [Histórico publicado](https://github.com/dgnoleto/escala-do-reino/issues/18#issuecomment-6232919231); [roteiro 016](sql/016_rehearsal_guide.md).
 - Os guias iniciais foram aprovados pelo responsável para publicação. Essa aprovação não significa execução ou aprovação dos 12 cenários propostos, concessão de acesso à QA ou conclusão de toda a issue.
 - Confirmar os critérios da issue no PR documental; se algum ficar pendente, manter seu acompanhamento explícito. Não fechar automaticamente apenas porque arquivos foram adicionados.
 - Para a entrada da QA, combinar acesso GitHub e computador/ambiente de trabalho. O repositório é privado e não houve concessão de acesso nesta preparação.
-- Exclusão lógica/recuperação continuam um incremento com trava P0021 e restauração sem acesso. Não inferir CPF, envio automático de convites ou novos privilégios.
+- Exclusão lógica/recuperação permanecem na etapa 4. Ambientes sem integração efetiva continuam bloqueados por P0021; o candidato 016 mantém a recusa quando falta a fonte real. Restauração não devolve acesso. Não inferir CPF, envio automático de convites ou novos privilégios.
 
 ## Próximo passo de leitura
 

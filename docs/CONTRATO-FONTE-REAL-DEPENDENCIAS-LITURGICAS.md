@@ -23,53 +23,36 @@
 
 ## 2. Estratégia Comum de Concorrência e Eliminação Global de Ciclos (Anti-Deadlock)
 
-### 2.1 Análise e Resolução do Ciclo entre Escritores
-Conforme apontado na revisão técnica, se a exclusão bloquear `members` antes de `events`, e a alocação de participantes bloquear `events` antes de `members`, duas transações concorrentes causam deadlock:
-- *Transação A (Exclusão):* Adquire lock em `members` do voluntário M e tenta inspecionar/bloquear `events` E onde ele está escalado.
-- *Transação B (Alocação):* Adquire lock em `events` E e tenta validar/bloquear `members` M para nova escala.
+### 2.1 Guardião comum das dependências
 
-Para eliminar esse ciclo de forma estrutural e determinística em todos os escritores do sistema, define-se uma **Ordem Canônica Global Única de Tabelas**:
+O membro é bloqueado antes de criar uma nova responsabilidade, validar novamente seu estado ativo e adquirir locks de equipe/evento/item. Isso cobre criação de equipe com líder, troca de líder, criação de evento com liturgia, troca de liturgia, criação de item com responsável, alocação e substituição. No candidato 016, as três criações que antes apenas consultavam o estado passam a bloquear o membro; os escritores já corrigidos em 015 permanecem no instalador canônico.
 
-$$\text{church\_access} \longrightarrow \text{members} \longrightarrow \text{teams} \longrightarrow \text{team\_memberships} \longrightarrow \text{member\_qualifications} \longrightarrow \text{events} \longrightarrow \text{event\_items} \longrightarrow \text{assignments} \longrightarrow \text{access\_invitations} \longrightarrow \text{access\_requests}$$
+A exclusão mantém o lock exclusivo do membro durante a consulta das dependências reais e a inativação. Não bloqueia equipes/eventos/itens/escalas: seus escritores de inclusão/troca precisam passar pelo mesmo membro; encerramentos e cancelamentos apenas liberam impedimentos. Não há inversão events → members introduzida por 016. Uma futura operação de reabertura, mudança de responsável ou alteração de datas precisa ser integrada a este protocolo antes de ser exposta.
 
-### 2.2 Regras Estritas de Bloqueio Compartilhadas por Todas as RPCs
+### 2.2 Ciclo de vida, convites e continuidade administrativa
 
-1. **Prioridade de `members` sobre `events`:**
-   - Toda e qualquer operação que envolva membros e eventos (inclusive criação de alocação `assign_event_participant`, substituição `replace_event_participant` e exclusão `deactivate_church_member`) **adquire os locks dos membros candidatos/envolvidos ANTES de adquirir os locks do evento e dos itens**.
-2. **Ordenação Determinística de Múltiplas Linhas (`ORDER BY id ASC`):**
-   - Quando uma transação bloqueia mais de uma linha da mesma tabela (ex.: substituição envolvendo membro substituído $M_1$ e membro substituto $M_2$), as linhas são ordenadas obrigatoriamente por `id ASC`:
-     ```sql
-     perform 1 from app_private.members m
-     where m.church_id = p_church_id and m.id in (p_old_member_id, p_new_member_id)
-     order by m.id asc
-     for share; -- ou for update
-     ```
-3. **Mecanismos de Advisory Locks Distintos (de 007 e 009):**
-   - `pg_advisory_xact_lock(hashtext('create_church_member_quota'), hashtext(v_user_id::text))`: Quota de criação de membros por usuário (007).
-   - `pg_advisory_xact_lock(hashtext('create_my_church_quota'), hashtext(v_user_id::text))`: Quota de criação de igreja por conta Auth (009).
-   - `pg_advisory_xact_lock(hashtext('church_admin_continuity'), hashtext(v_church_id::text))`: Proteção contra corridas de destituição simultânea do último administrador de uma igreja (gatilhos de 009 e mutações administrativas em 016).
-   - `pg_advisory_xact_lock(hashtext(v_user_id::text), hashtext(p_command_id::text))`: Serialização de idempotência e resposta perdida por comando individual.
+O candidato 016 usa o advisory lock transacional existente church_admin_continuity **antes de qualquer lock de linha** em exclusão, restauração, criação de membro, emissão/reemissão e decisão de solicitação. Resgates confirmando/propondo nome usam o mesmo lock após identificar a igreja e antes dos locks de domínio. Isso evita que uma decisão retenha um lock do operador enquanto aguarda um membro que está sendo excluído. O lock é por igreja, inclusive ao excluir não administradores, para manter o protocolo único; igrejas distintas não compartilham intencionalmente o mesmo lock.
 
-### 2.3 Tabela de Ordem de Bloqueios de Todas as Operações
+O lock por (user_id, command_id), quando existente, precede o lock da igreja. A quota de criação de membros permanece depois dele. Operações de manutenção de acesso/administração devem adquirir church_admin_continuity antes de bloquear ou atualizar linhas. Os gatilhos de 009 continuam habilitados como salvaguarda; não substituem a ordem de aquisição no início da transação de manutenção. Nenhuma manutenção direta é exposta ao cliente por 016.
 
-| Operação | Advisory Lock | Modo Compartilhado (`FOR SHARE`) | Modo Exclusivo (`FOR UPDATE`) — Ordem Global Fixa |
-| :--- | :--- | :--- | :--- |
-| **`restore_church_member` (013)** | `(user, command)` | *(auth.users)* | `church_access` (alvo) $\rightarrow$ `members` (alvo) |
-| **`deactivate_church_member` (016)** | `(user, command)` + `church_admin_continuity` (se admin) | `churches`, `church_access` (operador) | `church_access` (alvo) $\rightarrow$ `members` (alvo) $\rightarrow$ `teams` $\rightarrow$ `events` $\rightarrow$ `event_items` $\rightarrow$ `assignments` $\rightarrow$ `invitations` $\rightarrow$ `requests` |
-| **`create_church_team` (015)** | `(user, command)` | `churches`, `church_access` (operador), `members` (se líder indicado, `FOR SHARE`) | *(Inserção atômica em teams)* |
-| **`assign_team_leader` (015)** | `(user, command)` | `churches`, `church_access` (operador) | `members` (novo líder `FOR SHARE` ou `FOR UPDATE`) $\rightarrow$ `teams` (alvo `FOR UPDATE`) |
-| **`create_church_event` (015)** | `(user, command)` | `churches`, `church_access` (operador ou líder), `members` (se liturgia indicada, `FOR SHARE`) | *(Inserção atômica em events)* |
-| **`assign_event_liturgy_leader` (015)**| `(user, command)` | `churches`, `church_access` (operador) | `members` (nova liturgia `FOR SHARE`) $\rightarrow$ `events` (alvo `FOR UPDATE`) |
-| **`assign_event_participant` (015)** | `(user, command)` | `churches`, `church_access` (operador) | `members` (voluntário `FOR SHARE`) $\rightarrow$ `teams` (`FOR SHARE`) $\rightarrow$ `events` (`FOR UPDATE`) $\rightarrow$ `event_items` (`FOR UPDATE`) $\rightarrow$ *(insert assignments)* |
-| **`replace_event_participant` (015)**| `(user, command)` | `churches`, `church_access` (operador) | `members` (`ORDER BY id ASC`: M_atual e M_novo `FOR SHARE`) $\rightarrow$ `teams` $\rightarrow$ `events` $\rightarrow$ `event_items` $\rightarrow$ `assignments` (`FOR UPDATE`) |
+| Operação | Ordem de locks explícitos após serialização do comando |
+| --- | --- |
+| Exclusão 016 | Continuidade da igreja → acesso do alvo → membro do alvo → releitura do acesso → convites por UUID → solicitações por UUID. Autoridade completa é relida depois de todas as esperas, antes de qualquer efeito. |
+| Restauração na cadeia 016 | Continuidade da igreja → acesso do alvo → membro do alvo; mantém revisão opaca, guarda P0018 e não modifica acesso/papéis. O arquivo 013 original permanece intacto. |
+| Cadastro de membro e convites/decisões | Continuidade da igreja antes dos locks já existentes de igreja/operador/membro/convite/solicitação. Mantidos parâmetros, hashes, recibos, prazo e regras de identidade de 007/011. |
+| Criar equipe com líder / evento com liturgia | Membro indicado exclusivo antes de inserir a dependência. Autoridade atual relida após a espera. Parâmetro opcional nulo não cria liderança implícita. |
+| Criar item com responsável | Membro nominal exclusivo → equipe designada compartilhada → evento compartilhado → autoridade atual → inserção do item. |
+| Demais escritores 015 | Membros por UUID → equipes → eventos → itens → vínculos/aptidões/escalas conforme a operação. Preservada a decisão final de autoridade após os locks explícitos dos quatro escritores já ensaiados. |
 
-### 2.4 Entrelaçamentos Analisados e Resultados Determinísticos
+As dez funções substituídas em 016 são VOLATILE e exigem READ COMMITTED; não usam snapshots fixos para concluir decisões após espera. Não são concedidos privilégios diretos em app_private e nenhuma RPC nova é criada. Conta Auth, outras igrejas, UUIDs e referências históricas são preservados.
 
-1. **Corrida: Exclusão de Membro M vs. Alocação de Membro M em Evento E:**
-   - Como ambas as operações bloqueiam `members` antes de `events`:
-     - *Cenário 1 (Exclusão adquire M primeiro):* A Alocação tenta travar M `FOR SHARE` e aguarda. A Exclusão torna M inativo (`status = 'inactive'`) e comita. A Alocação é liberada, lê M inativo e recusa imediatamente com `P0002` ("Membro inativo não pode ser escalado").
-     - *Cenário 2 (Alocação adquire M primeiro):* A Alocação adquire M `FOR SHARE`, depois adquire E `FOR UPDATE`, cria a alocação e comita. A Exclusão, que aguardava pelo lock de M, é liberada, adquire M `FOR UPDATE`, inspeciona `assignments` ativas de M no evento E (que agora existe) e recusa a exclusão com `P0024`.
-   - **Resultado:** Zero deadlocks e zero estados inconsistentes.
+### 2.3 Dependências e resultados esperados
+
+Equipe ativa liderada pelo alvo bloqueia com P0022 até transferência. Liturgia em evento agendado/em andamento bloqueia com P0023. Escala ativa ou responsabilidade nominal pendente/em andamento em evento aberto bloqueia com P0024. Evento agendado com fim previsto já passado e vínculo operacional do alvo exige encerramento formal (P0025). Ausência da fonte bloqueia com P0021. Horário passado, sozinho, não transforma evento aberto em histórico encerrado.
+
+Eventos formalmente concluídos/cancelados e suas referências permanecem intactos e não impedem a exclusão. Convites abertos válidos são revogados; consumidos, revogados e expirados não são reescritos. Solicitação pending válida é cancelada com decisor; pending expirada é finalizada como expired sem decisor. Prazo original é preservado. Membro, acesso da igreja, tentativas, auditorias e recibo pertencem à mesma transação.
+
+Em 17/10/2026, os dez grupos do ensaio reversível 016 passaram fisicamente na base descartável (r016_d9387ecd40de8c64), com ROLLBACK e comparação de dados/catálogos. Isso comprova as asserções sequenciais executadas, inclusive dependências/histórico E20/E21 e atomicidade. **As novas corridas simultâneas, HTTP e navegador continuam pendentes**; os aceites 013/015 não as substituem. Ver [roteiro de aceite](sql/016_rehearsal_guide.md).
 
 ---
 
@@ -121,8 +104,8 @@ erDiagram
   - `(church_id, event_id, id)` UNIQUE.
   - `planned_duration_seconds integer not null default 300 check (planned_duration_seconds > 0)`.
   - `FOREIGN KEY (church_id, event_id) REFERENCES app_private.events(church_id, id) ON DELETE CASCADE`.
-  - `FOREIGN KEY (church_id, responsible_team_id) REFERENCES app_private.teams(church_id, id) ON DELETE RESTRICT`.
-  - `FOREIGN KEY (church_id, nominal_responsible_member_id) REFERENCES app_private.members(church_id, id) ON DELETE RESTRICT`.
+  - `FOREIGN KEY (church_id, designated_team_id) REFERENCES app_private.teams(church_id, id) ON DELETE RESTRICT`.
+  - `FOREIGN KEY (church_id, nominal_leader_member_id) REFERENCES app_private.members(church_id, id) ON DELETE RESTRICT`.
 - **`app_private.assignments`:**
   - `FOREIGN KEY (church_id, event_id) REFERENCES app_private.events(church_id, id) ON DELETE CASCADE`.
   - `FOREIGN KEY (church_id, event_id, item_id) REFERENCES app_private.event_items(church_id, event_id, id) ON DELETE CASCADE`.
