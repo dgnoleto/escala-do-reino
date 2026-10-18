@@ -59,34 +59,34 @@ declare
   result jsonb;
   q text;
 begin
-  -- C01: Concessão com sucesso por admin ativo a membro elegível (CA01)
+  -- C01: Membro não-admin tentando executar comando é recusado (42501)
+  perform pg_temp.admin_as(2, format('select to_jsonb(r) from public.manage_church_admin(%L, %L, %L, %L) r',
+    pg_temp.admin_id(100), pg_temp.admin_id(11), 'revoke', pg_temp.admin_id(1002)), '42501');
+
+  -- C02: Concessão com sucesso por admin ativo a membro elegível (CA01)
   q := format('select to_jsonb(r) from public.manage_church_admin(%L, %L, %L, %L) r',
     pg_temp.admin_id(100), pg_temp.admin_id(12), 'grant', pg_temp.admin_id(1001));
   result := pg_temp.admin_as(1, q);
   if (result->>'is_admin')::boolean is not true then
-    raise exception 'C01: is_admin deveria ser true após grant.';
+    raise exception 'C02: is_admin deveria ser true após grant.';
   end if;
   if not exists(
     select 1 from app_private.church_access ca
     where ca.church_id = pg_temp.admin_id(100) and ca.member_id = pg_temp.admin_id(12) and ca.is_admin = true
   ) then
-    raise exception 'C01: banco não refletiu is_admin = true.';
+    raise exception 'C02: banco não refletiu is_admin = true.';
   end if;
 
-  -- C02: Replay idempotente do mesmo comando retorna o mesmo resultado sem duplicar recibo ou auditoria (CA04)
+  -- C03: Replay idempotente do mesmo comando retorna o mesmo resultado sem duplicar recibo ou auditoria (CA04)
   result := pg_temp.admin_as(1, q);
   if (result->>'is_admin')::boolean is not true
     or (select count(*) from app_private.member_permission_receipts where command_id = pg_temp.admin_id(1001)) <> 1
     or (select count(*) from app_private.audit_entries where action = 'grant_church_admin') <> 1 then
-    raise exception 'C02: replay idempotente falhou.';
+    raise exception 'C03: replay idempotente falhou.';
   end if;
 
-  -- C03: Reuso do mesmo command_id com outros parâmetros deve ser recusado (23505)
+  -- C04: Reuso do mesmo command_id com outros parâmetros deve ser recusado (23505)
   perform pg_temp.admin_as(1, replace(q, 'grant', 'revoke'), '23505');
-
-  -- C04: Membro não-admin tentando executar comando é recusado (42501)
-  perform pg_temp.admin_as(2, format('select to_jsonb(r) from public.manage_church_admin(%L, %L, %L, %L) r',
-    pg_temp.admin_id(100), pg_temp.admin_id(11), 'revoke', pg_temp.admin_id(1002)), '42501');
 
   -- C05: Bloqueio de concessão para quem já é admin em outra igreja (CA01 / 23514)
   -- User 4 já é admin na Igreja B, logo não pode ser admin na Igreja A
