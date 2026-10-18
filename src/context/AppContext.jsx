@@ -8,21 +8,28 @@ import {
   INITIAL_EVENT,
   INITIAL_AUDIT_LOGS
 } from '../data/initialData';
+import {
+  toReasonObject,
+  validateCancellationReason,
+  canDeleteCancellationReason,
+} from '../utils/cancellationReasonService';
 
 const AppContext = createContext(null);
 
-export function AppProvider({ children }) {
+export function AppProvider({ children, initialUserId = "carlos" }) {
   // Configurações e Dados Base
   const [church] = useState(INITIAL_CHURCH);
   const [members, setMembers] = useState(INITIAL_MEMBERS);
   const [teams, setTeams] = useState(INITIAL_TEAMS);
-  const [cancelReasons, setCancelReasons] = useState(INITIAL_CANCEL_REASONS);
+  const [cancelReasons, setCancelReasons] = useState(() =>
+    INITIAL_CANCEL_REASONS.map((r, idx) => toReasonObject(r, idx))
+  );
   const [accessInvites, setAccessInvites] = useState(INITIAL_ACCESS_INVITES);
   const [auditLogs, setAuditLogs] = useState(INITIAL_AUDIT_LOGS);
 
   // Usuário Atual Ativo (Simulação de Perfis para avaliação de papéis)
   // Padrão: Carlos Oliveira (Líder da Liturgia do Culto)
-  const [currentUserId, setCurrentUserId] = useState("carlos");
+  const [currentUserId, setCurrentUserId] = useState(initialUserId);
 
   // Estado do Evento / Culto
   const [event, setEvent] = useState(INITIAL_EVENT);
@@ -36,7 +43,9 @@ export function AppProvider({ children }) {
   const [theme, setTheme] = useState('dark');
 
   useEffect(() => {
-    document.documentElement.setAttribute('data-theme', theme);
+    if (typeof document !== 'undefined' && document.documentElement?.setAttribute) {
+      document.documentElement.setAttribute('data-theme', theme);
+    }
   }, [theme]);
 
   const currentUser = members.find(m => m.id === currentUserId) || members[0];
@@ -272,12 +281,28 @@ export function AppProvider({ children }) {
   };
 
   // Cancelar Atividade em Execução (PRD 7.3, Cenário M11 - Exige motivo previamente cadastrado)
-  const cancelActivity = (reason) => {
-    if (!isLiturgyLeader) return;
-    if (!reason) return;
+  const cancelActivity = (reasonInput) => {
+    if (!isLiturgyLeader) return { success: false, error: "Apenas o líder da liturgia pode cancelar a atividade." };
+    if (!reasonInput) return { success: false, error: "Motivo de cancelamento obrigatório." };
 
     const currentIndex = event.currentActivityIndex;
     const act = event.activities[currentIndex];
+    if (!act) return { success: false, error: "Nenhuma atividade em andamento para cancelar." };
+
+    let reasonObj = null;
+    if (typeof reasonInput === 'object') {
+      reasonObj = reasonInput;
+    } else {
+      reasonObj = cancelReasons.find(r => r.id === reasonInput || r.name === reasonInput);
+    }
+
+    if (reasonObj && reasonObj.active === false) {
+      return { success: false, error: "Não é permitido cancelar atividade com um motivo desativado." };
+    }
+
+    const reasonName = reasonObj ? reasonObj.name : reasonInput;
+    const reasonId = reasonObj ? reasonObj.id : null;
+
     const now = new Date();
     const timeStr = now.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
 
@@ -287,7 +312,8 @@ export function AppProvider({ children }) {
         ...updatedActivities[currentIndex],
         status: "cancelada",
         realEndTime: timeStr,
-        cancellationReason: reason,
+        cancellationReason: reasonName,
+        cancellationReasonId: reasonId,
         cancelledBy: currentUser.name
       };
 
@@ -302,8 +328,9 @@ export function AppProvider({ children }) {
 
     addAuditLog(
       "Cancelamento de Atividade",
-      `Atividade '${act.title}' cancelada por ${currentUser.name}. Motivo obrigatório registrado: "${reason}".`
+      `Atividade '${act.title}' cancelada por ${currentUser.name}. Motivo obrigatório registrado: "${reasonName}".`
     );
+    return { success: true };
   };
 
   // Corrigir Horários Reais (PRD 7.8, Cenários M41, M42, M43)
@@ -540,11 +567,66 @@ export function AppProvider({ children }) {
   };
 
   // ADMINISTRAÇÃO (PRD 3.2: Exclusivo Admin Web)
-  const addCancelReason = (reason) => {
-    if (!isAdmin) return;
-    if (!reason || cancelReasons.includes(reason)) return;
-    setCancelReasons(prev => [...prev, reason]);
-    addAuditLog("Cadastro de Motivo", `Novo motivo de cancelamento cadastrado: "${reason}".`);
+  const addCancelReason = (reasonText) => {
+    if (!isAdmin) return { success: false, error: "Apenas administradores podem cadastrar motivos de cancelamento." };
+    const validation = validateCancellationReason(reasonText, cancelReasons);
+    if (!validation.valid) {
+      return { success: false, error: validation.error };
+    }
+    const newReason = {
+      id: `cr-${Date.now()}`,
+      name: validation.cleanName,
+      active: true,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString()
+    };
+    setCancelReasons(prev => [...prev, newReason]);
+    addAuditLog("Cadastro de Motivo", `Novo motivo de cancelamento cadastrado: "${validation.cleanName}".`);
+    return { success: true, reason: newReason };
+  };
+
+  const updateCancelReason = (id, newName) => {
+    if (!isAdmin) return { success: false, error: "Apenas administradores podem alterar motivos de cancelamento." };
+    const target = cancelReasons.find(r => r.id === id);
+    if (!target) return { success: false, error: "Motivo não encontrado." };
+    const validation = validateCancellationReason(newName, cancelReasons, id);
+    if (!validation.valid) {
+      return { success: false, error: validation.error };
+    }
+    const previousName = target.name;
+    setCancelReasons(prev =>
+      prev.map(r => r.id === id ? { ...r, name: validation.cleanName, updatedAt: new Date().toISOString() } : r)
+    );
+    addAuditLog("Alteração de Motivo", `Motivo de cancelamento alterado de "${previousName}" para "${validation.cleanName}".`);
+    return { success: true };
+  };
+
+  const toggleCancelReasonStatus = (id) => {
+    if (!isAdmin) return { success: false, error: "Apenas administradores podem alterar o status de motivos." };
+    const target = cancelReasons.find(r => r.id === id);
+    if (!target) return { success: false, error: "Motivo não encontrado." };
+    const nextActive = !target.active;
+    setCancelReasons(prev =>
+      prev.map(r => r.id === id ? { ...r, active: nextActive, updatedAt: new Date().toISOString() } : r)
+    );
+    addAuditLog(
+      nextActive ? "Reativação de Motivo" : "Desativação de Motivo",
+      `Motivo de cancelamento "${target.name}" foi ${nextActive ? "reativado" : "desativado"}.`
+    );
+    return { success: true, active: nextActive };
+  };
+
+  const deleteCancelReason = (id) => {
+    if (!isAdmin) return { success: false, error: "Apenas administradores podem excluir motivos de cancelamento." };
+    const target = cancelReasons.find(r => r.id === id);
+    if (!target) return { success: false, error: "Motivo não encontrado." };
+    const deleteCheck = canDeleteCancellationReason(target, event.activities);
+    if (!deleteCheck.canDelete) {
+      return { success: false, error: deleteCheck.message };
+    }
+    setCancelReasons(prev => prev.filter(r => r.id !== id));
+    addAuditLog("Exclusão de Motivo", `Motivo de cancelamento "${target.name}" foi removido do cadastro.`);
+    return { success: true };
   };
 
   const sendAccessInvite = (email, memberName) => {
@@ -618,6 +700,9 @@ export function AppProvider({ children }) {
         replaceVolunteerInRoster,
         toggleChecklistItem,
         addCancelReason,
+        updateCancelReason,
+        toggleCancelReasonStatus,
+        deleteCancelReason,
         sendAccessInvite,
         designateLiturgyLeader,
         addAuditLog

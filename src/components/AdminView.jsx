@@ -11,8 +11,12 @@ import {
   Send,
   Plus,
   Trash2,
-  Edit2
+  Edit2,
+  Check,
+  X,
+  Power
 } from 'lucide-react';
+import { isReasonUsedInActivities } from '../utils/cancellationReasonService';
 
 export default function AdminView() {
   const {
@@ -24,6 +28,9 @@ export default function AdminView() {
     currentUser,
     isAdmin,
     addCancelReason,
+    updateCancelReason,
+    toggleCancelReasonStatus,
+    deleteCancelReason,
     sendAccessInvite,
     designateLiturgyLeader,
     event,
@@ -41,6 +48,11 @@ export default function AdminView() {
 
   // Formulário de Motivo de Cancelamento (PRD 7.3 & Cenário M12)
   const [newReasonText, setNewReasonText] = useState('');
+  const [reasonError, setReasonError] = useState('');
+  const [reasonSuccess, setReasonSuccess] = useState('');
+  const [editingReasonId, setEditingReasonId] = useState(null);
+  const [editingReasonText, setEditingReasonText] = useState('');
+  const [editingError, setEditingError] = useState('');
 
   // Designação da Liderança da Liturgia (PRD 3.2 & Cenário M05)
   const [selectedLiturgyLeader, setSelectedLiturgyLeader] = useState(event.liturgyLeaderId);
@@ -76,10 +88,66 @@ export default function AdminView() {
 
   const handleAddReason = (e) => {
     e.preventDefault();
-    if (!newReasonText.trim()) return;
+    setReasonError('');
+    setReasonSuccess('');
+    const res = addCancelReason(newReasonText);
+    if (!res.success) {
+      setReasonError(res.error);
+    } else {
+      setNewReasonText('');
+      setReasonSuccess('Motivo cadastrado com sucesso!');
+      setTimeout(() => setReasonSuccess(''), 3000);
+    }
+  };
 
-    addCancelReason(newReasonText.trim());
-    setNewReasonText('');
+  const handleStartEditReason = (reason) => {
+    setEditingReasonId(reason.id);
+    setEditingReasonText(reason.name);
+    setEditingError('');
+    setReasonError('');
+  };
+
+  const handleSaveEditReason = (id) => {
+    setEditingError('');
+    const res = updateCancelReason(id, editingReasonText);
+    if (!res.success) {
+      setEditingError(res.error);
+    } else {
+      setEditingReasonId(null);
+      setEditingReasonText('');
+      setReasonSuccess('Motivo alterado com sucesso!');
+      setTimeout(() => setReasonSuccess(''), 3000);
+    }
+  };
+
+  const handleCancelEditReason = () => {
+    setEditingReasonId(null);
+    setEditingReasonText('');
+    setEditingError('');
+  };
+
+  const handleToggleReasonStatus = (id) => {
+    setReasonError('');
+    setReasonSuccess('');
+    const res = toggleCancelReasonStatus(id);
+    if (!res.success) {
+      setReasonError(res.error);
+    } else {
+      setReasonSuccess(res.active ? 'Motivo reativado com sucesso!' : 'Motivo desativado.');
+      setTimeout(() => setReasonSuccess(''), 3000);
+    }
+  };
+
+  const handleDeleteReason = (id) => {
+    setReasonError('');
+    setReasonSuccess('');
+    const res = deleteCancelReason(id);
+    if (!res.success) {
+      setReasonError(res.error);
+    } else {
+      setReasonSuccess('Motivo excluído com sucesso.');
+      setTimeout(() => setReasonSuccess(''), 3000);
+    }
   };
 
   const handleDesignateLeader = () => {
@@ -267,18 +335,42 @@ export default function AdminView() {
             </h2>
             <p className="tab-sec-desc">
               Conforme o <strong>PRD 7.3 e Cenário M12</strong>, durante a execução do culto o cancelamento de uma
-              atividade exige motivo pré-cadastrado na Web. O mobile não permite cadastrar motivos na hora da emergência.
+              atividade exige motivo pré-cadastrado na Web pelo administrador. O mobile ou tela operacional não permite cadastrar motivos na hora da emergência.
             </p>
+
+            {reasonError && (
+              <div className="alert alert-danger" style={{ marginBottom: '14px', padding: '10px 12px', display: 'flex', alignItems: 'center', gap: '8px', fontSize: '13px', background: 'rgba(239, 68, 68, 0.1)', color: '#ef4444', borderRadius: '6px' }}>
+                <AlertCircle size={16} />
+                <span>{reasonError}</span>
+              </div>
+            )}
+
+            {reasonSuccess && (
+              <div className="alert alert-success" style={{ marginBottom: '14px', padding: '10px 12px', display: 'flex', alignItems: 'center', gap: '8px', fontSize: '13px', background: 'rgba(16, 185, 129, 0.1)', color: '#10b981', borderRadius: '6px' }}>
+                <CheckCircle2 size={16} />
+                <span>{reasonSuccess}</span>
+              </div>
+            )}
 
             <form onSubmit={handleAddReason}>
               <div className="form-group">
-                <label className="form-label">Descrição do Motivo Pré-Aprovado:</label>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px' }}>
+                  <label className="form-label" style={{ margin: 0 }}>Descrição do Motivo Pré-Aprovado:</label>
+                  <span style={{ fontSize: '11px', color: newReasonText.length > 120 ? '#ef4444' : 'var(--text-muted)' }}>
+                    {newReasonText.length}/120
+                  </span>
+                </div>
                 <input
                   type="text"
+                  id="new-cancel-reason-input"
                   className="form-input"
                   placeholder="Ex: Falha no gerador de energia..."
                   value={newReasonText}
-                  onChange={e => setNewReasonText(e.target.value)}
+                  maxLength={120}
+                  onChange={e => {
+                    setNewReasonText(e.target.value);
+                    if (reasonError) setReasonError('');
+                  }}
                   disabled={isControlsDisabled}
                   required
                 />
@@ -286,8 +378,9 @@ export default function AdminView() {
 
               <button
                 type="submit"
+                id="btn-add-cancel-reason"
                 className="btn btn-primary"
-                disabled={isControlsDisabled}
+                disabled={isControlsDisabled || !newReasonText.trim()}
               >
                 <Plus size={15} /> Cadastrar Novo Motivo
               </button>
@@ -295,15 +388,160 @@ export default function AdminView() {
           </div>
 
           <div className="card">
-            <h2 className="tab-sec-title">Motivos Ativos para a Liturgia ({cancelReasons.length})</h2>
-            <div className="reasons-list">
-              {cancelReasons.map((reason, idx) => (
-                <div key={idx} className="reason-item-row">
-                  <span>{reason}</span>
-                  <span className="badge badge-primary">Ativo</span>
-                </div>
-              ))}
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
+              <h2 className="tab-sec-title" style={{ margin: 0 }}>
+                Motivos de Cancelamento ({cancelReasons.length})
+              </h2>
+              <span className="badge badge-primary">
+                {cancelReasons.filter(r => r.active !== false).length} Ativos
+              </span>
             </div>
+
+            {cancelReasons.length === 0 ? (
+              <div style={{ textAlign: 'center', padding: '30px 10px', color: 'var(--text-muted)' }}>
+                <Tag size={32} style={{ opacity: 0.4, marginBottom: '8px' }} />
+                <p>Nenhum motivo cadastrado para esta igreja.</p>
+              </div>
+            ) : (
+              <div className="reasons-list">
+                {cancelReasons.map((reason, idx) => {
+                  const isEditing = editingReasonId === reason.id;
+                  const isUsed = isReasonUsedInActivities(reason, event.activities);
+                  const isActive = reason.active !== false;
+
+                  return (
+                    <div
+                      key={reason.id || idx}
+                      id={`reason-item-${idx}`}
+                      className="reason-item-row"
+                      style={{
+                        opacity: isActive ? 1 : 0.65,
+                        borderColor: isEditing ? 'var(--primary)' : undefined,
+                        flexDirection: 'column',
+                        alignItems: 'stretch',
+                        gap: '8px'
+                      }}
+                    >
+                      {isEditing ? (
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                          <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+                            <input
+                              type="text"
+                              id={`edit-reason-input-${idx}`}
+                              className="form-input"
+                              value={editingReasonText}
+                              maxLength={120}
+                              onChange={e => setEditingReasonText(e.target.value)}
+                              style={{ flex: 1, fontSize: '13px', padding: '6px 10px' }}
+                              autoFocus
+                            />
+                            <button
+                              type="button"
+                              id={`btn-save-reason-${idx}`}
+                              className="btn btn-primary"
+                              onClick={() => handleSaveEditReason(reason.id)}
+                              style={{ padding: '6px 10px', fontSize: '12px' }}
+                              title="Salvar alteração"
+                            >
+                              <Check size={14} /> Salvar
+                            </button>
+                            <button
+                              type="button"
+                              id={`btn-cancel-edit-reason-${idx}`}
+                              className="btn btn-secondary"
+                              onClick={handleCancelEditReason}
+                              style={{ padding: '6px 10px', fontSize: '12px' }}
+                              title="Cancelar edição"
+                            >
+                              <X size={14} />
+                            </button>
+                          </div>
+                          {editingError && (
+                            <span style={{ fontSize: '12px', color: '#ef4444' }}>{editingError}</span>
+                          )}
+                        </div>
+                      ) : (
+                        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '8px' }}>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flex: 1, minWidth: 0 }}>
+                            <span
+                              style={{
+                                fontWeight: 500,
+                                textDecoration: isActive ? 'none' : 'line-through',
+                                color: isActive ? 'var(--text-primary)' : 'var(--text-muted)'
+                              }}
+                            >
+                              {reason.name}
+                            </span>
+                            <div style={{ display: 'flex', gap: '4px', flexWrap: 'wrap' }}>
+                              <span className={`badge ${isActive ? 'badge-primary' : 'badge-pending'}`}>
+                                {isActive ? 'Ativo' : 'Inativo'}
+                              </span>
+                              {isUsed && (
+                                <span className="badge badge-live" title="Utilizado em registros de atividades do histórico">
+                                  Em Histórico
+                                </span>
+                              )}
+                            </div>
+                          </div>
+
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                            <button
+                              type="button"
+                              id={`btn-edit-reason-${idx}`}
+                              className="btn btn-secondary"
+                              onClick={() => handleStartEditReason(reason)}
+                              style={{ padding: '4px 8px', fontSize: '11px' }}
+                              title="Alterar descrição do motivo"
+                              disabled={isControlsDisabled}
+                            >
+                              <Edit2 size={12} />
+                            </button>
+
+                            <button
+                              type="button"
+                              id={`btn-toggle-reason-${idx}`}
+                              className="btn btn-secondary"
+                              onClick={() => handleToggleReasonStatus(reason.id)}
+                              style={{
+                                padding: '4px 8px',
+                                fontSize: '11px',
+                                color: isActive ? '#f59e0b' : '#10b981'
+                              }}
+                              title={isActive ? 'Desativar motivo (preserva histórico)' : 'Reativar motivo para seleção'}
+                              disabled={isControlsDisabled}
+                            >
+                              <Power size={12} style={{ marginRight: '4px' }} />
+                              {isActive ? 'Desativar' : 'Ativar'}
+                            </button>
+
+                            <button
+                              type="button"
+                              id={`btn-delete-reason-${idx}`}
+                              className="btn btn-secondary"
+                              onClick={() => handleDeleteReason(reason.id)}
+                              style={{
+                                padding: '4px 8px',
+                                fontSize: '11px',
+                                color: isUsed ? 'var(--text-muted)' : '#ef4444',
+                                opacity: isUsed ? 0.5 : 1
+                              }}
+                              title={
+                                isUsed
+                                  ? 'Motivo utilizado em histórico não pode ser excluído; desative-o em vez de excluir'
+                                  : 'Excluir motivo não utilizado'
+                              }
+                              disabled={isControlsDisabled}
+                            >
+                              <Trash2 size={12} />
+                            </button>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            )}
           </div>
         </div>
       )}

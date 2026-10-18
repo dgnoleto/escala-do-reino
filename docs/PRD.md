@@ -203,6 +203,14 @@ Corrigir o horário real de início recalcula a contagem aplicável, preservando
 
 O líder da liturgia seleciona **Cancelar atividade**, escolhe obrigatoriamente um motivo previamente cadastrado na web e confirma. Exemplos de motivos: falha técnica, falta de energia ou acidente. A lista é configurável; não exige relato pessoal detalhado, justificativa livre nem cadastro de motivo na tela operacional.
 
+**Decisões consolidadas de produto e critérios de aceitação (Issue #26):**
+- **Configuração administrativa na Web (CA01):** a lista de motivos de cancelamento é gerenciada exclusivamente na interface Web por administradores autorizados da igreja. O sistema pode fornecer sugestões/exemplos iniciais, mas estes não são fixos nem obrigatórios: o administrador pode renomear, desativar ou excluir motivos, bem como cadastrar novos motivos customizados com descrição de 1 a 120 caracteres normalizada em Unicode NFC.
+- **Operação litúrgica estrita (CA02):** a tela de cancelamento no console operacional/móvel (M12) consome exclusivamente os motivos ativos pré-cadastrados da igreja. Não há mecanismo de criação, edição ou gerenciamento administrativo de motivos na tela operacional de culto. Se não houver nenhum motivo ativo cadastrado na igreja, o cancelamento é bloqueado com alerta explicativo orientando o contato com a administração da igreja.
+- **Preservação do histórico e interpretação (CA03):** ao cancelar uma atividade, o sistema registra tanto o snapshot textual do nome do motivo no momento do cancelamento quanto o identificador de referência (`cancellation_reason_id`). A alteração do texto de um motivo ou sua desativação não corrompe nem altera o histórico de cancelamentos anteriores. A exclusão física de um motivo que já foi utilizado em atividades passadas é bloqueada (na interface e no banco de dados via código `23503`), orientando o administrador a desativá-lo para que não seja mais ofertado em novas operações.
+- **Sem justificativa aberta ou relato pessoal (CA04):** a interface de cancelamento não exige nem permite campos de texto livre, relato pessoal ou justificativa descritiva, resguardando a objetividade e a privacidade litúrgica.
+
+Contratos técnicos e detalhes de implementação em [Cadastro e Manutenção de Motivos de Cancelamento](CADASTRO-MOTIVOS-CANCELAMENTO.md).
+
 O cancelamento encerra a contagem e identifica a atividade como cancelada, preservando início, fim real, duração realizada, eventual excesso, motivo, responsável pela atividade e autor do registro. Não retoma a etapa anterior e não inicia a próxima. Editar ou retirar uma atividade futura não altera a contagem da atividade atual.
 
 Se o ocorrido não puder ser registrado por falha de conexão, o líder registra depois o horário em que a atividade realmente parou. Guardar também o horário de registro e seu autor, para não atribuir o período sem conexão à execução da atividade.

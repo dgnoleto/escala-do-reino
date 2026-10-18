@@ -138,12 +138,12 @@ export const INITIAL_TEAMS = [
 ];
 
 export const INITIAL_CANCEL_REASONS = [
-  "Falha técnica de equipamento / som",
-  "Falta de energia elétrica",
-  "Imprevisto de saúde / emergência",
-  "Ajuste litúrgico de última hora pela liderança",
-  "Tempo do culto excedido / encurtamento",
-  "Ausência do participante sem substituto viável"
+  { id: "cr-1", name: "Falha técnica de equipamento / som", active: true },
+  { id: "cr-2", name: "Falta de energia elétrica", active: true },
+  { id: "cr-3", name: "Imprevisto de saúde / emergência", active: true },
+  { id: "cr-4", name: "Ajuste litúrgico de última hora pela liderança", active: true },
+  { id: "cr-5", name: "Tempo do culto excedido / encurtamento", active: true },
+  { id: "cr-6", name: "Ausência do participante sem substituto viável", active: true }
 ];
 
 export const INITIAL_ACCESS_INVITES = [
