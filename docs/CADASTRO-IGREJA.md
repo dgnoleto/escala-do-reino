@@ -5,22 +5,24 @@ Incremento solicitado pelo responsável em 18/10/2026. Ensaio SQL S01–S22 apro
 ## Comportamento e hierarquia
 
 - A tela inicial oferece **Dados da Igreja** exclusivamente ao administrador ativo da igreja selecionada. Acesso de membro e liderança sem `is_admin` não autorizam consultar nem alterar esse cadastro.
-- A tela abre os dados existentes e permite corrigir endereço, link do Google Maps e adicionar, substituir ou remover a logo. Nome e fuso aparecem para identificar o contexto; este incremento não altera nome, fuso, política de duração ou administração.
+- A tela abre os dados existentes e permite corrigir o nome da igreja (conforme Issue #22), endereço, link do Google Maps e adicionar, substituir ou remover a logo. O fuso horário aparece para identificar o contexto; este incremento não altera fuso horário, política de duração ou administração.
 - A logo aparece também no cabeçalho da igreja para pessoas com acesso autorizado. Isso libera somente a identidade visual, sem abrir o cadastro administrativo a membros.
 - Mantém o fluxo separado **Criar minha igreja**, seus requisitos de elegibilidade e a salvaguarda do último administrador.
 - Perda de permissão impede leitura/escrita no servidor; troca de sessão ou igreja descarta respostas antigas. Outra edição exige recarregar a versão atual, sem sobrescrita silenciosa.
 
 ## Contratos e segurança
 
-`017_church_settings.sql` cria:
+`017_church_settings.sql` e a evolução `019_church_name_update.sql` criam/atualizam:
 
 | Recurso | Regra |
 |---|---|
-| `get_church_settings(church_id)` | Somente admin ativo, com membro ativo, onboarding concluído, e-mail confirmado e conta não excluída, anônima ou bloqueada. |
-| `update_church_settings(church_id, command_id, expected_revision, address, google_maps_url, logo_path)` | Mesma autorização, derivada de `auth.uid()`, revalidada após locks; atualização, auditoria e recibo na mesma transação. |
+| `get_church_settings(church_id)` | Somente admin ativo, com membro ativo, onboarding concluído, e-mail confirmado e conta não excluída, anônima ou bloqueada. Retorna nome, timezone, address, google_maps_url, logo_path e profile_revision. |
+| `update_church_settings(church_id, command_id, expected_revision, name, address, google_maps_url, logo_path)` | Mesma autorização, derivada de `auth.uid()`, revalidada após locks; atualização de nome, endereço, maps e logo, com auditoria de `previous_name`/`new_name` e recibo na mesma transação. Sobrecarga retrocompatível de 6 parâmetros mantida. |
 | `get_church_logo(church_id)` | Membro autorizado consulta somente a referência da logo atual. |
 | `can_access_church_logo(name, write)` | Helper booleano para RLS do Storage; upload exige administração, leitura exige acesso à igreja. Membros leem somente a logo atualmente referenciada. |
-| `church_settings_receipts` | Tabela privada, sem grants de cliente, com parâmetros e valores anteriores para rastreabilidade. |
+| `church_settings_receipts` | Tabela privada, sem grants de cliente, com parâmetros e valores anteriores para rastreabilidade e idempotência. |
+
+Nome da igreja: obrigatório, de 1 a 160 caracteres após normalização canônica em NFC e remoção de espaços nas extremidades (trim). Validação estrita no cliente e no servidor. Preserva o ID da igreja, vínculos litúrgicos, equipes e histórico.
 
 Endereço: opcional, até 500 caracteres. Maps: opcional, HTTPS, hosts Google Maps permitidos, sem credenciais/porta personalizada e até 1.024 caracteres. Campo vazio remove o valor. Não há geocodificação nem API Google paga.
 

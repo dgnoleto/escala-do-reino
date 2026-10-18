@@ -594,10 +594,10 @@ export function AuthProvider({ children }) {
   /**
    * Recarrega o vínculo diretamente para uma igreja sem o efeito colateral de registrar confirmação de criação.
    */
-  const reloadChurchAccess = useCallback(async (preferredChurchId = null) => {
+  const reloadChurchAccess = useCallback(async (preferredChurchId = null, { isBackground = false } = {}) => {
     const uid = currentUserIdRef.current;
     if (!uid) return { success: false, error: 'Usuário não autenticado.' };
-    return await fetchChurchAccess(uid, { isBackground: false, preferredChurchId });
+    return await fetchChurchAccess(uid, { isBackground, preferredChurchId });
   }, [fetchChurchAccess]);
 
   /**

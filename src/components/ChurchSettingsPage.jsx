@@ -18,14 +18,17 @@ function SettingsSkeleton() {
     <div className="church-settings-form" role="status" aria-live="polite">
       <span className="church-settings-sr-only">Carregando dados da igreja…</span>
       <div className="church-settings-identity" aria-hidden="true">
-        {[0, 1].map((i) => (
-          <div key={i} className="church-settings-identity-item">
-            <span className="church-settings-skeleton church-settings-skeleton--dt" />
-            <span className="church-settings-skeleton church-settings-skeleton--dd" />
-          </div>
-        ))}
+        <div className="church-settings-identity-item">
+          <span className="church-settings-skeleton church-settings-skeleton--dt" />
+          <span className="church-settings-skeleton church-settings-skeleton--dd" />
+        </div>
       </div>
       <div className="church-settings-fieldset" aria-hidden="true">
+        <div className="form-group">
+          <span className="church-settings-skeleton church-settings-skeleton--label" />
+          <span className="church-settings-skeleton church-settings-skeleton--input" />
+          <span className="church-settings-skeleton church-settings-skeleton--hint" />
+        </div>
         <div className="form-group">
           <span className="church-settings-skeleton church-settings-skeleton--label" />
           <span className="church-settings-skeleton church-settings-skeleton--textarea" />
@@ -62,7 +65,7 @@ export default function ChurchSettingsPage(props) {
 }
 
 function ChurchSettingsForm({ onBack, auth }) {
-  const { session, sessionId, churchAccess, getAuthSnapshot } = auth;
+  const { session, sessionId, churchAccess, getAuthSnapshot, reloadChurchAccess } = auth;
   const userId = session?.user?.id;
   const churchId = churchAccess?.church_id;
   const churchName = churchAccess?.church_name || '';
@@ -82,6 +85,7 @@ function ChurchSettingsForm({ onBack, auth }) {
   const [loadState, setLoadState] = useState(allowed ? 'loading' : 'idle');
   const [loadError, setLoadError] = useState(null);
   const [refreshing, setRefreshing] = useState(false);
+  const [name, setName] = useState('');
   const [address, setAddress] = useState('');
   const [mapsUrl, setMapsUrl] = useState('');
   const [logoFile, setLogoFile] = useState(null);
@@ -173,6 +177,7 @@ function ChurchSettingsForm({ onBack, auth }) {
       }
       setProfile(row);
       setNeedsReload(false);
+      setName(row.name || '');
       setAddress(row.address || '');
       setMapsUrl(row.google_maps_url || '');
       setLogoFile(null);
@@ -200,6 +205,7 @@ function ChurchSettingsForm({ onBack, auth }) {
       setLoadState('loading');
       setLoadError(null);
       setRefreshing(false);
+      setName('');
       setAddress('');
       setMapsUrl('');
       setLogoFile(null);
@@ -253,14 +259,24 @@ function ChurchSettingsForm({ onBack, auth }) {
     }
     clearCommand(command);
     const reloaded = await loadProfile();
-    if (isCurrent() && reloaded) setSuccess(true);
+    if (isCurrent() && reloaded) {
+      setSuccess(true);
+      // CA03: Atualiza o contexto da aplicação para que o cabeçalho e demais telas reflitam o novo nome imediatamente.
+      if (typeof reloadChurchAccess === 'function') {
+        try {
+          await reloadChurchAccess(churchId, { isBackground: true });
+        } catch (err) {
+          console.warn('[ChurchSettingsPage] Falha ao recarregar contexto:', err);
+        }
+      }
+    }
   }
 
   async function save(event) {
     event.preventDefault();
     if (busyRef.current || !isCurrent() || !online || !profile || loadState !== 'ready' || refreshing
       || pending || storageError || needsReload) return;
-    const { errors, data } = validateChurchSettings({ address, googleMapsUrl: mapsUrl });
+    const { errors, data } = validateChurchSettings({ name, address, googleMapsUrl: mapsUrl });
     if (Object.keys(errors).length) { setError(Object.values(errors).join(' ')); return; }
     if (logoFile && validateChurchLogo(logoFile)) { setError(validateChurchLogo(logoFile)); return; }
     busyRef.current = true;
@@ -291,7 +307,7 @@ function ChurchSettingsForm({ onBack, auth }) {
       const commandId = crypto.randomUUID();
       const command = { userId, churchId, commandId, params: {
         p_church_id: churchId, p_command_id: commandId, p_expected_revision: profile.profile_revision,
-        p_address: data.address, p_google_maps_url: data.googleMapsUrl, p_logo_path: logoPath || null,
+        p_name: data.name, p_address: data.address, p_google_maps_url: data.googleMapsUrl, p_logo_path: logoPath || null,
       } };
       storage.setItem(key, JSON.stringify(command));
       setPending(command);
@@ -426,7 +442,7 @@ function ChurchSettingsForm({ onBack, auth }) {
           <div className="church-settings-card-header">
             <div>
               <h2 id="church-settings-section-title" className="church-settings-section-title">Cadastro da igreja</h2>
-              <p className="church-settings-section-subtitle">Atualize o endereço, a localização e a logo da sua igreja.</p>
+              <p className="church-settings-section-subtitle">Atualize o nome, o endereço, a localização e a logo da sua igreja.</p>
             </div>
             {canReload && (
               <button
@@ -476,10 +492,6 @@ function ChurchSettingsForm({ onBack, auth }) {
             <form className="church-settings-form" onSubmit={save}>
               <dl className="church-settings-identity">
                 <div className="church-settings-identity-item">
-                  <dt>Igreja</dt>
-                  <dd>{profile.name}</dd>
-                </div>
-                <div className="church-settings-identity-item">
                   <dt>Fuso horário</dt>
                   <dd>{profile.timezone}</dd>
                 </div>
@@ -494,6 +506,24 @@ function ChurchSettingsForm({ onBack, auth }) {
 
               <fieldset className="church-settings-fieldset" disabled={formLocked}>
                 <legend className="church-settings-sr-only">Dados editáveis da igreja</legend>
+
+                <div className="form-group">
+                  <label htmlFor="church-settings-name" className="form-label">Nome da igreja</label>
+                  <input
+                    id="church-settings-name"
+                    className="form-input"
+                    type="text"
+                    value={name}
+                    maxLength={160}
+                    required
+                    placeholder="Nome da igreja"
+                    onChange={(e) => { setName(e.target.value); setSuccess(false); }}
+                  />
+                  <div className="church-settings-hint">
+                    <span>Obrigatório</span>
+                    <span>{name.length}/160 caracteres</span>
+                  </div>
+                </div>
 
                 <div className="form-group">
                   <label htmlFor="church-settings-address" className="form-label">Endereço da igreja</label>

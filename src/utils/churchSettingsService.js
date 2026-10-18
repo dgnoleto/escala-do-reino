@@ -2,8 +2,23 @@ export const CHURCH_LOGO_BUCKET = 'church-logos';
 export const MAX_LOGO_BYTES = 2 * 1024 * 1024;
 const LOGO_TYPES = { 'image/png': 'png', 'image/jpeg': 'jpg', 'image/webp': 'webp' };
 
+export function normalizeNfcText(value) {
+  if (typeof value !== 'string') return '';
+  return value.normalize('NFC').trim();
+}
+
 export function validateChurchSettings(input = {}) {
   const errors = {};
+  let cleanName = null;
+  if (input.name !== undefined) {
+    cleanName = normalizeNfcText(input.name || '');
+    if (!cleanName) {
+      errors.name = 'Nome da igreja é obrigatório.';
+    } else if (cleanName.length > 160) {
+      errors.name = 'Nome da igreja deve ter entre 1 e 160 caracteres.';
+    }
+  }
+
   const address = (input.address || '').trim();
   const googleMapsUrl = (input.googleMapsUrl || '').trim();
   if (address.length > 500) errors.address = 'O endereço deve ter até 500 caracteres.';
@@ -19,7 +34,14 @@ export function validateChurchSettings(input = {}) {
       errors.googleMapsUrl = 'Informe um link HTTPS válido do Google Maps, com até 1.024 caracteres.';
     }
   }
-  return { errors, data: { address: address || null, googleMapsUrl: googleMapsUrl || null } };
+  return {
+    errors,
+    data: {
+      ...(cleanName !== null ? { name: cleanName } : {}),
+      address: address || null,
+      googleMapsUrl: googleMapsUrl || null,
+    },
+  };
 }
 
 export function validateChurchLogo(file) {
@@ -51,8 +73,10 @@ export function settingsErrorMessage(error) {
   if (error?.code === '42501' || error?.code === '28000') return 'Você não tem mais permissão administrativa nesta igreja.';
   if (error?.code === '40001') return 'Outra pessoa atualizou o cadastro. Recarregue os dados antes de editar novamente.';
   if (error?.code === 'PGRST202' || error?.code === '42883') return 'A edição do cadastro ainda não foi habilitada neste ambiente.';
-  if (error?.code === '23505') return 'Este comando já foi usado com outros dados. Recarregue o cadastro.';
-  if (error?.code === '22023' || error?.code === '23514') return 'Confira o endereço, o link do Google Maps e a imagem selecionada.';
+  if (error?.code === '22004' || error?.code === '23514' || error?.code === '22023') {
+    if (error?.message?.includes('Nome da igreja')) return 'Nome da igreja deve ter entre 1 e 160 caracteres.';
+    return 'Confira o nome, o endereço, o link do Google Maps e a imagem selecionada.';
+  }
   return 'Não foi possível confirmar o salvamento. Verifique o resultado antes de fazer outra alteração.';
 }
 

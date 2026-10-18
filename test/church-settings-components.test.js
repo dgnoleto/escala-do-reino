@@ -44,6 +44,15 @@ function setup({ admin = true, rpc } = {}) {
     getAuthSnapshot: () => ({ userId: globalThis.__settingsAuth.session?.user?.id,
       sessionId: globalThis.__settingsAuth.sessionId, churchId: globalThis.__settingsAuth.churchAccess?.church_id,
       churchAccess: globalThis.__settingsAuth.churchAccess }),
+    reloadChurchAccess: async (targetChurchId, opts) => {
+      if (globalThis.__settingsAuth.churchAccess) {
+        globalThis.__settingsAuth.churchAccess = {
+          ...globalThis.__settingsAuth.churchAccess,
+          church_name: profile.name,
+        };
+      }
+      return { success: true };
+    },
   };
   globalThis.__settingsStorage = {
     upload: async (...args) => { storageCalls.push(args); return { error: null }; },
@@ -56,7 +65,13 @@ function setup({ admin = true, rpc } = {}) {
     if (name === 'get_church_logo') return { data: [{ logo_path: null }], error: null };
     if (name === 'check_church_creation_eligibility') return { data: [{ eligible: false }], error: null };
     if (name === 'update_church_settings') {
-      Object.assign(profile, { address: params.p_address, google_maps_url: params.p_google_maps_url, logo_path: params.p_logo_path, profile_revision: params.p_expected_revision + 1 });
+      Object.assign(profile, {
+        name: params.p_name !== undefined ? params.p_name : profile.name,
+        address: params.p_address,
+        google_maps_url: params.p_google_maps_url,
+        logo_path: params.p_logo_path,
+        profile_revision: params.p_expected_revision + 1,
+      });
       return { data: [{ church_id: churchId, command_id: params.p_command_id, profile_revision: profile.profile_revision }], error: null };
     }
     throw new Error(`Unexpected RPC ${name}`);
@@ -119,6 +134,7 @@ test('salvamento retém o comando antes do RPC e confirma apenas recibo correspo
     await act(async () => renderer.root.findByProps({ id: 'church-settings-address' }).props.onChange({ target: { value: 'Rua corrigida' } }));
     await submit();
     const command = calls.find((c) => c.name === 'update_church_settings').params;
+    assert.equal(command.p_name, 'Igreja Teste');
     assert.equal(command.p_address, 'Rua corrigida');
     assert.equal(command.p_expected_revision, 0);
     assert.equal(command.p_user_id, undefined);
@@ -376,3 +392,95 @@ test('nova sessão não herda erro de acesso nem logo pendente da sessão anteri
     assert.equal(renderer.root.findByType('fieldset').props.disabled, false);
   } finally { await unmount(); }
 });
+
+test('CA02: campo de nome editável valida obrigatoriedade, trim, normalização NFC e limite de 160 caracteres', async () => {
+  try {
+    const { calls } = setup();
+    await mount();
+    const nameInput = renderer.root.findByProps({ id: 'church-settings-name' });
+    assert.equal(nameInput.props.value, 'Igreja Teste');
+
+    // Validação unitária direta no helper de serviço
+    assert.ok(validateChurchSettings({ name: '' }).errors.name);
+    assert.ok(validateChurchSettings({ name: '   ' }).errors.name);
+    assert.ok(validateChurchSettings({ name: 'A'.repeat(161) }).errors.name);
+    assert.equal(validateChurchSettings({ name: '  Comunidade do Reino  ' }).data.name, 'Comunidade do Reino');
+
+    // Submissão com nome vazio bloqueia envio no formulário
+    await act(async () => nameInput.props.onChange({ target: { value: '   ' } }));
+    await submit();
+    assert.match(text(), /Nome da igreja é obrigatório/);
+    assert.equal(calls.some((c) => c.name === 'update_church_settings'), false);
+
+    // Submissão com mais de 160 caracteres bloqueia envio
+    await act(async () => nameInput.props.onChange({ target: { value: 'A'.repeat(161) } }));
+    await submit();
+    assert.match(text(), /não pode exceder 160 caracteres|deve ter entre 1 e 160 caracteres/);
+    assert.equal(calls.some((c) => c.name === 'update_church_settings'), false);
+  } finally { await unmount(); }
+});
+
+test('CA03: salvamento com sucesso atualiza nome na tela e sincroniza contexto global da igreja', async () => {
+  try {
+    const { calls } = setup();
+    await mount();
+    const nameInput = renderer.root.findByProps({ id: 'church-settings-name' });
+    await act(async () => nameInput.props.onChange({ target: { value: '  Nova Igreja Betel  ' } }));
+    await submit();
+
+    const command = calls.find((c) => c.name === 'update_church_settings').params;
+    assert.equal(command.p_name, 'Nova Igreja Betel');
+    assert.match(text(), /Alterações salvas com sucesso/);
+
+    // Contexto global (churchAccess.church_name) atualizado sem relogin
+    assert.equal(globalThis.__settingsAuth.churchAccess.church_name, 'Nova Igreja Betel');
+    assert.equal(renderer.root.findByProps({ id: 'church-settings-name' }).props.value, 'Nova Igreja Betel');
+  } finally { await unmount(); }
+});
+
+test('CA04: saída da tela sem salvar descarta edição do nome e mantém valor anterior', async () => {
+  try {
+    setup();
+    await mount();
+    const nameInput = renderer.root.findByProps({ id: 'church-settings-name' });
+    await act(async () => nameInput.props.onChange({ target: { value: 'Nome Não Salvo' } }));
+    assert.equal(renderer.root.findByProps({ id: 'church-settings-name' }).props.value, 'Nome Não Salvo');
+
+    // Sair sem submeter (desmontar e remontar simulando navegação de volta)
+    await unmount();
+    await mount();
+    assert.equal(renderer.root.findByProps({ id: 'church-settings-name' }).props.value, 'Igreja Teste');
+  } finally { await unmount(); }
+});
+
+test('CA05: editar apenas o nome preserva endereço, link do maps e logo anteriores', async () => {
+  try {
+    const { calls } = setup();
+    await mount();
+    const nameInput = renderer.root.findByProps({ id: 'church-settings-name' });
+    await act(async () => nameInput.props.onChange({ target: { value: 'Igreja Central' } }));
+    await submit();
+
+    const command = calls.find((c) => c.name === 'update_church_settings').params;
+    assert.equal(command.p_name, 'Igreja Central');
+    assert.equal(command.p_address, original.address);
+    assert.equal(command.p_google_maps_url, original.google_maps_url);
+    assert.equal(command.p_logo_path, original.logo_path);
+  } finally { await unmount(); }
+});
+
+test('CA06: concorrência na edição do nome com revisão desatualizada bloqueia formulário e exige recarga', async () => {
+  try {
+    setup({ rpc: (name) => name === 'update_church_settings' ? { error: { code: '40001' } } : undefined });
+    await mount();
+    await act(async () => renderer.root.findByProps({ id: 'church-settings-name' }).props.onChange({ target: { value: 'Igreja Concorrente' } }));
+    await submit();
+
+    assert.match(text(), /Outra pessoa atualizou/);
+    assert.equal(renderer.root.findByType('fieldset').props.disabled, true);
+    await click('Recarregar dados');
+    assert.equal(renderer.root.findByType('fieldset').props.disabled, false);
+    assert.equal(renderer.root.findByProps({ id: 'church-settings-name' }).props.value, 'Igreja Teste');
+  } finally { await unmount(); }
+});
+
