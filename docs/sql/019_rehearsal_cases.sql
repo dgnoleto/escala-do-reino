@@ -133,6 +133,71 @@ begin
   -- Replay de comando anterior também é bloqueado após perda de privilégio
   perform pg_temp.name_as(1, q, '42501');
 
-  raise notice 'N01–N11 aprovados com sucesso.';
+  -- N12 (Transição 017 -> 019): Replay de comando de 6 parâmetros com recibo legado 017 (sem chave 'name' em params)
+  insert into app_private.church_settings_receipts(user_id, command_id, church_id, params, result)
+  values(
+    pg_temp.name_id(4),
+    pg_temp.name_id(1012),
+    pg_temp.name_id(100),
+    jsonb_build_object(
+      'church_id', pg_temp.name_id(100),
+      'expected_revision', 1,
+      'address', 'Rua Legada 017',
+      'google_maps_url', null,
+      'logo_path', null
+    ),
+    jsonb_build_object(
+      'profile_revision', 2,
+      'before', jsonb_build_object(
+        'address', 'Rua Anterior',
+        'google_maps_url', null,
+        'logo_path', null
+      )
+    )
+  );
+
+  -- Replay com os mesmos 6 parâmetros reconhece o recibo sem 23505
+  result := pg_temp.name_as(4, format('select to_jsonb(r) from public.update_church_settings(%L, %L, 1, %L, null, null) r',
+    pg_temp.name_id(100), pg_temp.name_id(1012), 'Rua Legada 017'));
+
+  if (result->>'profile_revision')::integer is distinct from 2 then
+    raise exception 'N12: Replay de recibo legado 017 falhou em retornar a revisão original.';
+  end if;
+
+  -- Reuso do mesmo ID de recibo legado com parâmetros divergentes é rejeitado (23505)
+  perform pg_temp.name_as(4, format('select to_jsonb(r) from public.update_church_settings(%L, %L, 1, %L, null, null) r',
+    pg_temp.name_id(100), pg_temp.name_id(1012), 'Rua Divergente 017'), '23505');
+
+  -- N13 (Idempotência de 6 parâmetros após renomeação posterior):
+  -- 1) Admin 4 executa comando de 6 parâmetros (revisão 2 -> 3)
+  result := pg_temp.name_as(4, format('select to_jsonb(r) from public.update_church_settings(%L, %L, 2, %L, null, null) r',
+    pg_temp.name_id(100), pg_temp.name_id(1013), 'Avenida Central, 1000'));
+  if (result->>'profile_revision')::integer is distinct from 3 then
+    raise exception 'N13: Comando de 6 parâmetros deveria resultar em profile_revision = 3.';
+  end if;
+
+  -- 2) Antes da confirmação ser recebida pelo cliente, a igreja é renomeada via 7 parâmetros (revisão 3 -> 4)
+  result := pg_temp.name_as(4, format('select to_jsonb(r) from public.update_church_settings(%L, %L, 3, %L, %L, null, null) r',
+    pg_temp.name_id(100), pg_temp.name_id(1014), 'Igreja Mais que Vencedora', 'Avenida Central, 1000'));
+  if (result->>'profile_revision')::integer is distinct from 4
+    or (select name from app_private.churches where id = pg_temp.name_id(100)) <> 'Igreja Mais que Vencedora' then
+    raise exception 'N13: Renomeação da igreja deveria resultar em profile_revision = 4.';
+  end if;
+
+  -- 3) Cliente do primeiro comando (6 parâmetros) reenvia a requisição após a renomeação.
+  -- O replay deve ser reconhecido com a revisão original (3), sem 23505, e sem alterar o novo nome da igreja.
+  result := pg_temp.name_as(4, format('select to_jsonb(r) from public.update_church_settings(%L, %L, 2, %L, null, null) r',
+    pg_temp.name_id(100), pg_temp.name_id(1013), 'Avenida Central, 1000'));
+  if (result->>'profile_revision')::integer is distinct from 3
+    or (select name from app_private.churches where id = pg_temp.name_id(100)) <> 'Igreja Mais que Vencedora'
+    or (select count(*) from app_private.church_settings_receipts where church_id = pg_temp.name_id(100) and command_id = pg_temp.name_id(1013)) <> 1 then
+    raise exception 'N13: Replay de 6 parâmetros falhou após renomeação posterior da igreja.';
+  end if;
+
+  -- 4) Reuso do ID do comando de 6 parâmetros com parâmetros divergentes é rejeitado (23505)
+  perform pg_temp.name_as(4, format('select to_jsonb(r) from public.update_church_settings(%L, %L, 2, %L, null, null) r',
+    pg_temp.name_id(100), pg_temp.name_id(1013), 'Avenida Central, 2000 Divergente'), '23505');
+
+  raise notice 'N01–N13 aprovados com sucesso.';
 end;
 $cases$;

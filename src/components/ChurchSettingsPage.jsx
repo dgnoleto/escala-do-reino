@@ -98,6 +98,9 @@ function ChurchSettingsForm({ onBack, auth }) {
   const [error, setError] = useState(null);
   const [forbidden, setForbidden] = useState(false);
   const [success, setSuccess] = useState(false);
+  const [syncWarning, setSyncWarning] = useState(false);
+  const [syncing, setSyncing] = useState(false);
+  const syncPendingRef = useRef(false);
   const [storageError, setStorageError] = useState(false);
   const [needsReload, setNeedsReload] = useState(false);
   const [online, setOnline] = useState(() => typeof navigator === 'undefined' || navigator.onLine !== false);
@@ -121,6 +124,35 @@ function ChurchSettingsForm({ onBack, auth }) {
       setProfile(null);
       setStoredLogo({ status: 'none', url: null });
       setLogoFile(null);
+    }
+  }
+
+  async function syncContext(targetChurchId = churchId) {
+    if (!isCurrent() || typeof reloadChurchAccess !== 'function') return false;
+    setSyncing(true);
+    try {
+      const res = await reloadChurchAccess(targetChurchId, { isBackground: true });
+      if (!isCurrent()) return false;
+      return Boolean(res?.success);
+    } catch (err) {
+      console.warn('[ChurchSettingsPage] Falha ao recarregar contexto:', err);
+      return false;
+    } finally {
+      if (isCurrent()) setSyncing(false);
+    }
+  }
+
+  async function retrySync() {
+    if (busyRef.current || !isCurrent() || !online) return;
+    const ok = await syncContext(churchId);
+    if (!isCurrent()) return;
+    if (ok) {
+      syncPendingRef.current = false;
+      setSyncWarning(false);
+      setSuccess(true);
+    } else {
+      setSuccess(false);
+      setSyncWarning(true);
     }
   }
 
@@ -185,6 +217,19 @@ function ChurchSettingsForm({ onBack, auth }) {
       setLoadState('ready');
       setError(null);
       loadStoredLogo(row.logo_path, seq);
+      if (syncPendingRef.current) {
+        const synced = await syncContext(churchId);
+        if (isCurrentLoad(seq)) {
+          if (synced) {
+            syncPendingRef.current = false;
+            setSyncWarning(false);
+            setSuccess(true);
+          } else {
+            setSuccess(false);
+            setSyncWarning(true);
+          }
+        }
+      }
       return true;
     } catch (err) {
       if (!isCurrentLoad(seq)) return;
@@ -211,6 +256,10 @@ function ChurchSettingsForm({ onBack, auth }) {
       setLogoFile(null);
       setRemoveLogo(false);
       setStoredLogo({ status: 'none', url: null });
+      setSuccess(false);
+      setSyncWarning(false);
+      setSyncing(false);
+      syncPendingRef.current = false;
       try {
         setPending(readPendingSettings(window.sessionStorage, userId, churchId));
       } catch {
@@ -258,18 +307,8 @@ function ChurchSettingsForm({ onBack, auth }) {
       throw new Error('Unconfirmed command');
     }
     clearCommand(command);
-    const reloaded = await loadProfile();
-    if (isCurrent() && reloaded) {
-      setSuccess(true);
-      // CA03: Atualiza o contexto da aplicação para que o cabeçalho e demais telas reflitam o novo nome imediatamente.
-      if (typeof reloadChurchAccess === 'function') {
-        try {
-          await reloadChurchAccess(churchId, { isBackground: true });
-        } catch (err) {
-          console.warn('[ChurchSettingsPage] Falha ao recarregar contexto:', err);
-        }
-      }
-    }
+    syncPendingRef.current = true;
+    await loadProfile();
   }
 
   async function save(event) {
@@ -283,6 +322,7 @@ function ChurchSettingsForm({ onBack, auth }) {
     setBusy(true);
     setError(null);
     setSuccess(false);
+    setSyncWarning(false);
     try {
       // Exigir armazenamento utilizável antes de iniciar envio de arquivo ou comando.
       const storage = window.sessionStorage;
@@ -427,7 +467,26 @@ function ChurchSettingsForm({ onBack, auth }) {
           </div>
         )}
 
-        {success && (
+        {syncWarning && (
+          <div className="church-settings-alert church-settings-alert--uncertain" role="status">
+            <AlertCircle size={16} />
+            <div className="church-settings-alert-content church-settings-alert-content--row">
+              <span>Alterações salvas no servidor, mas a sincronização da navegação falhou.</span>
+              <button
+                type="button"
+                id="btn-church-settings-sync"
+                className="btn btn-secondary btn-sm"
+                onClick={retrySync}
+                disabled={busy || syncing || !online}
+              >
+                <RefreshCw size={13} className={syncing ? 'church-settings-spin' : ''} />
+                <span>Sincronizar navegação</span>
+              </button>
+            </div>
+          </div>
+        )}
+
+        {success && !syncWarning && (
           <div className="church-settings-alert church-settings-alert--success" role="status">
             <CheckCircle2 size={16} />
             <span>Alterações salvas com sucesso.</span>

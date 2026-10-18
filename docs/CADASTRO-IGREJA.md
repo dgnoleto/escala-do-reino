@@ -17,7 +17,7 @@ Incremento solicitado pelo responsável em 18/10/2026. Ensaio SQL S01–S22 apro
 | Recurso | Regra |
 |---|---|
 | `get_church_settings(church_id)` | Somente admin ativo, com membro ativo, onboarding concluído, e-mail confirmado e conta não excluída, anônima ou bloqueada. Retorna nome, timezone, address, google_maps_url, logo_path e profile_revision. |
-| `update_church_settings(church_id, command_id, expected_revision, name, address, google_maps_url, logo_path)` | Mesma autorização, derivada de `auth.uid()`, revalidada após locks; atualização de nome, endereço, maps e logo, com auditoria de `previous_name`/`new_name` e recibo na mesma transação. Sobrecarga retrocompatível de 6 parâmetros mantida. |
+| `update_church_settings(church_id, command_id, expected_revision, name, address, google_maps_url, logo_path)` | Mesma autorização, derivada de `auth.uid()`, revalidada após locks; atualização de nome, endereço, maps e logo, com auditoria de `previous_name`/`new_name` e recibo na mesma transação. Sobrecarga retrocompatível de 6 parâmetros autônoma, preservando idempotência e replay de recibos do 017 e replays após renomeações concorrentes. |
 | `get_church_logo(church_id)` | Membro autorizado consulta somente a referência da logo atual. |
 | `can_access_church_logo(name, write)` | Helper booleano para RLS do Storage; upload exige administração, leitura exige acesso à igreja. Membros leem somente a logo atualmente referenciada. |
 | `church_settings_receipts` | Tabela privada, sem grants de cliente, com parâmetros e valores anteriores para rastreabilidade e idempotência. |
@@ -34,7 +34,7 @@ URLs assinadas duram cinco minutos e não são persistidas nos recibos/auditoria
 
 Ao substituir/remover a logo, os arquivos antigos são preservados. Upload interrompido ou edição recusada pode deixar um objeto sem referência. Limpeza de objetos antigos exige rotina própria revisada; não há exclusão automática de arquivos neste incremento.
 
-O cliente retém o comando na sessão da aba, separado por usuário/igreja, antes da chamada de atualização. Resposta perdida bloqueia nova edição; **Verificar salvamento** reenvia o mesmo ID e os mesmos parâmetros. O servidor revalida administração antes de devolver o recibo original. Recarga preserva essa recuperação. O recibo de sucesso precisa corresponder à igreja, comando e revisão esperados.
+O cliente retém o comando na sessão da aba, separado por usuário/igreja, antes da chamada de atualização. Resposta perdida bloqueia nova edição; **Verificar salvamento** reenvia o mesmo ID e os mesmos parâmetros. O servidor revalida administração antes de devolver o recibo original. Recarga preserva essa recuperação. O recibo de sucesso precisa corresponder à igreja, comando e revisão esperados. Se a confirmação no servidor for bem-sucedida mas a sincronização do contexto de navegação (`reloadChurchAccess`) falhar, a interface diferencia salvamento concluído de sincronização pendente, exibindo aviso específico e botão de recuperação ("Sincronizar navegação") sem reenviar comandos de escrita.
 
 ## Verificação e instalação por ambiente
 
