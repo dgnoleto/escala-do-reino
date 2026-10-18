@@ -1,0 +1,78 @@
+# Dependências
+node_modules/
+vendor/
+
+# Build e Artefatos
+dist/
+build/
+out/
+.next/
+.output/
+coverage/
+
+# Lockfiles
+package-lock.json
+yarn.lock
+pnpm-lock.yaml
+bun.lockb
+
+# Assets Estáticos e Mídia
+public/
+*.png
+*.jpg
+*.jpeg
+*.gif
+*.svg
+*.ico
+*.webp
+*.avif
+*.mp4
+*.webm
+*.mp3
+*.wav
+*.pdf
+*.woff
+*.woff2
+*.ttf
+*.eot
+*.otf
+
+# Logs, Cache e Temporários
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+.cache/
+.vite/
+.parcel-cache/
+tmp/
+temp/
+
+# Dados Massivos, Dumps e Arquivos Binários
+*.csv
+*.tsv
+*.xlsx
+*.parquet
+*.sqlite
+*.sqlite3
+*.db
+*.dump
+*.sql.gz
+*.tar*
+*.zip
+*.gz
+*.7z
+
+# Source Maps e Arquivos Minificados
+*.map
+*.min.js
+*.min.css
+
+# Sistema e IDEs
+.git/
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
