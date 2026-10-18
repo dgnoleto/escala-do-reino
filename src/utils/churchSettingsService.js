@@ -56,6 +56,15 @@ export function settingsErrorMessage(error) {
   return 'Não foi possível confirmar o salvamento. Verifique o resultado antes de fazer outra alteração.';
 }
 
+// Falhas de leitura não podem reutilizar a mensagem de salvamento: nada foi enviado ao servidor.
+export function settingsLoadErrorMessage(error, isOnline = true) {
+  if (error?.code === 'PGRST202' || error?.code === '42883') return 'A edição do cadastro ainda não foi habilitada neste ambiente.';
+  if (!isOnline || /fetch|network|timeout/i.test(error?.message || '')) {
+    return 'Não foi possível conectar ao servidor. Verifique sua conexão e tente novamente.';
+  }
+  return 'Não foi possível carregar os dados da igreja. Tente novamente em instantes.';
+}
+
 export function isDefinitiveSettingsError(error) {
   return ['42501', '28000', '40001', 'PGRST202', '42883', '23505', '22023', '23514', 'P0002'].includes(error?.code);
 }

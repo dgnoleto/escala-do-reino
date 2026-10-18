@@ -456,7 +456,7 @@ export default function ChurchHomePage() {
           </div>
           <button
             id="btn-goto-teams"
-            className="btn btn-secondary church-home-admin-btn"
+            className="btn btn-primary church-home-admin-btn"
             onClick={() => setCurrentView('teams')}
             type="button"
             aria-label="Acessar Ministérios e Equipes"

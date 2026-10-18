@@ -421,15 +421,86 @@ body {
   }
 }
 /* Cadastro administrativo da igreja */
-.church-settings-page { min-height: 100vh; padding: 24px 16px; background: var(--bg-secondary); }
-.church-settings-card { max-width: 680px; margin: 0 auto; padding: 24px; display: flex; flex-direction: column; gap: 16px; }
-.church-settings-card h1 { display: flex; align-items: center; gap: 10px; font-size: 1.5rem; }
-.church-settings-card form, .church-settings-card fieldset { display: flex; flex-direction: column; gap: 12px; }
-.church-settings-card fieldset { border: 0; padding: 0; margin: 0; min-width: 0; }
-.church-settings-card label { font-weight: 600; }
-.church-settings-card .form-input { box-sizing: border-box; width: 100%; border: 1px solid var(--border-subtle); border-radius: 8px; padding: 10px 12px; background: var(--bg-input); color: var(--text-primary); font: inherit; }
-.church-settings-card input[type="file"] { max-width: 100%; color: var(--text-primary); }
-.church-settings-card small { color: var(--text-muted); }
-.church-settings-card fieldset:disabled { opacity: 0.7; }
-.church-settings-card [role="alert"], .church-settings-pending { padding: 12px; background: var(--bg-secondary); border: 1px solid var(--border-subtle); border-radius: 8px; }
-.church-settings-logo-preview { width: 128px; height: 128px; object-fit: contain; border-radius: 8px; background: var(--bg-secondary); }
+.church-settings-page { min-height: 100vh; padding: 24px 20px 48px; background: var(--bg-secondary); }
+.church-settings-container { width: 100%; max-width: 800px; margin: 0 auto; display: flex; flex-direction: column; gap: 16px; }
+.church-settings-header { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 8px 0; }
+.church-settings-back { display: inline-flex; align-items: center; gap: 6px; background: var(--bg-card); border: 1px solid var(--border-subtle); color: var(--text-secondary); padding: 8px 14px; border-radius: var(--radius-md); font: inherit; font-size: 13px; font-weight: 600; cursor: pointer; }
+.church-settings-back:hover { color: var(--text-primary); background: var(--bg-surface); border-color: var(--border-active); }
+.church-settings-title-box { display: flex; flex-direction: column; align-items: center; gap: 4px; flex: 1; min-width: 0; text-align: center; }
+.church-settings-header-spacer { width: 95px; }
+.church-settings-church-badge { display: inline-flex; align-items: center; gap: 6px; max-width: 100%; font-size: 12px; font-weight: 700; color: var(--primary); background: var(--primary-surface); padding: 3px 10px; border-radius: var(--radius-full); border: 1px solid var(--primary-border); }
+.church-settings-church-badge span { overflow-wrap: anywhere; }
+.church-settings-title { font-size: 20px; font-weight: 800; letter-spacing: -0.02em; margin: 0; }
+.church-settings-card { background: var(--bg-card); border: 1px solid var(--border-subtle); border-radius: var(--radius-lg); padding: 24px; display: flex; flex-direction: column; gap: 24px; min-width: 0; }
+.church-settings-card-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; flex-wrap: wrap; }
+.church-settings-section-title { font-size: 16px; font-weight: 700; margin: 0 0 6px; }
+.church-settings-section-subtitle { color: var(--text-secondary); font-size: 13px; line-height: 1.6; margin: 0; }
+.church-settings-refresh { flex-shrink: 0; font-size: 12px; }
+.church-settings-form, .church-settings-fieldset { display: flex; flex-direction: column; gap: 24px; min-width: 0; }
+.church-settings-fieldset { border: 0; padding: 0; margin: 0; }
+.church-settings-fieldset:disabled { opacity: 0.7; }
+.church-settings-identity { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; margin: 0; padding: 16px; border-radius: var(--radius-md); background: var(--bg-surface); }
+.church-settings-identity-item { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+.church-settings-identity dt { color: var(--text-muted); font-size: 12px; }
+.church-settings-identity dd { margin: 0; font-size: 14px; font-weight: 600; overflow-wrap: anywhere; }
+.church-settings-form .form-group { margin: 0; display: flex; flex-direction: column; gap: 8px; }
+.church-settings-form .form-label { margin: 0; }
+.church-settings-form .form-input { box-sizing: border-box; width: 100%; min-width: 0; }
+.church-settings-textarea { resize: vertical; min-height: 92px; }
+.church-settings-hint { display: flex; justify-content: space-between; flex-wrap: wrap; gap: 4px 12px; font-size: 12px; line-height: 1.5; color: var(--text-muted); }
+.church-settings-logo-field { display: flex; align-items: flex-start; gap: 20px; }
+.church-settings-logo-preview { width: 112px; height: 112px; flex-shrink: 0; display: flex; align-items: center; justify-content: center; overflow: hidden; border: 1px solid var(--border-subtle); border-radius: var(--radius-md); background: var(--bg-surface); color: var(--text-muted); }
+.church-settings-logo-preview img { width: 100%; height: 100%; object-fit: contain; }
+.church-settings-logo-controls { display: flex; flex-direction: column; align-items: flex-start; gap: 10px; min-width: 0; flex: 1; }
+.church-settings-file { width: 100%; min-width: 0; max-width: 100%; color: var(--text-secondary); font: inherit; font-size: 12px; }
+.church-settings-file::file-selector-button { background: var(--bg-surface); color: var(--text-primary); border: 1px solid var(--border-subtle); border-radius: var(--radius-sm); padding: 8px 10px; margin-right: 8px; cursor: pointer; }
+.church-settings-actions { display: flex; justify-content: flex-end; padding-top: 16px; border-top: 1px solid var(--border-subtle); }
+.church-settings-alert { display: flex; align-items: flex-start; gap: 10px; padding: 12px 16px; border-radius: var(--radius-md); border: 1px solid var(--border-subtle); font-size: 13px; line-height: 1.6; background: var(--bg-card); }
+.church-settings-alert > svg, .church-settings-church-badge > svg { flex-shrink: 0; }
+.church-settings-alert > svg { margin-top: 2px; }
+.church-settings-alert--error { color: var(--status-overrun-text); background: var(--status-overrun-bg); border-color: var(--status-overrun-border); }
+.church-settings-alert--warning, .church-settings-alert--uncertain { color: var(--status-pending-text); background: var(--status-pending-bg); border-color: var(--status-pending-border); }
+.church-settings-alert--success { color: var(--status-live-text); background: var(--status-live-bg); border-color: var(--status-live-border); }
+.church-settings-alert--info { color: var(--text-secondary); background: var(--bg-surface); }
+.church-settings-alert-content { min-width: 0; flex: 1; }
+.church-settings-alert-content p { margin: 4px 0 8px; }
+.church-settings-alert-content--row { display: flex; align-items: center; flex-wrap: wrap; gap: 12px; }
+.church-settings-alert-content--row span { flex: 1 1 240px; }
+.church-settings-inline-error { color: var(--status-overrun-text); font-size: 12px; line-height: 1.6; }
+.church-settings-link-btn { color: inherit; background: none; border: 0; padding: 0; text-decoration: underline; font: inherit; cursor: pointer; }
+.church-settings-state, .church-settings-denied { display: flex; flex-direction: column; align-items: center; text-align: center; gap: 12px; padding: 32px 16px; color: var(--text-secondary); }
+.church-settings-state h3, .church-settings-state p, .church-settings-denied h1, .church-settings-denied p { margin: 0; }
+.church-settings-state h3 { color: var(--text-primary); font-size: 16px; }
+.church-settings-state p { max-width: 480px; font-size: 13px; line-height: 1.6; }
+.church-settings-state--error > svg, .church-settings-denied-icon { color: var(--status-overrun-text); }
+.church-settings-state-note { color: var(--text-muted); }
+.church-settings-state-actions { margin-top: 8px; }
+.church-settings-sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0,0,0,0); white-space: nowrap; border: 0; }
+.church-settings-skeleton { display: block; background: var(--border-subtle); border-radius: var(--radius-sm); animation: church-settings-pulse 1.5s ease-in-out infinite alternate; }
+.church-settings-skeleton--dt { height: 15px; width: 75px; }
+.church-settings-skeleton--dd { height: 20px; width: 80%; }
+.church-settings-skeleton--label { height: 20px; width: 150px; }
+.church-settings-skeleton--textarea { height: 92px; }
+.church-settings-skeleton--input { height: 44px; }
+.church-settings-skeleton--hint { height: 18px; width: 60%; }
+.church-settings-skeleton--logo { width: 112px; height: 112px; flex-shrink: 0; }
+.church-settings-skeleton--file { height: 34px; width: 100%; }
+.church-settings-skeleton--button { height: 42px; width: 172px; }
+.church-settings-skeleton--fill { width: 100%; height: 100%; }
+.church-settings-spin { animation: church-settings-spin 1s linear infinite; }
+.church-settings-page button:focus-visible, .church-settings-file:focus-visible { outline: 2px solid var(--primary); outline-offset: 3px; }
+@keyframes church-settings-pulse { from { opacity: 0.4; } to { opacity: 0.8; } }
+@keyframes church-settings-spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .church-settings-skeleton, .church-settings-spin { animation: none; } }
+@media (max-width: 600px) {
+  .church-settings-page { padding: 16px 12px 32px; }
+  .church-settings-header { flex-direction: column; align-items: stretch; }
+  .church-settings-back { align-self: flex-start; }
+  .church-settings-title-box { align-items: flex-start; text-align: left; }
+  .church-settings-header-spacer { display: none; }
+  .church-settings-card { padding: 16px; }
+  .church-settings-identity { grid-template-columns: 1fr; }
+  .church-settings-logo-field { flex-direction: column; }
+  .church-settings-logo-controls { width: 100%; }
+  .church-settings-actions .btn, .church-settings-skeleton--button { width: 100%; justify-content: center; }
+}

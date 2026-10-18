@@ -73,7 +73,7 @@ function text(node) {
   if (node == null) return '';
   if (typeof node === 'string') return node;
   if (Array.isArray(node)) return node.map(text).join(' ');
-  return text(node.children);
+  return text(node.children ?? node.props?.children);
 }
 async function click(label) {
   const button = renderer.root.findAllByType('button').find((b) => text(b.props.children).includes(label));
@@ -266,5 +266,113 @@ test('resposta de leitura da igreja anterior não contamina o novo contexto', as
     await act(async () => oldResponse.resolve({ data: [{ ...original }] }));
     assert.equal(renderer.root.findByProps({ id: 'church-settings-address' }).props.value, 'Endereço novo');
     assert.doesNotMatch(text(), /Igreja Teste/);
+  } finally { await unmount(); }
+});
+
+
+test('logo lenta ou indisponível não bloqueia edição do cadastro confirmado', async () => {
+  const signed = deferred();
+  try {
+    setup({ rpc: (name) => name === 'get_church_settings'
+      ? { data: [{ ...original, logo_path: `${churchId}/logo.png` }] } : undefined });
+    globalThis.__settingsStorage.createSignedUrl = () => signed.promise;
+    await mount();
+    assert.equal(renderer.root.findByType('fieldset').props.disabled, false);
+    assert.equal(renderer.root.findByProps({ id: 'church-settings-address' }).props.value, original.address);
+    assert.equal(renderer.root.findAllByProps({ 'aria-label': 'Carregando logo' }).length, 1);
+    await act(async () => signed.resolve({ error: { message: 'network' } }));
+    assert.match(text(), /ela continua salva/);
+    assert.equal(renderer.root.findByType('fieldset').props.disabled, false);
+  } finally { await unmount(); }
+});
+
+test('consulta inicial usa esqueleto; erro pode ser recuperado sem formulário vazio', async () => {
+  const response = deferred();
+  let failed = true;
+  try {
+    const { calls } = setup({ rpc: (name) => name === 'get_church_settings' && failed ? response.promise : undefined });
+    await mount();
+    assert.equal(renderer.root.findAllByType('form').length, 0);
+    assert.match(text(), /Carregando dados da igreja/);
+    await act(async () => response.resolve({ error: { message: 'network failed' } }));
+    assert.match(text(), /Não foi possível conectar/);
+    assert.equal(renderer.root.findAllByType('form').length, 0);
+    assert.equal(calls.some((c) => c.name === 'update_church_settings'), false);
+    failed = false;
+    await click('Tentar novamente');
+    assert.equal(renderer.root.findByType('fieldset').props.disabled, false);
+  } finally { await unmount(); }
+});
+
+test('respostas incompletas não viram campos vazios; ausência é distinta de falha', async () => {
+  try {
+    for (const data of [null, [null], [{}], [{ ...original, address: undefined }], [original, original]]) {
+      setup({ rpc: (name) => name === 'get_church_settings' ? { data } : undefined });
+      await mount();
+      assert.equal(renderer.root.findAllByType('form').length, 0);
+      assert.match(text(), /Não foi possível carregar/);
+      await unmount();
+    }
+    setup({ rpc: (name) => name === 'get_church_settings' ? { data: [] } : undefined });
+    await mount();
+    assert.match(text(), /Cadastro da igreja não encontrado/);
+    assert.equal(renderer.root.findAllByType('form').length, 0);
+  } finally { await unmount(); }
+});
+
+test('falha na recarga conserva campos, bloqueia nova gravação e permite recuperação', async () => {
+  let failRead = false;
+  try {
+    const { calls } = setup({ rpc: (name) => name === 'get_church_settings' && failRead
+      ? { error: { message: 'network failed' } } : undefined });
+    await mount();
+    failRead = true;
+    await click('Recarregar dados');
+    assert.equal(renderer.root.findByProps({ id: 'church-settings-address' }).props.value, original.address);
+    assert.equal(renderer.root.findByType('fieldset').props.disabled, true);
+    await submit();
+    assert.equal(calls.some((c) => c.name === 'update_church_settings'), false);
+    failRead = false;
+    await click('Tentar novamente');
+    assert.equal(renderer.root.findByType('fieldset').props.disabled, false);
+  } finally { await unmount(); }
+});
+
+test('recibo confirmado com recarga falha não anuncia sucesso da tela nem permite nova edição', async () => {
+  let saved = false;
+  try {
+    setup({ rpc(name) {
+      if (name === 'update_church_settings') saved = true;
+      if (name === 'get_church_settings' && saved) return { error: { message: 'network' } };
+    } });
+    await mount(); await submit();
+    assert.doesNotMatch(text(), /Alterações salvas com sucesso/);
+    assert.match(text(), /edição fica bloqueada/);
+    assert.equal(renderer.root.findByType('fieldset').props.disabled, true);
+  } finally { await unmount(); }
+});
+
+test('nova sessão não herda erro de acesso nem logo pendente da sessão anterior', async () => {
+  const oldLogo = deferred();
+  try {
+    setup({ rpc: (name) => name === 'get_church_settings'
+      ? { data: [{ ...original, logo_path: `${churchId}/old.png` }] } : undefined });
+    globalThis.__settingsStorage.createSignedUrl = () => oldLogo.promise;
+    await mount();
+    globalThis.__settingsAuth = { ...globalThis.__settingsAuth, sessionId: 2 };
+    globalThis.__settingsRpc = async () => ({ data: [{ ...original, address: 'Nova sessão' }] });
+    await act(async () => renderer.update(React.createElement(Settings, { onBack() {} })));
+    await act(async () => oldLogo.resolve({ data: { signedUrl: 'https://example.invalid/old' } }));
+    assert.equal(renderer.root.findByProps({ id: 'church-settings-address' }).props.value, 'Nova sessão');
+    assert.equal(renderer.root.findAllByType('img').length, 0);
+    await unmount();
+    let forbidden = true;
+    setup({ rpc: (name) => name === 'get_church_settings' && forbidden ? { error: { code: '42501' } } : undefined });
+    await mount();
+    assert.match(text(), /Acesso Restrito/);
+    forbidden = false;
+    globalThis.__settingsAuth = { ...globalThis.__settingsAuth, sessionId: 3 };
+    await act(async () => renderer.update(React.createElement(Settings, { onBack() {} })));
+    assert.equal(renderer.root.findByType('fieldset').props.disabled, false);
   } finally { await unmount(); }
 });
