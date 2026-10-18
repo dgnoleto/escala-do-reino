@@ -114,6 +114,8 @@ Ser admin não habilita conduzir um evento no qual a pessoa não foi designada l
 
 **Decidido:** cadastrar o fuso horário e o local da igreja pelo Google Maps. Os membros herdam o fuso da igreja consultada, sem preferência individual de alteração no MVP. Uma conta com acesso a igrejas diferentes usa o contexto da igreja consultada. A representação técnica do fuso e da localização está no documento de arquitetura.
 
+**Complemento autorizado em 18/10/2026 — manutenção do cadastro:** o administrador ativo pode reabrir o cadastro da igreja selecionada para corrigir endereço e link do Google Maps e adicionar, substituir ou remover sua logo. Membros e líderes sem administração não acessam esse cadastro; o bloqueio vale na interface e no servidor. A exibição da logo aos membros autorizados não concede acesso ao cadastro. Nome, fuso e política não são alterados neste incremento. Contratos e limites de implementação em [Cadastro administrativo da igreja](CADASTRO-IGREJA.md).
+
 ## 4. Web e mobile
 
 **Decidido em 02/10/2026:** o protótipo web está sendo avaliado agora. Uma versão própria para Android e iOS virá em etapa posterior; Flutter continua apenas uma possibilidade, sem escolha de tecnologia ou data. A tabela abaixo descreve os limites de cada canal **quando ambos existirem**, não uma obrigação de entregá-los juntos.

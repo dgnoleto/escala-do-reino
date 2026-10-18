@@ -420,3 +420,16 @@ body {
     grid-template-columns: 1fr;
   }
 }
+/* Cadastro administrativo da igreja */
+.church-settings-page { min-height: 100vh; padding: 24px 16px; background: var(--bg-secondary); }
+.church-settings-card { max-width: 680px; margin: 0 auto; padding: 24px; display: flex; flex-direction: column; gap: 16px; }
+.church-settings-card h1 { display: flex; align-items: center; gap: 10px; font-size: 1.5rem; }
+.church-settings-card form, .church-settings-card fieldset { display: flex; flex-direction: column; gap: 12px; }
+.church-settings-card fieldset { border: 0; padding: 0; margin: 0; min-width: 0; }
+.church-settings-card label { font-weight: 600; }
+.church-settings-card .form-input { box-sizing: border-box; width: 100%; border: 1px solid var(--border-subtle); border-radius: 8px; padding: 10px 12px; background: var(--bg-input); color: var(--text-primary); font: inherit; }
+.church-settings-card input[type="file"] { max-width: 100%; color: var(--text-primary); }
+.church-settings-card small { color: var(--text-muted); }
+.church-settings-card fieldset:disabled { opacity: 0.7; }
+.church-settings-card [role="alert"], .church-settings-pending { padding: 12px; background: var(--bg-secondary); border: 1px solid var(--border-subtle); border-radius: 8px; }
+.church-settings-logo-preview { width: 128px; height: 128px; object-fit: contain; border-radius: 8px; background: var(--bg-secondary); }

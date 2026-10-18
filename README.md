@@ -28,6 +28,8 @@ O MVP é focado no culto. Convites de participação, reservas, prazos e aceite 
 
 ## Como funcionará o piloto
 
+**Incremento de 18/10/2026:** acesso **Dados da Igreja**, exclusivo de administradores, para manutenção de endereço, Google Maps e logo. Backend 017 instalado no **EscalaReinoLab** e, após autorização específica e ensaio com ROLLBACK, no **piloto**, preservando dados e funções anteriores. Tela local conferida com a sessão existente do administrador. HTTP/Storage reais e cinco casos concorrentes aprovados no laboratório; a seleção automática de arquivo no Chrome ficou limitada pela permissão da extensão. Frontend ainda sem publicação desta entrega. [Contrato e limites](docs/CADASTRO-IGREJA.md).
+
 Líderes planejam a programação e as escalas com nomes definidos. Os membros apenas consultam: todos com acesso autorizado à igreja veem o cronograma macro; quem está escalado vê também os detalhes da própria participação. Líderes acompanham os bastidores sob sua responsabilidade, e a liturgia acompanha todo o evento.
 
 Cada edição de culto tem seu **líder da liturgia**, que também controla exclusivamente o andamento no MVP. Pode ser uma pessoa no domingo e outra na quarta-feira. Somente admin convida usuários e designa/troca lideranças. Admin é uma permissão independente, acumulável com liderança de atividade ou liturgia, sem conceder automaticamente controle do culto.

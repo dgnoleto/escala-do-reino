@@ -7,6 +7,7 @@ Este índice organiza regras, orientação operacional e histórico. Começar pe
 - [PRD](PRD.md): escopo, decisões aprovadas e critérios de aceite.
 - [Contrato de convites](CONTRATO-CONVITES-ACESSO.md): acesso, nome, estados, recibos e rastreabilidade.
 - [Cadastro de membros](CADASTRO-MEMBROS.md), [criação de igreja](CRIACAO-IGREJA.md) e [consulta de acesso](CONSULTA-ACESSO.md).
+- [Cadastro administrativo da igreja](CADASTRO-IGREJA.md): endereço, Maps e logo exclusivos de admin; backend instalado no laboratório e no piloto, tela local conferida; limites de validação documentados.
 - [Acesso e auditoria](ACESSO-E-AUDITORIA.md), [arquitetura](ARQUITETURA-BANCO.md), [schema de acesso](SCHEMA-ACESSO.md) e [schema de aprovação/auditoria](SCHEMA-APROVACAO-AUDITORIA.md).
 - [Evolução futura](EVOLUCAO-FUTURA.md): assuntos adiados; não transformá-los em requisitos do incremento atual.
 - [Visão do Ecossistema](VISAO-ECOSSISTEMA.md): manifesto estratégico e visão de longo prazo do ecossistema de saúde integral da igreja.
@@ -26,6 +27,10 @@ Este índice organiza regras, orientação operacional e histórico. Começar pe
 - [Issues](https://github.com/dgnoleto/escala-do-reino/issues): tarefas, problemas e dúvidas acompanháveis, com referências aos documentos.
 
 ## Histórico e evidências selecionadas
+
+- [Ensaio SQL 017 — 18/10/2026](historico/2026-10-18-ensaio-cadastro-igreja-017.md): 22 cenários aprovados em contêiner existente, com ROLLBACK e preservação das origens; registra os limites daquela rodada, anterior à instalação.
+- [Instalação/validação 017 — 18/10/2026](historico/2026-10-18-instalacao-e-validacao-cadastro-igreja-017.md): instalação autorizada no EscalaReinoLab, Storage real, concorrência, tela e limites do seletor de arquivo; sem aplicação no piloto.
+- [Aplicação 017 no piloto — 18/10/2026](historico/2026-10-18-aplicacao-cadastro-igreja-017-piloto.md): autorização específica, ensaio com ROLLBACK, COMMIT, preservação de dados/permissões e abertura da tela com administrador existente.
 
 - [Preparação da entrada de QA — 11/10/2026](historico/2026-10-11-preparacao-qa.md).
 - [Conferência de localhost:3000 — 11/10/2026](historico/2026-10-11-verificacao-localhost-3000.md), com comparação sanitizada e telas de entrada sintética.
