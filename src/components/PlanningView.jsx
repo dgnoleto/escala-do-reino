@@ -27,6 +27,7 @@ export default function PlanningView() {
     isTeamLeader,
     members,
     teams,
+    standardActivities = [],
     checkAssignmentConflict,
     addAuditLog,
     isOnline,
@@ -250,6 +251,7 @@ export default function PlanningView() {
         </div>
 
         <button
+          id="btn-open-new-activity-modal"
           className="btn btn-primary"
           onClick={openNewActivityModal}
           disabled={(!isLiturgyLeader && !isAdmin) || isControlsDisabled}
@@ -361,6 +363,33 @@ export default function PlanningView() {
                 {editingActivityId ? 'Editar Etapa Litúrgica' : 'Nova Etapa Litúrgica'}
               </h3>
               <button className="close-btn" onClick={() => setActivityModalOpen(false)}>✕</button>
+            </div>
+
+            <div className="form-group">
+              <label className="form-label">Preencher a partir de Atividade Padrão:</label>
+              <select
+                id="select-standard-activity-template"
+                className="form-select"
+                onChange={e => {
+                  const selected = standardActivities.find(a => a.id === e.target.value);
+                  if (selected) {
+                    setFormTitle(selected.name);
+                    setFormDuration(selected.defaultDurationMinutes);
+                    if (selected.category) setFormCategory(selected.category);
+                    if (selected.description && !formNotes) setFormNotes(selected.description);
+                  }
+                }}
+                defaultValue=""
+              >
+                <option value="">-- Selecione uma atividade padrão ou digite livremente --</option>
+                {standardActivities
+                  .filter(a => a.active !== false)
+                  .map(a => (
+                    <option key={a.id} value={a.id}>
+                      {a.name} ({a.defaultDurationMinutes} min • {a.category || 'Liturgia'})
+                    </option>
+                  ))}
+              </select>
             </div>
 
             <div className="form-group">

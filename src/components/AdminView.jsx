@@ -14,9 +14,18 @@ import {
   Edit2,
   Check,
   X,
-  Power
+  Power,
+  Calendar,
+  Clock,
+  Layers
 } from 'lucide-react';
 import { isReasonUsedInActivities } from '../utils/cancellationReasonService';
+import {
+  isEventTypeUsed,
+  isStandardActivityUsed,
+  canDeleteEventType,
+  canDeleteStandardActivity
+} from '../utils/eventTypeActivityService';
 
 export default function AdminView() {
   const {
@@ -24,6 +33,8 @@ export default function AdminView() {
     members,
     teams,
     cancelReasons,
+    eventTypes,
+    standardActivities,
     accessInvites,
     currentUser,
     isAdmin,
@@ -31,6 +42,14 @@ export default function AdminView() {
     updateCancelReason,
     toggleCancelReasonStatus,
     deleteCancelReason,
+    addEventType,
+    updateEventType,
+    toggleEventTypeStatus,
+    deleteEventType,
+    addStandardActivity,
+    updateStandardActivity,
+    toggleStandardActivityStatus,
+    deleteStandardActivity,
     sendAccessInvite,
     designateLiturgyLeader,
     event,
@@ -53,6 +72,30 @@ export default function AdminView() {
   const [editingReasonId, setEditingReasonId] = useState(null);
   const [editingReasonText, setEditingReasonText] = useState('');
   const [editingError, setEditingError] = useState('');
+
+  // Formulário de Tipos de Evento (PRD §5 - Issue #25)
+  const [newTypeName, setNewTypeName] = useState('');
+  const [newTypeDesc, setNewTypeDesc] = useState('');
+  const [typeError, setTypeError] = useState('');
+  const [typeSuccess, setTypeSuccess] = useState('');
+  const [editingTypeId, setEditingTypeId] = useState(null);
+  const [editingTypeName, setEditingTypeName] = useState('');
+  const [editingTypeDesc, setEditingTypeDesc] = useState('');
+  const [editingTypeError, setEditingTypeError] = useState('');
+
+  // Formulário de Atividades Padrão com Duração (PRD §5 - Issue #25)
+  const [newActName, setNewActName] = useState('');
+  const [newActDuration, setNewActDuration] = useState(10);
+  const [newActCategory, setNewActCategory] = useState('Liturgia');
+  const [newActDesc, setNewActDesc] = useState('');
+  const [actError, setActError] = useState('');
+  const [actSuccess, setActSuccess] = useState('');
+  const [editingActId, setEditingActId] = useState(null);
+  const [editingActName, setEditingActName] = useState('');
+  const [editingActDuration, setEditingActDuration] = useState(10);
+  const [editingActCategory, setEditingActCategory] = useState('Liturgia');
+  const [editingActDesc, setEditingActDesc] = useState('');
+  const [editingActError, setEditingActError] = useState('');
 
   // Designação da Liderança da Liturgia (PRD 3.2 & Cenário M05)
   const [selectedLiturgyLeader, setSelectedLiturgyLeader] = useState(event.liturgyLeaderId);
@@ -150,6 +193,151 @@ export default function AdminView() {
     }
   };
 
+  // Handlers para Tipos de Evento (Issue #25)
+  const handleAddType = (e) => {
+    e.preventDefault();
+    setTypeError('');
+    setTypeSuccess('');
+    const res = addEventType(newTypeName, newTypeDesc);
+    if (!res.success) {
+      setTypeError(res.error);
+    } else {
+      setNewTypeName('');
+      setNewTypeDesc('');
+      setTypeSuccess('Tipo de evento cadastrado com sucesso!');
+      setTimeout(() => setTypeSuccess(''), 3000);
+    }
+  };
+
+  const handleStartEditType = (type) => {
+    setEditingTypeId(type.id);
+    setEditingTypeName(type.name);
+    setEditingTypeDesc(type.description || '');
+    setEditingTypeError('');
+    setTypeError('');
+  };
+
+  const handleSaveEditType = (id) => {
+    setEditingTypeError('');
+    const res = updateEventType(id, editingTypeName, editingTypeDesc);
+    if (!res.success) {
+      setEditingTypeError(res.error);
+    } else {
+      setEditingTypeId(null);
+      setEditingTypeName('');
+      setEditingTypeDesc('');
+      setTypeSuccess('Tipo de evento atualizado com sucesso!');
+      setTimeout(() => setTypeSuccess(''), 3000);
+    }
+  };
+
+  const handleCancelEditType = () => {
+    setEditingTypeId(null);
+    setEditingTypeName('');
+    setEditingTypeDesc('');
+    setEditingTypeError('');
+  };
+
+  const handleToggleTypeStatus = (id) => {
+    setTypeError('');
+    setTypeSuccess('');
+    const res = toggleEventTypeStatus(id);
+    if (!res.success) {
+      setTypeError(res.error);
+    } else {
+      setTypeSuccess(res.active ? 'Tipo de evento reativado com sucesso!' : 'Tipo de evento desativado.');
+      setTimeout(() => setTypeSuccess(''), 3000);
+    }
+  };
+
+  const handleDeleteType = (id) => {
+    setTypeError('');
+    setTypeSuccess('');
+    const res = deleteEventType(id);
+    if (!res.success) {
+      setTypeError(res.error);
+    } else {
+      setTypeSuccess('Tipo de evento excluído com sucesso.');
+      setTimeout(() => setTypeSuccess(''), 3000);
+    }
+  };
+
+  // Handlers para Atividades Padrão (Issue #25)
+  const handleAddActivity = (e) => {
+    e.preventDefault();
+    setActError('');
+    setActSuccess('');
+    const res = addStandardActivity(newActName, newActDuration, newActCategory, newActDesc);
+    if (!res.success) {
+      setActError(res.error);
+    } else {
+      setNewActName('');
+      setNewActDuration(10);
+      setNewActCategory('Liturgia');
+      setNewActDesc('');
+      setActSuccess('Atividade padrão cadastrada com sucesso!');
+      setTimeout(() => setActSuccess(''), 3000);
+    }
+  };
+
+  const handleStartEditActivity = (act) => {
+    setEditingActId(act.id);
+    setEditingActName(act.name);
+    setEditingActDuration(act.defaultDurationMinutes);
+    setEditingActCategory(act.category || 'Liturgia');
+    setEditingActDesc(act.description || '');
+    setEditingActError('');
+    setActError('');
+  };
+
+  const handleSaveEditActivity = (id) => {
+    setEditingActError('');
+    const res = updateStandardActivity(id, editingActName, editingActDuration, editingActCategory, editingActDesc);
+    if (!res.success) {
+      setEditingActError(res.error);
+    } else {
+      setEditingActId(null);
+      setEditingActName('');
+      setEditingActDuration(10);
+      setEditingActDesc('');
+      setActSuccess('Atividade padrão atualizada com sucesso!');
+      setTimeout(() => setActSuccess(''), 3000);
+    }
+  };
+
+  const handleCancelEditActivity = () => {
+    setEditingActId(null);
+    setEditingActName('');
+    setEditingActDuration(10);
+    setEditingActCategory('Liturgia');
+    setEditingActDesc('');
+    setEditingActError('');
+  };
+
+  const handleToggleActivityStatus = (id) => {
+    setActError('');
+    setActSuccess('');
+    const res = toggleStandardActivityStatus(id);
+    if (!res.success) {
+      setActError(res.error);
+    } else {
+      setActSuccess(res.active ? 'Atividade reativada com sucesso!' : 'Atividade desativada.');
+      setTimeout(() => setActSuccess(''), 3000);
+    }
+  };
+
+  const handleDeleteActivity = (id) => {
+    setActError('');
+    setActSuccess('');
+    const res = deleteStandardActivity(id);
+    if (!res.success) {
+      setActError(res.error);
+    } else {
+      setActSuccess('Atividade padrão excluída com sucesso.');
+      setTimeout(() => setActSuccess(''), 3000);
+    }
+  };
+
   const handleDesignateLeader = () => {
     designateLiturgyLeader(selectedLiturgyLeader);
     alert(`Liderança da Liturgia deste evento atualizada com sucesso para ${members.find(m => m.id === selectedLiturgyLeader)?.name}!`);
@@ -168,8 +356,8 @@ export default function AdminView() {
           </div>
           <h1 className="admin-title">Governança, Cadastros & Designações</h1>
           <p className="admin-subtitle">
-            Gerenciamento global restrito a administradores (PRD 3.2 e 4). Cadastre motivos de cancelamento,
-            envie convites de acesso à igreja vinculados a membros e designe a liderança da liturgia por evento.
+            Gerenciamento global restrito a administradores (PRD 3.2, 4 e 5). Cadastre tipos de evento, atividades com
+            durações padrão, motivos de cancelamento, convites de acesso e designe a liderança da liturgia por evento.
           </p>
         </div>
       </div>
@@ -188,6 +376,22 @@ export default function AdminView() {
           onClick={() => setActiveAdminTab('liturgy')}
         >
           <Shield size={16} /> Designação da Liturgia por Evento (PRD 3.2)
+        </button>
+
+        <button
+          className={`admin-tab-btn ${activeAdminTab === 'event_types' ? 'active' : ''}`}
+          onClick={() => setActiveAdminTab('event_types')}
+          id="tab-admin-event-types"
+        >
+          <Calendar size={16} /> Tipos de Evento (PRD §5)
+        </button>
+
+        <button
+          className={`admin-tab-btn ${activeAdminTab === 'activities' ? 'active' : ''}`}
+          onClick={() => setActiveAdminTab('activities')}
+          id="tab-admin-activities"
+        >
+          <Clock size={16} /> Atividades & Durações (PRD §5)
         </button>
 
         <button
@@ -529,6 +733,590 @@ export default function AdminView() {
                                 isUsed
                                   ? 'Motivo utilizado em histórico não pode ser excluído; desative-o em vez de excluir'
                                   : 'Excluir motivo não utilizado'
+                              }
+                              disabled={isControlsDisabled}
+                            >
+                              <Trash2 size={12} />
+                            </button>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* ABA: TIPOS DE EVENTO (PRD §5 - Issue #25) */}
+      {activeAdminTab === 'event_types' && (
+        <div className="grid-2">
+          <div className="card">
+            <h2 className="tab-sec-title">
+              <Calendar size={18} color="var(--primary)" /> Cadastrar Tipo de Evento
+            </h2>
+            <p className="tab-sec-desc">
+              Tipos definem as categorias de culto e reuniões da igreja (ex: Celebração Geral, Culto de Oração, Ensaio).
+              Conforme o <strong>PRD §4 e §5</strong>, o cadastro é exclusivo na Web por administradores.
+            </p>
+
+            {typeError && (
+              <div className="error-banner" style={{ marginBottom: '16px' }}>
+                <AlertCircle size={16} />
+                <span>{typeError}</span>
+              </div>
+            )}
+
+            {typeSuccess && (
+              <div className="success-banner" style={{ marginBottom: '16px' }}>
+                <CheckCircle2 size={16} />
+                <span>{typeSuccess}</span>
+              </div>
+            )}
+
+            <form onSubmit={handleAddType}>
+              <div className="form-group">
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px' }}>
+                  <label className="form-label" style={{ margin: 0 }}>Nome do Tipo de Evento:</label>
+                  <span style={{ fontSize: '11px', color: newTypeName.length > 100 ? '#ef4444' : 'var(--text-muted)' }}>
+                    {newTypeName.length}/100
+                  </span>
+                </div>
+                <input
+                  type="text"
+                  id="new-event-type-name-input"
+                  className="form-input"
+                  placeholder="Ex: Culto de Celebração de Domingo"
+                  value={newTypeName}
+                  maxLength={100}
+                  onChange={e => {
+                    setNewTypeName(e.target.value);
+                    if (typeError) setTypeError('');
+                  }}
+                  disabled={isControlsDisabled}
+                  required
+                />
+              </div>
+
+              <div className="form-group">
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px' }}>
+                  <label className="form-label" style={{ margin: 0 }}>Descrição ou Objetivo (opcional):</label>
+                  <span style={{ fontSize: '11px', color: newTypeDesc.length > 255 ? '#ef4444' : 'var(--text-muted)' }}>
+                    {newTypeDesc.length}/255
+                  </span>
+                </div>
+                <input
+                  type="text"
+                  id="new-event-type-desc-input"
+                  className="form-input"
+                  placeholder="Ex: Culto principal congregacional com louvor e palavra"
+                  value={newTypeDesc}
+                  maxLength={255}
+                  onChange={e => {
+                    setNewTypeDesc(e.target.value);
+                    if (typeError) setTypeError('');
+                  }}
+                  disabled={isControlsDisabled}
+                />
+              </div>
+
+              <button
+                type="submit"
+                id="btn-add-event-type"
+                className="btn btn-primary"
+                disabled={isControlsDisabled || !newTypeName.trim()}
+              >
+                <Plus size={15} /> Cadastrar Tipo de Evento
+              </button>
+            </form>
+          </div>
+
+          <div className="card">
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
+              <h2 className="tab-sec-title" style={{ margin: 0 }}>
+                Tipos de Evento ({eventTypes.length})
+              </h2>
+              <span className="badge badge-primary">
+                {eventTypes.filter(t => t.active !== false).length} Ativos
+              </span>
+            </div>
+
+            {eventTypes.length === 0 ? (
+              <div style={{ textAlign: 'center', padding: '30px 10px', color: 'var(--text-muted)' }}>
+                <Calendar size={32} style={{ opacity: 0.4, marginBottom: '8px' }} />
+                <p>Nenhum tipo de evento cadastrado nesta igreja.</p>
+              </div>
+            ) : (
+              <div className="reasons-list">
+                {eventTypes.map((type, idx) => {
+                  const isEditing = editingTypeId === type.id;
+                  const isUsed = isEventTypeUsed(type, [event]);
+                  const isActive = type.active !== false;
+
+                  return (
+                    <div
+                      key={type.id || idx}
+                      id={`event-type-item-${idx}`}
+                      className="reason-item-row"
+                      style={{
+                        opacity: isActive ? 1 : 0.65,
+                        borderColor: isEditing ? 'var(--primary)' : undefined,
+                        flexDirection: 'column',
+                        alignItems: 'stretch',
+                        gap: '8px'
+                      }}
+                    >
+                      {isEditing ? (
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                          <input
+                            type="text"
+                            id={`edit-event-type-name-${idx}`}
+                            className="form-input"
+                            value={editingTypeName}
+                            maxLength={100}
+                            onChange={e => setEditingTypeName(e.target.value)}
+                            style={{ fontSize: '13px', padding: '6px 10px' }}
+                            placeholder="Nome do tipo"
+                            autoFocus
+                          />
+                          <input
+                            type="text"
+                            id={`edit-event-type-desc-${idx}`}
+                            className="form-input"
+                            value={editingTypeDesc}
+                            maxLength={255}
+                            onChange={e => setEditingTypeDesc(e.target.value)}
+                            style={{ fontSize: '12px', padding: '6px 10px' }}
+                            placeholder="Descrição opcional"
+                          />
+                          {editingTypeError && (
+                            <span style={{ fontSize: '11px', color: '#ef4444' }}>{editingTypeError}</span>
+                          )}
+                          <div style={{ display: 'flex', gap: '8px', justifyContent: 'flex-end' }}>
+                            <button
+                              type="button"
+                              id={`btn-save-event-type-${idx}`}
+                              className="btn btn-primary"
+                              onClick={() => handleSaveEditType(type.id)}
+                              style={{ padding: '6px 10px', fontSize: '12px' }}
+                            >
+                              <Check size={14} /> Salvar
+                            </button>
+                            <button
+                              type="button"
+                              id={`btn-cancel-edit-event-type-${idx}`}
+                              className="btn btn-secondary"
+                              onClick={handleCancelEditType}
+                              style={{ padding: '6px 10px', fontSize: '12px' }}
+                            >
+                              <X size={14} /> Cancelar
+                            </button>
+                          </div>
+                        </div>
+                      ) : (
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '12px' }}>
+                          <div style={{ flex: 1, minWidth: 0 }}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+                              <strong style={{ fontSize: '14px', textDecoration: isActive ? 'none' : 'line-through' }}>
+                                {type.name}
+                              </strong>
+                              {!isActive && (
+                                <span className="badge badge-pending" style={{ fontSize: '10px', padding: '2px 6px' }}>
+                                  Inativo
+                                </span>
+                              )}
+                              {isUsed && (
+                                <span className="badge" style={{ fontSize: '10px', padding: '2px 6px', background: 'rgba(99, 102, 241, 0.15)', color: '#818cf8' }}>
+                                  Em uso
+                                </span>
+                              )}
+                            </div>
+                            {type.description && (
+                              <p style={{ margin: '4px 0 0 0', fontSize: '12px', color: 'var(--text-muted)' }}>
+                                {type.description}
+                              </p>
+                            )}
+                          </div>
+
+                          <div style={{ display: 'flex', gap: '6px', alignItems: 'center' }}>
+                            <button
+                              type="button"
+                              id={`btn-edit-event-type-${idx}`}
+                              className="btn btn-secondary"
+                              onClick={() => handleStartEditType(type)}
+                              style={{ padding: '4px 8px', fontSize: '11px' }}
+                              title="Editar tipo"
+                              disabled={isControlsDisabled}
+                            >
+                              <Edit2 size={12} />
+                            </button>
+
+                            <button
+                              type="button"
+                              id={`btn-toggle-event-type-${idx}`}
+                              className="btn btn-secondary"
+                              onClick={() => handleToggleTypeStatus(type.id)}
+                              style={{
+                                padding: '4px 8px',
+                                fontSize: '11px',
+                                color: isActive ? '#f59e0b' : '#10b981'
+                              }}
+                              title={isActive ? 'Desativar tipo de evento' : 'Reativar tipo de evento'}
+                              disabled={isControlsDisabled}
+                            >
+                              <Power size={12} style={{ marginRight: '4px' }} />
+                              {isActive ? 'Desativar' : 'Ativar'}
+                            </button>
+
+                            <button
+                              type="button"
+                              id={`btn-delete-event-type-${idx}`}
+                              className="btn btn-secondary"
+                              onClick={() => handleDeleteType(type.id)}
+                              style={{
+                                padding: '4px 8px',
+                                fontSize: '11px',
+                                color: isUsed ? 'var(--text-muted)' : '#ef4444',
+                                opacity: isUsed ? 0.5 : 1
+                              }}
+                              title={
+                                isUsed
+                                  ? 'Tipo de evento utilizado em histórico não pode ser excluído; desative-o em vez de excluir'
+                                  : 'Excluir tipo de evento'
+                              }
+                              disabled={isControlsDisabled}
+                            >
+                              <Trash2 size={12} />
+                            </button>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* ABA: ATIVIDADES PADRÃO & DURAÇÕES (PRD §5 & CA02 - Issue #25) */}
+      {activeAdminTab === 'activities' && (
+        <div className="grid-2">
+          <div className="card">
+            <h2 className="tab-sec-title">
+              <Clock size={18} color="var(--primary)" /> Cadastrar Atividade Padrão
+            </h2>
+            <p className="tab-sec-desc">
+              Atividades reutilizáveis para a ordem do culto. Conforme o <strong>PRD §5 (CA02)</strong>,
+              as durações padrão são livremente configuráveis (exemplos de 5, 15 ou 20 min não são universais).
+            </p>
+
+            {actError && (
+              <div className="error-banner" style={{ marginBottom: '16px' }}>
+                <AlertCircle size={16} />
+                <span>{actError}</span>
+              </div>
+            )}
+
+            {actSuccess && (
+              <div className="success-banner" style={{ marginBottom: '16px' }}>
+                <CheckCircle2 size={16} />
+                <span>{actSuccess}</span>
+              </div>
+            )}
+
+            <form onSubmit={handleAddActivity}>
+              <div className="form-group">
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px' }}>
+                  <label className="form-label" style={{ margin: 0 }}>Nome da Atividade:</label>
+                  <span style={{ fontSize: '11px', color: newActName.length > 100 ? '#ef4444' : 'var(--text-muted)' }}>
+                    {newActName.length}/100
+                  </span>
+                </div>
+                <input
+                  type="text"
+                  id="new-activity-name-input"
+                  className="form-input"
+                  placeholder="Ex: Louvor e Adoração Congregacional"
+                  value={newActName}
+                  maxLength={100}
+                  onChange={e => {
+                    setNewActName(e.target.value);
+                    if (actError) setActError('');
+                  }}
+                  disabled={isControlsDisabled}
+                  required
+                />
+              </div>
+
+              <div className="grid-2" style={{ gap: '12px' }}>
+                <div className="form-group">
+                  <label className="form-label">Duração Padrão (minutos):</label>
+                  <input
+                    type="number"
+                    id="new-activity-duration-input"
+                    className="form-input"
+                    min={1}
+                    max={720}
+                    value={newActDuration}
+                    onChange={e => {
+                      setNewActDuration(parseInt(e.target.value) || '');
+                      if (actError) setActError('');
+                    }}
+                    disabled={isControlsDisabled}
+                    required
+                  />
+                  <small style={{ fontSize: '11px', color: 'var(--text-muted)', display: 'block', marginTop: '4px' }}>
+                    CA02: Configurável livremente (1 a 720 min)
+                  </small>
+                </div>
+
+                <div className="form-group">
+                  <label className="form-label">Categoria Litúrgica:</label>
+                  <select
+                    id="new-activity-category-select"
+                    className="form-input"
+                    value={newActCategory}
+                    onChange={e => setNewActCategory(e.target.value)}
+                    disabled={isControlsDisabled}
+                  >
+                    <option value="Liturgia">Liturgia & Direção</option>
+                    <option value="Louvor">Louvor & Adoração</option>
+                    <option value="Palavra">Ministração da Palavra</option>
+                    <option value="Pastoral">Momento Pastoral & Avisos</option>
+                    <option value="Apoio">Serviço de Apoio Técnico</option>
+                    <option value="Comunhão">Comunhão & Encerramento</option>
+                  </select>
+                </div>
+              </div>
+
+              <div className="form-group">
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px' }}>
+                  <label className="form-label" style={{ margin: 0 }}>Descrição ou Observação Padrão (opcional):</label>
+                  <span style={{ fontSize: '11px', color: newActDesc.length > 255 ? '#ef4444' : 'var(--text-muted)' }}>
+                    {newActDesc.length}/255
+                  </span>
+                </div>
+                <input
+                  type="text"
+                  id="new-activity-desc-input"
+                  className="form-input"
+                  placeholder="Ex: Bloco de músicas com participação da equipe"
+                  value={newActDesc}
+                  maxLength={255}
+                  onChange={e => {
+                    setNewActDesc(e.target.value);
+                    if (actError) setActError('');
+                  }}
+                  disabled={isControlsDisabled}
+                />
+              </div>
+
+              <button
+                type="submit"
+                id="btn-add-activity"
+                className="btn btn-primary"
+                disabled={isControlsDisabled || !newActName.trim() || !newActDuration}
+              >
+                <Plus size={15} /> Cadastrar Atividade Padrão
+              </button>
+            </form>
+          </div>
+
+          <div className="card">
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
+              <h2 className="tab-sec-title" style={{ margin: 0 }}>
+                Atividades Cadastradas ({standardActivities.length})
+              </h2>
+              <span className="badge badge-primary">
+                {standardActivities.filter(a => a.active !== false).length} Ativas
+              </span>
+            </div>
+
+            {standardActivities.length === 0 ? (
+              <div style={{ textAlign: 'center', padding: '30px 10px', color: 'var(--text-muted)' }}>
+                <Clock size={32} style={{ opacity: 0.4, marginBottom: '8px' }} />
+                <p>Nenhuma atividade padrão cadastrada nesta igreja.</p>
+              </div>
+            ) : (
+              <div className="reasons-list">
+                {standardActivities.map((act, idx) => {
+                  const isEditing = editingActId === act.id;
+                  const isUsed = isStandardActivityUsed(act, event.activities);
+                  const isActive = act.active !== false;
+
+                  return (
+                    <div
+                      key={act.id || idx}
+                      id={`activity-item-${idx}`}
+                      className="reason-item-row"
+                      style={{
+                        opacity: isActive ? 1 : 0.65,
+                        borderColor: isEditing ? 'var(--primary)' : undefined,
+                        flexDirection: 'column',
+                        alignItems: 'stretch',
+                        gap: '8px'
+                      }}
+                    >
+                      {isEditing ? (
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                          <div style={{ display: 'flex', gap: '8px' }}>
+                            <input
+                              type="text"
+                              id={`edit-activity-name-${idx}`}
+                              className="form-input"
+                              value={editingActName}
+                              maxLength={100}
+                              onChange={e => setEditingActName(e.target.value)}
+                              style={{ flex: 2, fontSize: '13px', padding: '6px 10px' }}
+                              placeholder="Nome da atividade"
+                              autoFocus
+                            />
+                            <input
+                              type="number"
+                              id={`edit-activity-duration-${idx}`}
+                              className="form-input"
+                              min={1}
+                              max={720}
+                              value={editingActDuration}
+                              onChange={e => setEditingActDuration(parseInt(e.target.value) || '')}
+                              style={{ flex: 1, fontSize: '13px', padding: '6px 10px' }}
+                              placeholder="Duração (min)"
+                            />
+                          </div>
+
+                          <div style={{ display: 'flex', gap: '8px' }}>
+                            <select
+                              id={`edit-activity-category-${idx}`}
+                              className="form-input"
+                              value={editingActCategory}
+                              onChange={e => setEditingActCategory(e.target.value)}
+                              style={{ flex: 1, fontSize: '12px', padding: '6px 10px' }}
+                            >
+                              <option value="Liturgia">Liturgia</option>
+                              <option value="Louvor">Louvor</option>
+                              <option value="Palavra">Palavra</option>
+                              <option value="Pastoral">Pastoral</option>
+                              <option value="Apoio">Apoio</option>
+                              <option value="Comunhão">Comunhão</option>
+                            </select>
+                            <input
+                              type="text"
+                              id={`edit-activity-desc-${idx}`}
+                              className="form-input"
+                              value={editingActDesc}
+                              maxLength={255}
+                              onChange={e => setEditingActDesc(e.target.value)}
+                              style={{ flex: 2, fontSize: '12px', padding: '6px 10px' }}
+                              placeholder="Observação padrão"
+                            />
+                          </div>
+
+                          {editingActError && (
+                            <span style={{ fontSize: '11px', color: '#ef4444' }}>{editingActError}</span>
+                          )}
+
+                          <div style={{ display: 'flex', gap: '8px', justifyContent: 'flex-end' }}>
+                            <button
+                              type="button"
+                              id={`btn-save-activity-${idx}`}
+                              className="btn btn-primary"
+                              onClick={() => handleSaveEditActivity(act.id)}
+                              style={{ padding: '6px 10px', fontSize: '12px' }}
+                            >
+                              <Check size={14} /> Salvar
+                            </button>
+                            <button
+                              type="button"
+                              id={`btn-cancel-edit-activity-${idx}`}
+                              className="btn btn-secondary"
+                              onClick={handleCancelEditActivity}
+                              style={{ padding: '6px 10px', fontSize: '12px' }}
+                            >
+                              <X size={14} /> Cancelar
+                            </button>
+                          </div>
+                        </div>
+                      ) : (
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '12px' }}>
+                          <div style={{ flex: 1, minWidth: 0 }}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+                              <strong style={{ fontSize: '14px', textDecoration: isActive ? 'none' : 'line-through' }}>
+                                {act.name}
+                              </strong>
+                              <span className="badge" style={{ fontSize: '11px', padding: '2px 8px', background: 'rgba(59, 130, 246, 0.15)', color: '#60a5fa' }}>
+                                <Clock size={10} style={{ marginRight: '3px' }} />
+                                {act.defaultDurationMinutes} min
+                              </span>
+                              <span className="badge badge-secondary" style={{ fontSize: '10px', padding: '2px 6px' }}>
+                                {act.category || 'Liturgia'}
+                              </span>
+                              {!isActive && (
+                                <span className="badge badge-pending" style={{ fontSize: '10px', padding: '2px 6px' }}>
+                                  Inativa
+                                </span>
+                              )}
+                              {isUsed && (
+                                <span className="badge" style={{ fontSize: '10px', padding: '2px 6px', background: 'rgba(99, 102, 241, 0.15)', color: '#818cf8' }}>
+                                  No Culto
+                                </span>
+                              )}
+                            </div>
+                            {act.description && (
+                              <p style={{ margin: '4px 0 0 0', fontSize: '12px', color: 'var(--text-muted)' }}>
+                                {act.description}
+                              </p>
+                            )}
+                          </div>
+
+                          <div style={{ display: 'flex', gap: '6px', alignItems: 'center' }}>
+                            <button
+                              type="button"
+                              id={`btn-edit-activity-${idx}`}
+                              className="btn btn-secondary"
+                              onClick={() => handleStartEditActivity(act)}
+                              style={{ padding: '4px 8px', fontSize: '11px' }}
+                              title="Editar atividade"
+                              disabled={isControlsDisabled}
+                            >
+                              <Edit2 size={12} />
+                            </button>
+
+                            <button
+                              type="button"
+                              id={`btn-toggle-activity-${idx}`}
+                              className="btn btn-secondary"
+                              onClick={() => handleToggleActivityStatus(act.id)}
+                              style={{
+                                padding: '4px 8px',
+                                fontSize: '11px',
+                                color: isActive ? '#f59e0b' : '#10b981'
+                              }}
+                              title={isActive ? 'Desativar atividade padrão' : 'Reativar atividade padrão'}
+                              disabled={isControlsDisabled}
+                            >
+                              <Power size={12} style={{ marginRight: '4px' }} />
+                              {isActive ? 'Desativar' : 'Ativar'}
+                            </button>
+
+                            <button
+                              type="button"
+                              id={`btn-delete-activity-${idx}`}
+                              className="btn btn-secondary"
+                              onClick={() => handleDeleteActivity(act.id)}
+                              style={{
+                                padding: '4px 8px',
+                                fontSize: '11px',
+                                color: isUsed ? 'var(--text-muted)' : '#ef4444',
+                                opacity: isUsed ? 0.5 : 1
+                              }}
+                              title={
+                                isUsed
+                                  ? 'Atividade utilizada no culto não pode ser excluída fisicamente; desative-a em vez de excluir'
+                                  : 'Excluir atividade'
                               }
                               disabled={isControlsDisabled}
                             >

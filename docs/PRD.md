@@ -149,6 +149,8 @@ Uma atividade pode abranger **o evento inteiro ou apenas parte dele**. Isso é i
 
 É possível ajustar a edição específica, por exemplo realizar um culto sem transmissão. A preparação antes do início conta no intervalo de ocupação e nos conflitos quando estiver configurada. Durações padrão são configuráveis; exemplos de 5, 15 ou 20 minutos não são valores universais.
 
+**Complemento autorizado em 18/10/2026 — tipos de evento e atividades com durações padrão (Issue #25):** a aplicação web oferece a administração de tipos de evento e de atividades padrão com durações padrão configuráveis pelo administrador autorizado da igreja. Cada cadastro pertence à igreja selecionada e sua alteração ou inativação não reescreve nem altera retroativamente cultos já planejados ou realizados no passado. A exclusão física de um tipo ou atividade referenciado em eventos ou cronogramas existentes é estritamente bloqueada no banco e na interface, orientando a desativação protetiva para preservar o histórico. Membros sem privilégios administrativos não alteram cadastros e não são criados controles administrativos no aplicativo Android/iOS. Detalhes normativos em [Cadastro de Tipos e Atividades](CADASTRO-TIPOS-ATIVIDADES.md).
+
 ### 5.1 Participação específica no MVP
 
 Os líderes definem nominalmente quem exercerá cada responsabilidade. Não há confirmação eletrônica individual; o combinado ocorre fora do aplicativo.

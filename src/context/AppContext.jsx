@@ -4,6 +4,8 @@ import {
   INITIAL_MEMBERS,
   INITIAL_TEAMS,
   INITIAL_CANCEL_REASONS,
+  INITIAL_EVENT_TYPES,
+  INITIAL_STANDARD_ACTIVITIES,
   INITIAL_ACCESS_INVITES,
   INITIAL_EVENT,
   INITIAL_AUDIT_LOGS
@@ -13,6 +15,14 @@ import {
   validateCancellationReason,
   canDeleteCancellationReason,
 } from '../utils/cancellationReasonService';
+import {
+  toEventTypeObject,
+  toStandardActivityObject,
+  validateEventType,
+  validateStandardActivity,
+  canDeleteEventType,
+  canDeleteStandardActivity,
+} from '../utils/eventTypeActivityService';
 
 const AppContext = createContext(null);
 
@@ -23,6 +33,12 @@ export function AppProvider({ children, initialUserId = "carlos" }) {
   const [teams, setTeams] = useState(INITIAL_TEAMS);
   const [cancelReasons, setCancelReasons] = useState(() =>
     INITIAL_CANCEL_REASONS.map((r, idx) => toReasonObject(r, idx))
+  );
+  const [eventTypes, setEventTypes] = useState(() =>
+    INITIAL_EVENT_TYPES.map((t, idx) => toEventTypeObject(t, idx))
+  );
+  const [standardActivities, setStandardActivities] = useState(() =>
+    INITIAL_STANDARD_ACTIVITIES.map((a, idx) => toStandardActivityObject(a, idx))
   );
   const [accessInvites, setAccessInvites] = useState(INITIAL_ACCESS_INVITES);
   const [auditLogs, setAuditLogs] = useState(INITIAL_AUDIT_LOGS);
@@ -629,6 +645,155 @@ export function AppProvider({ children, initialUserId = "carlos" }) {
     return { success: true };
   };
 
+  // Gerenciamento de Tipos de Evento (PRD §5 - Issue #25)
+  const addEventType = (name, description = '') => {
+    if (!isAdmin) return { success: false, error: "Apenas administradores podem cadastrar tipos de evento." };
+    const validation = validateEventType(name, description, eventTypes);
+    if (!validation.valid) {
+      return { success: false, error: validation.error };
+    }
+    const newType = {
+      id: `et-${Date.now()}`,
+      name: validation.cleanName,
+      description: validation.cleanDesc,
+      active: true,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString()
+    };
+    setEventTypes(prev => [...prev, newType]);
+    addAuditLog("Cadastro de Tipo de Evento", `Novo tipo de evento cadastrado: "${validation.cleanName}".`);
+    return { success: true, eventType: newType };
+  };
+
+  const updateEventType = (id, newName, newDescription = '') => {
+    if (!isAdmin) return { success: false, error: "Apenas administradores podem alterar tipos de evento." };
+    const target = eventTypes.find(t => t.id === id);
+    if (!target) return { success: false, error: "Tipo de evento não encontrado." };
+    const validation = validateEventType(newName, newDescription, eventTypes, id);
+    if (!validation.valid) {
+      return { success: false, error: validation.error };
+    }
+    const previousName = target.name;
+    setEventTypes(prev =>
+      prev.map(t => t.id === id ? {
+        ...t,
+        name: validation.cleanName,
+        description: validation.cleanDesc,
+        updatedAt: new Date().toISOString()
+      } : t)
+    );
+    addAuditLog("Alteração de Tipo de Evento", `Tipo de evento alterado de "${previousName}" para "${validation.cleanName}".`);
+    return { success: true };
+  };
+
+  const toggleEventTypeStatus = (id) => {
+    if (!isAdmin) return { success: false, error: "Apenas administradores podem alterar o status de tipos de evento." };
+    const target = eventTypes.find(t => t.id === id);
+    if (!target) return { success: false, error: "Tipo de evento não encontrado." };
+    const nextActive = !target.active;
+    setEventTypes(prev =>
+      prev.map(t => t.id === id ? { ...t, active: nextActive, updatedAt: new Date().toISOString() } : t)
+    );
+    addAuditLog(
+      nextActive ? "Reativação de Tipo de Evento" : "Desativação de Tipo de Evento",
+      `Tipo de evento "${target.name}" foi ${nextActive ? "reativado" : "desativado"}.`
+    );
+    return { success: true, active: nextActive };
+  };
+
+  const deleteEventType = (id) => {
+    if (!isAdmin) return { success: false, error: "Apenas administradores podem excluir tipos de evento." };
+    const target = eventTypes.find(t => t.id === id);
+    if (!target) return { success: false, error: "Tipo de evento não encontrado." };
+    const deleteCheck = canDeleteEventType(target, [event]);
+    if (!deleteCheck.canDelete) {
+      return { success: false, error: deleteCheck.message };
+    }
+    setEventTypes(prev => prev.filter(t => t.id !== id));
+    addAuditLog("Exclusão de Tipo de Evento", `Tipo de evento "${target.name}" foi removido do cadastro.`);
+    return { success: true };
+  };
+
+  // Gerenciamento de Atividades Padrão com Duração (PRD §5 - Issue #25)
+  const addStandardActivity = (name, defaultDurationMinutes, category = 'Liturgia', description = '') => {
+    if (!isAdmin) return { success: false, error: "Apenas administradores podem cadastrar atividades padrão." };
+    const validation = validateStandardActivity(name, defaultDurationMinutes, category, description, standardActivities);
+    if (!validation.valid) {
+      return { success: false, error: validation.error };
+    }
+    const newActivity = {
+      id: `sa-${Date.now()}`,
+      name: validation.cleanName,
+      defaultDurationMinutes: validation.cleanDuration,
+      category: validation.cleanCat,
+      description: validation.cleanDesc,
+      active: true,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString()
+    };
+    setStandardActivities(prev => [...prev, newActivity]);
+    addAuditLog(
+      "Cadastro de Atividade Padrão",
+      `Nova atividade padrão cadastrada: "${validation.cleanName}" (${validation.cleanDuration} min).`
+    );
+    return { success: true, activity: newActivity };
+  };
+
+  const updateStandardActivity = (id, newName, newDurationMinutes, newCategory = 'Liturgia', newDescription = '') => {
+    if (!isAdmin) return { success: false, error: "Apenas administradores podem alterar atividades padrão." };
+    const target = standardActivities.find(a => a.id === id);
+    if (!target) return { success: false, error: "Atividade padrão não encontrada." };
+    const validation = validateStandardActivity(newName, newDurationMinutes, newCategory, newDescription, standardActivities, id);
+    if (!validation.valid) {
+      return { success: false, error: validation.error };
+    }
+    const previousName = target.name;
+    const previousDuration = target.defaultDurationMinutes;
+    setStandardActivities(prev =>
+      prev.map(a => a.id === id ? {
+        ...a,
+        name: validation.cleanName,
+        defaultDurationMinutes: validation.cleanDuration,
+        category: validation.cleanCat,
+        description: validation.cleanDesc,
+        updatedAt: new Date().toISOString()
+      } : a)
+    );
+    addAuditLog(
+      "Alteração de Atividade Padrão",
+      `Atividade padrão "${previousName}" (${previousDuration} min) alterada para "${validation.cleanName}" (${validation.cleanDuration} min).`
+    );
+    return { success: true };
+  };
+
+  const toggleStandardActivityStatus = (id) => {
+    if (!isAdmin) return { success: false, error: "Apenas administradores podem alterar o status de atividades padrão." };
+    const target = standardActivities.find(a => a.id === id);
+    if (!target) return { success: false, error: "Atividade padrão não encontrada." };
+    const nextActive = !target.active;
+    setStandardActivities(prev =>
+      prev.map(a => a.id === id ? { ...a, active: nextActive, updatedAt: new Date().toISOString() } : a)
+    );
+    addAuditLog(
+      nextActive ? "Reativação de Atividade Padrão" : "Desativação de Atividade Padrão",
+      `Atividade padrão "${target.name}" foi ${nextActive ? "reativada" : "desativada"}.`
+    );
+    return { success: true, active: nextActive };
+  };
+
+  const deleteStandardActivity = (id) => {
+    if (!isAdmin) return { success: false, error: "Apenas administradores podem excluir atividades padrão." };
+    const target = standardActivities.find(a => a.id === id);
+    if (!target) return { success: false, error: "Atividade padrão não encontrada." };
+    const deleteCheck = canDeleteStandardActivity(target, event.activities);
+    if (!deleteCheck.canDelete) {
+      return { success: false, error: deleteCheck.message };
+    }
+    setStandardActivities(prev => prev.filter(a => a.id !== id));
+    addAuditLog("Exclusão de Atividade Padrão", `Atividade padrão "${target.name}" foi removida do cadastro.`);
+    return { success: true };
+  };
+
   const sendAccessInvite = (email, memberName) => {
     if (!isAdmin) return;
     const newInv = {
@@ -667,6 +832,10 @@ export function AppProvider({ children, initialUserId = "carlos" }) {
         members,
         teams,
         cancelReasons,
+        eventTypes,
+        setEventTypes,
+        standardActivities,
+        setStandardActivities,
         accessInvites,
         auditLogs,
         currentUser,
@@ -703,6 +872,14 @@ export function AppProvider({ children, initialUserId = "carlos" }) {
         updateCancelReason,
         toggleCancelReasonStatus,
         deleteCancelReason,
+        addEventType,
+        updateEventType,
+        toggleEventTypeStatus,
+        deleteEventType,
+        addStandardActivity,
+        updateStandardActivity,
+        toggleStandardActivityStatus,
+        deleteStandardActivity,
         sendAccessInvite,
         designateLiturgyLeader,
         addAuditLog

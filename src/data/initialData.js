@@ -146,6 +146,23 @@ export const INITIAL_CANCEL_REASONS = [
   { id: "cr-6", name: "Ausência do participante sem substituto viável", active: true }
 ];
 
+export const INITIAL_EVENT_TYPES = [
+  { id: "et-1", name: "Celebração Geral", description: "Culto congregacional de domingo com celebração e comunhão", active: true },
+  { id: "et-2", name: "Culto de Doutrina e Oração", description: "Reunião de ensino bíblico, intercessão e oração", active: true },
+  { id: "et-3", name: "Ensaio Geral e Alinhamento Técnico", description: "Ensaio prático das equipes de louvor, áudio e transmissão", active: true },
+  { id: "et-4", name: "Culto de Jovens e Adolescentes", description: "Programação dinâmica voltada para a juventude", active: true }
+];
+
+export const INITIAL_STANDARD_ACTIVITIES = [
+  { id: "sa-1", name: "Boas-Vindas e Oração Inicial", defaultDurationMinutes: 5, category: "Liturgia", description: "Acolhimento aos presentes e oração de abertura", active: true },
+  { id: "sa-2", name: "Louvor e Adoração Congregacional", defaultDurationMinutes: 25, category: "Louvor", description: "Bloco unificado de adoração congregacional", active: true },
+  { id: "sa-3", name: "Oportunidade Especial de Louvor", defaultDurationMinutes: 7, category: "Louvor", description: "Solo, dueto ou apresentação especial com playback", active: true },
+  { id: "sa-4", name: "Avisos e Momento Pastoral", defaultDurationMinutes: 8, category: "Liturgia", description: "Comunicados da igreja e boas-vindas a visitantes", active: true },
+  { id: "sa-5", name: "Ministração da Palavra", defaultDurationMinutes: 45, category: "Palavra", description: "Pregação central e exposição bíblica", active: true },
+  { id: "sa-6", name: "Momento de Dízimos e Ofertas", defaultDurationMinutes: 10, category: "Liturgia", description: "Cântico de gratidão e recolhimento de ofertas", active: true },
+  { id: "sa-7", name: "Oração Final e Bênção Apostólica", defaultDurationMinutes: 5, category: "Liturgia", description: "Encerramento litúrgico do culto", active: true }
+];
+
 export const INITIAL_ACCESS_INVITES = [
   { id: "inv-1", email: "joao.silva@gmail.com", memberName: "João Silva", status: "Pendente", sentAt: "2026-09-28 14:00" },
   { id: "inv-2", email: "aline.rocha@outlook.com", memberName: "Aline Rocha", status: "Aceito", sentAt: "2026-09-25 10:30" }
