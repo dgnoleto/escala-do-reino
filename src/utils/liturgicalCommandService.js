@@ -835,3 +835,64 @@ export async function fetchEventAssignments({ supabase, churchId, eventId }) {
   const row = Array.isArray(data) ? data[0] : data;
   return row?.assignments || [];
 }
+
+/**
+ * Formata mensagens de erro na consulta de equipes de forma contextualizada.
+ * Distingue:
+ * - Indisponibilidade de backend / contrato ausente (PGRST202 / Could not find function)
+ * - Permissão recusada (42501 / permission denied)
+ * - Falha de conexão / transporte (network / failed to fetch)
+ * - Erro genérico
+ *
+ * @param {object|string} error
+ * @param {object} [options]
+ * @returns {string}
+ */
+export function formatTeamsListErrorMessage(error, { isRefresh = false } = {}) {
+  const rawMsg = typeof error === 'string' ? error : String(error?.message || '');
+  const lower = rawMsg.toLowerCase();
+  const code = String(error?.code || '');
+
+  const isNetworkFailure =
+    lower.includes('failed to fetch') ||
+    lower.includes('network') ||
+    lower.includes('networkerror') ||
+    lower.includes('load failed') ||
+    lower.includes('abort') ||
+    lower.includes('conexão') ||
+    lower.includes('offline');
+
+  if (isNetworkFailure) {
+    if (isRefresh) {
+      return 'Não foi possível atualizar os ministérios e equipes por falha de conexão. Os dados exibidos podem estar desatualizados.';
+    }
+    return 'Não foi possível carregar os ministérios e equipes por falha de conexão. Verifique sua rede e tente novamente.';
+  }
+
+  if (
+    code === 'PGRST202' ||
+    lower.includes('could not find the function') ||
+    lower.includes('schema cache') ||
+    lower.includes('does not exist')
+  ) {
+    return 'Serviço de equipes indisponível no servidor. O contrato necessário ainda não está disponível no backend conectado.';
+  }
+
+  if (
+    code === '42501' ||
+    lower.includes('privilégio') ||
+    lower.includes('não autorizado') ||
+    lower.includes('permission denied')
+  ) {
+    return 'Permissão insuficiente para consultar os ministérios e equipes desta igreja.';
+  }
+
+  if (rawMsg.trim() && !rawMsg.includes('TypeError') && !rawMsg.includes('ReferenceError') && rawMsg.length < 150) {
+    return rawMsg;
+  }
+
+  if (isRefresh) {
+    return 'Não foi possível atualizar os ministérios e equipes. Tente novamente.';
+  }
+  return 'Não foi possível carregar os ministérios e equipes. Tente novamente.';
+}
