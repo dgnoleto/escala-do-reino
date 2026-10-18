@@ -31,6 +31,7 @@ import {
   savePendingLiturgicalCommand,
   loadPendingLiturgicalCommand,
   removePendingLiturgicalCommand,
+  formatTeamsListErrorMessage,
 } from '../utils/liturgicalCommandService';
 
 export default function TeamsPage({ onBack }) {
@@ -45,12 +46,14 @@ export default function TeamsPage({ onBack }) {
   // Estados principais da listagem de equipes
   const [teams, setTeams] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [hasLoadedSuccessfully, setHasLoadedSuccessfully] = useState(false);
   const [errorMsg, setErrorMsg] = useState(null);
   const [successMsg, setSuccessMsg] = useState(null);
 
   // Modal de Criação de Equipe
   const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
   const [newTeamName, setNewTeamName] = useState('');
+  const [newTeamLeaderId, setNewTeamLeaderId] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
 
   // Equipe Selecionada para Detalhes (Roles e Integrantes)
@@ -58,6 +61,10 @@ export default function TeamsPage({ onBack }) {
   const [teamRoles, setTeamRoles] = useState([]);
   const [teamMembers, setTeamMembers] = useState([]);
   const [loadingDetails, setLoadingDetails] = useState(false);
+
+  // Seleção de Funções Técnicas e Mapeamento de Aptidões dos Integrantes
+  const [selectedRoleIds, setSelectedRoleIds] = useState([]);
+  const [memberQualsMap, setMemberQualsMap] = useState({});
 
   // Formulário para Nova Função Técnica
   const [newRoleName, setNewRoleName] = useState('');
@@ -83,15 +90,30 @@ export default function TeamsPage({ onBack }) {
   const activeLoadingTeamIdRef = useRef(null);
   const activeChurchIdRef = useRef(churchId);
   const activeUserIdRef = useRef(currentUserId);
+  const loadTeamsRequestRef = useRef(0);
 
   useEffect(() => {
     isMountedRef.current = true;
     return () => { isMountedRef.current = false; };
   }, []);
 
+  // Limpa estados imediatamente ao alternar igreja ou conta para evitar contaminação
   useEffect(() => {
     activeChurchIdRef.current = churchId;
     activeUserIdRef.current = currentUserId;
+    loadTeamsRequestRef.current += 1;
+    setTeams([]);
+    setSelectedTeamId(null);
+    setTeamRoles([]);
+    setTeamMembers([]);
+    setSelectedRoleIds([]);
+    setMemberQualsMap({});
+    setErrorMsg(null);
+    setSuccessMsg(null);
+    setHasLoadedSuccessfully(false);
+    if (!churchId) {
+      setLoading(false);
+    }
   }, [churchId, currentUserId]);
 
   // 1. Carrega comando pendente se houver
@@ -104,24 +126,44 @@ export default function TeamsPage({ onBack }) {
 
   // 2. Carrega a lista real de equipes do servidor
   const loadTeams = useCallback(async () => {
-    if (!supabase || !churchId) return;
+    if (!supabase || !churchId) {
+      setLoading(false);
+      return;
+    }
+    const reqId = ++loadTeamsRequestRef.current;
     setLoading(true);
     setErrorMsg(null);
     try {
       const list = await fetchChurchTeams({ supabase, churchId });
-      if (isMountedRef.current && activeChurchIdRef.current === churchId) {
-        setTeams(list);
+      if (
+        isMountedRef.current &&
+        loadTeamsRequestRef.current === reqId &&
+        activeChurchIdRef.current === churchId &&
+        activeUserIdRef.current === currentUserId
+      ) {
+        setTeams(Array.isArray(list) ? list : []);
+        setHasLoadedSuccessfully(true);
       }
     } catch (err) {
-      if (isMountedRef.current && activeChurchIdRef.current === churchId) {
-        setErrorMsg(err.message || 'Falha ao carregar ministérios e equipes.');
+      if (
+        isMountedRef.current &&
+        loadTeamsRequestRef.current === reqId &&
+        activeChurchIdRef.current === churchId &&
+        activeUserIdRef.current === currentUserId
+      ) {
+        const classified = formatTeamsListErrorMessage(err, { isRefresh: teams.length > 0 });
+        setErrorMsg(classified);
       }
     } finally {
-      if (isMountedRef.current && activeChurchIdRef.current === churchId) {
+      if (
+        isMountedRef.current &&
+        loadTeamsRequestRef.current === reqId &&
+        activeChurchIdRef.current === churchId
+      ) {
         setLoading(false);
       }
     }
-  }, [churchId]);
+  }, [churchId, currentUserId, teams.length]);
 
   useEffect(() => {
     loadTeams();
@@ -145,6 +187,33 @@ export default function TeamsPage({ onBack }) {
       ) {
         setTeamRoles(roles);
         setTeamMembers(members);
+
+        // Carrega qualificações homologadas dos membros da equipe
+        try {
+          const qualsEntries = await Promise.all(
+            (members || []).map(async (m) => {
+              const mId = m.member_id || m.id;
+              try {
+                const quals = await fetchMemberQualifications({ supabase, churchId, memberId: mId });
+                const teamQuals = Array.isArray(quals)
+                  ? quals.filter((q) => (q.team_id === teamId || !q.team_id) && q.status === 'active')
+                  : [];
+                return [mId, teamQuals];
+              } catch {
+                return [mId, []];
+              }
+            })
+          );
+          if (
+            isMountedRef.current &&
+            activeLoadingTeamIdRef.current === teamId &&
+            activeChurchIdRef.current === churchId
+          ) {
+            setMemberQualsMap(Object.fromEntries(qualsEntries));
+          }
+        } catch {
+          // enriquecimento de qualificações não interrompe exibição
+        }
       }
     } catch (err) {
       if (
@@ -165,10 +234,22 @@ export default function TeamsPage({ onBack }) {
   }, [churchId, currentUserId]);
 
   useEffect(() => {
+    setSelectedRoleIds([]);
+    setMemberQualsMap({});
     if (selectedTeamId) {
       loadTeamDetails(selectedTeamId);
     }
   }, [selectedTeamId, loadTeamDetails]);
+
+  // Alterna seleção manual de função técnica (permite selecionar mais de uma com clique)
+  const toggleRoleSelection = (roleId) => {
+    setSelectedRoleIds((prev) => {
+      if (prev.includes(roleId)) {
+        return prev.filter((id) => id !== roleId);
+      }
+      return [...prev, roleId];
+    });
+  };
 
   // 4. Carrega membros ativos da igreja para seleção em modais
   const loadAvailableMembers = useCallback(async () => {
@@ -260,6 +341,7 @@ export default function TeamsPage({ onBack }) {
     }
 
     const commandId = crypto.randomUUID();
+    const leaderIdToAssign = newTeamLeaderId || null;
     setIsSubmitting(true);
     setErrorMsg(null);
 
@@ -270,13 +352,14 @@ export default function TeamsPage({ onBack }) {
         churchId,
         action: 'create_church_team',
         name: newTeamName.trim(),
+        leaderMemberId: leaderIdToAssign,
       });
       if (!saved) {
         setErrorMsg('Falha ao persistir comando na sessão local. Envio cancelado por segurança.');
         setIsSubmitting(false);
         return;
       }
-      setPendingCmd({ commandId, churchId, action: 'create_church_team', name: newTeamName.trim() });
+      setPendingCmd({ commandId, churchId, action: 'create_church_team', name: newTeamName.trim(), leaderMemberId: leaderIdToAssign });
     }
 
     try {
@@ -285,6 +368,7 @@ export default function TeamsPage({ onBack }) {
         churchId,
         commandId,
         name: newTeamName.trim(),
+        leaderMemberId: leaderIdToAssign,
       });
 
       if (res.status === 'SUCCESS') {
@@ -294,6 +378,7 @@ export default function TeamsPage({ onBack }) {
         }
         setSuccessMsg(`Equipe "${newTeamName.trim()}" criada com sucesso!`);
         setNewTeamName('');
+        setNewTeamLeaderId('');
         setIsCreateModalOpen(false);
         await loadTeams();
       } else if (res.status === 'DEFINITIVE_ERROR') {
@@ -345,7 +430,14 @@ export default function TeamsPage({ onBack }) {
       });
       if (res.status === 'SUCCESS') {
         const quals = await fetchMemberQualifications({ supabase, churchId, memberId: targetMemberId });
+        const teamQuals = Array.isArray(quals)
+          ? quals.filter((q) => (q.team_id === selectedTeamId || !q.team_id) && q.status === 'active')
+          : [];
         setMemberQuals(quals);
+        setMemberQualsMap((prev) => ({
+          ...prev,
+          [targetMemberId]: teamQuals,
+        }));
         setSuccessMsg('Aptidão técnica homologada com sucesso!');
       } else {
         setErrorMsg(res.message || 'Falha ao conceder aptidão.');
@@ -372,7 +464,14 @@ export default function TeamsPage({ onBack }) {
       });
       if (res.status === 'SUCCESS') {
         const quals = await fetchMemberQualifications({ supabase, churchId, memberId: targetMemberId });
+        const teamQuals = Array.isArray(quals)
+          ? quals.filter((q) => (q.team_id === selectedTeamId || !q.team_id) && q.status === 'active')
+          : [];
         setMemberQuals(quals);
+        setMemberQualsMap((prev) => ({
+          ...prev,
+          [targetMemberId]: teamQuals,
+        }));
         setSuccessMsg('Aptidão técnica revogada.');
       } else {
         setErrorMsg(res.message || 'Falha ao revogar aptidão.');
@@ -384,12 +483,14 @@ export default function TeamsPage({ onBack }) {
     }
   };
 
-  // 6. Ação: Adicionar Integrante na Equipe
+  // 6. Ação: Adicionar Integrante na Equipe com vínculo de funções selecionadas
   const handleAddMember = async (e) => {
     e.preventDefault();
     if (!selectedMemberToAdd || !selectedTeamId || isSubmitting) return;
 
     const commandId = crypto.randomUUID();
+    const targetMemberId = selectedMemberToAdd;
+    const rolesToGrant = [...selectedRoleIds];
     setIsSubmitting(true);
     setErrorMsg(null);
 
@@ -399,11 +500,53 @@ export default function TeamsPage({ onBack }) {
         churchId,
         commandId,
         teamId: selectedTeamId,
-        memberId: selectedMemberToAdd,
+        memberId: targetMemberId,
       });
 
       if (res.status === 'SUCCESS') {
-        setSuccessMsg('Integrante adicionado à equipe com sucesso!');
+        const memberObj = availableMembers.find(
+          (am) => (am.member_id || am.id) === targetMemberId
+        );
+        const memberName = memberObj?.display_name || 'Integrante';
+
+        let grantedCount = 0;
+        let grantErrors = [];
+
+        // Homologa em série cada função técnica selecionada para este novo integrante
+        if (rolesToGrant.length > 0) {
+          for (const roleId of rolesToGrant) {
+            try {
+              const qualRes = await grantMemberQualification({
+                supabase,
+                churchId,
+                commandId: crypto.randomUUID(),
+                memberId: targetMemberId,
+                teamId: selectedTeamId,
+                teamRoleId: roleId,
+              });
+              if (qualRes.status === 'SUCCESS') {
+                grantedCount++;
+              } else {
+                grantErrors.push(qualRes.message || 'Erro ao conceder aptidão');
+              }
+            } catch (qErr) {
+              grantErrors.push(qErr.message || 'Erro ao conceder aptidão');
+            }
+          }
+        }
+
+        if (grantErrors.length > 0) {
+          setSuccessMsg(`${memberName} adicionado à equipe, mas houve pendência nas funções: ${grantErrors.join(', ')}`);
+        } else if (grantedCount > 0) {
+          const grantedNames = teamRoles
+            .filter((r) => rolesToGrant.includes(r.id ?? r.team_role_id ?? r.role_id))
+            .map((r) => r.name)
+            .join(', ');
+          setSuccessMsg(`${memberName} vinculado com sucesso com a(s) função(ões): ${grantedNames}!`);
+        } else {
+          setSuccessMsg(`${memberName} adicionado à equipe com sucesso!`);
+        }
+
         setSelectedMemberToAdd('');
         await loadTeamDetails(selectedTeamId);
         await loadTeams();
@@ -413,7 +556,9 @@ export default function TeamsPage({ onBack }) {
     } catch (err) {
       setErrorMsg(err.message || 'Falha ao adicionar integrante.');
     } finally {
-      setIsSubmitting(false);
+      if (isMountedRef.current) {
+        setIsSubmitting(false);
+      }
     }
   };
 
@@ -447,11 +592,12 @@ export default function TeamsPage({ onBack }) {
     }
   };
 
-  // 8. Ação: Criar Função Técnica
+  // 8. Ação: Criar Função Técnica (auto-seleciona a nova e desmarca as anteriores)
   const handleCreateRole = async (e) => {
     e.preventDefault();
     if (!newRoleName.trim() || !selectedTeamId || isSubmitting) return;
 
+    const roleNameTrimmed = newRoleName.trim();
     const commandId = crypto.randomUUID();
     setIsSubmitting(true);
     setErrorMsg(null);
@@ -462,26 +608,45 @@ export default function TeamsPage({ onBack }) {
         churchId,
         commandId,
         teamId: selectedTeamId,
-        name: newRoleName.trim(),
+        name: roleNameTrimmed,
         description: newRoleDesc.trim() || null,
       });
 
       if (res.status === 'SUCCESS') {
-        setSuccessMsg(`Função técnica "${newRoleName.trim()}" cadastrada!`);
+        setSuccessMsg(`Função técnica "${roleNameTrimmed}" cadastrada!`);
         setNewRoleName('');
         setNewRoleDesc('');
-        await loadTeamDetails(selectedTeamId);
+
+        const updatedRoles = await fetchChurchTeamRoles({ supabase, churchId, teamId: selectedTeamId });
+        if (isMountedRef.current) {
+          setTeamRoles(updatedRoles);
+
+          // Localiza o ID da nova função criada
+          const createdRoleId =
+            res.data?.role_id ||
+            res.receipt?.result_entity_id ||
+            updatedRoles.find((r) => r.name.toLowerCase() === roleNameTrimmed.toLowerCase())?.id ||
+            updatedRoles.find((r) => r.name.toLowerCase() === roleNameTrimmed.toLowerCase())?.team_role_id ||
+            updatedRoles.find((r) => r.name.toLowerCase() === roleNameTrimmed.toLowerCase())?.role_id;
+
+          // Regra de ordem: nova função vem selecionada e qualquer anterior é desmarcada
+          if (createdRoleId) {
+            setSelectedRoleIds([createdRoleId]);
+          }
+        }
       } else {
         setErrorMsg(res.message);
       }
     } catch (err) {
       setErrorMsg(err.message || 'Falha ao cadastrar função técnica.');
     } finally {
-      setIsSubmitting(false);
+      if (isMountedRef.current) {
+        setIsSubmitting(false);
+      }
     }
   };
 
-  // 9. Ação: Transferir Liderança da Equipe (Admin)
+  // 9. Ação: Selecionar / Transferir Liderança da Equipe (Admin)
   const handleTransferLeadership = async (e) => {
     e.preventDefault();
     if (!newLeaderId || !selectedTeamId || isSubmitting) return;
@@ -489,6 +654,8 @@ export default function TeamsPage({ onBack }) {
     const commandId = crypto.randomUUID();
     setIsSubmitting(true);
     setErrorMsg(null);
+
+    const hasLeader = Boolean(selectedTeam?.leader_member_id);
 
     try {
       const currentTeam = teams.find((t) => (t.id ?? t.team_id) === selectedTeamId);
@@ -502,7 +669,11 @@ export default function TeamsPage({ onBack }) {
       });
 
       if (res.status === 'SUCCESS') {
-        setSuccessMsg('Liderança da equipe transferida com sucesso!');
+        setSuccessMsg(
+          hasLeader
+            ? 'Liderança da equipe transferida com sucesso!'
+            : 'Líder da equipe selecionado com sucesso!'
+        );
         setIsTransferModalOpen(false);
         setNewLeaderId('');
         await loadTeams();
@@ -511,9 +682,11 @@ export default function TeamsPage({ onBack }) {
         setErrorMsg(res.message);
       }
     } catch (err) {
-      setErrorMsg(err.message || 'Falha ao transferir liderança.');
+      setErrorMsg(err.message || (hasLeader ? 'Falha ao transferir liderança.' : 'Falha ao selecionar líder.'));
     } finally {
-      setIsSubmitting(false);
+      if (isMountedRef.current) {
+        setIsSubmitting(false);
+      }
     }
   };
 
@@ -594,11 +767,35 @@ export default function TeamsPage({ onBack }) {
         </div>
       )}
 
-      {/* Alertas de Erro e Sucesso */}
-      {errorMsg && (
-        <div className="card" style={{ background: '#fef2f2', border: '1px solid #f87171', color: '#991b1b', padding: '12px', marginBottom: '16px', display: 'flex', alignItems: 'center', gap: '8px' }}>
-          <AlertCircle size={18} />
-          <span style={{ fontSize: '0.85rem' }}>{errorMsg}</span>
+      {/* Alertas de Erro (quando a lista já está visível) e Sucesso */}
+      {errorMsg && teams.length > 0 && (
+        <div
+          className="card"
+          style={{
+            background: '#fef2f2',
+            border: '1px solid #f87171',
+            color: '#991b1b',
+            padding: '12px',
+            marginBottom: '16px',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            gap: '8px',
+          }}
+          role="alert"
+        >
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+            <AlertCircle size={18} />
+            <span style={{ fontSize: '0.85rem' }}>{errorMsg}</span>
+          </div>
+          <button
+            type="button"
+            className="btn btn-secondary"
+            onClick={loadTeams}
+            style={{ fontSize: '0.78rem', padding: '4px 10px', whiteSpace: 'nowrap', display: 'inline-flex', alignItems: 'center', gap: '4px' }}
+          >
+            <RefreshCw size={13} /> Tentar novamente
+          </button>
         </div>
       )}
 
@@ -611,11 +808,36 @@ export default function TeamsPage({ onBack }) {
 
       {/* Conteúdo Principal: Grade de Equipes */}
       {loading ? (
-        <div style={{ textAlign: 'center', padding: '32px' }}>
+        <div style={{ textAlign: 'center', padding: '32px' }} role="status" aria-live="polite">
           <RefreshCw size={24} className="spin" color="var(--primary)" />
           <p style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', marginTop: '8px' }}>Carregando equipes...</p>
         </div>
-      ) : teams.length === 0 ? (
+      ) : errorMsg && teams.length === 0 ? (
+        <div
+          className="card"
+          style={{
+            textAlign: 'center',
+            padding: '32px',
+            border: '1px solid #fca5a5',
+            background: '#fff5f5',
+          }}
+          role="alert"
+        >
+          <AlertCircle size={36} color="#ef4444" style={{ margin: '0 auto 12px' }} />
+          <h3 style={{ fontSize: '1.1rem', margin: '0 0 6px', color: '#991b1b' }}>Não foi possível carregar as equipes</h3>
+          <p style={{ fontSize: '0.85rem', color: '#7f1d1d', margin: '0 0 16px', maxWidth: '480px', marginLeft: 'auto', marginRight: 'auto' }}>
+            {errorMsg}
+          </p>
+          <button
+            type="button"
+            className="btn btn-secondary"
+            onClick={loadTeams}
+            style={{ margin: '0 auto', display: 'inline-flex', alignItems: 'center', gap: '6px' }}
+          >
+            <RefreshCw size={15} /> Tentar novamente
+          </button>
+        </div>
+      ) : hasLoadedSuccessfully && teams.length === 0 ? (
         <div className="card" style={{ textAlign: 'center', padding: '32px' }}>
           <Layers size={36} color="var(--text-muted)" style={{ margin: '0 auto 12px' }} />
           <h3 style={{ fontSize: '1.1rem', margin: '0 0 6px' }}>Nenhuma equipe cadastrada</h3>
@@ -674,7 +896,7 @@ export default function TeamsPage({ onBack }) {
                     onClick={() => setIsTransferModalOpen(true)}
                     style={{ fontSize: '0.75rem', padding: '4px 8px' }}
                   >
-                    Transferir Liderança
+                    {selectedTeam.leader_member_id ? 'Transferir Liderança' : 'Selecionar Líder'}
                   </button>
                 )}
               </div>
@@ -687,6 +909,11 @@ export default function TeamsPage({ onBack }) {
                   <div style={{ marginBottom: '18px' }}>
                     <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '8px' }}>
                       <strong style={{ fontSize: '0.9rem' }}>Funções Técnicas ({teamRoles.length})</strong>
+                      <span style={{ fontSize: '0.74rem', color: 'var(--text-secondary)' }}>
+                        {selectedRoleIds.length === 0
+                          ? 'Nenhuma selecionada'
+                          : `${selectedRoleIds.length} selecionada(s) para vincular`}
+                      </span>
                     </div>
 
                     {teamRoles.length === 0 ? (
@@ -695,10 +922,31 @@ export default function TeamsPage({ onBack }) {
                       <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px', marginBottom: '10px' }}>
                         {teamRoles.map((r) => {
                           const roleKey = r.id ?? r.team_role_id ?? r.role_id;
+                          const isSelected = selectedRoleIds.includes(roleKey);
                           return (
-                            <span key={roleKey} className="badge badge-primary" style={{ fontSize: '0.78rem' }}>
+                            <button
+                              key={roleKey}
+                              type="button"
+                              onClick={() => toggleRoleSelection(roleKey)}
+                              style={{
+                                display: 'inline-flex',
+                                alignItems: 'center',
+                                gap: '6px',
+                                fontSize: '0.78rem',
+                                padding: '4px 10px',
+                                borderRadius: '999px',
+                                cursor: 'pointer',
+                                border: isSelected ? '1px solid var(--primary, #2563eb)' : '1px solid var(--border-subtle)',
+                                background: isSelected ? 'var(--primary, #2563eb)' : 'transparent',
+                                color: isSelected ? '#ffffff' : 'var(--text-primary)',
+                                fontWeight: isSelected ? 600 : 500,
+                                transition: 'all 0.15s ease',
+                              }}
+                              title={isSelected ? 'Selecionada! Clique para desmarcar.' : 'Clique para selecionar para o próximo vínculo.'}
+                            >
+                              {isSelected && <CheckCircle2 size={13} />}
                               {r.name}
-                            </span>
+                            </button>
                           );
                         })}
                       </div>
@@ -713,7 +961,7 @@ export default function TeamsPage({ onBack }) {
                         onChange={(e) => setNewRoleName(e.target.value)}
                         style={{ flex: 1, fontSize: '0.8rem', padding: '6px 8px', borderRadius: '6px', border: '1px solid var(--border-subtle)' }}
                       />
-                      <button type="submit" className="btn btn-primary" disabled={isSubmitting} style={{ fontSize: '0.78rem', padding: '6px 10px' }}>
+                      <button type="submit" className="btn btn-primary" disabled={isSubmitting || !newRoleName.trim()} style={{ fontSize: '0.78rem', padding: '6px 10px' }}>
                         Adicionar Função
                       </button>
                     </form>
@@ -728,11 +976,13 @@ export default function TeamsPage({ onBack }) {
                     {teamMembers.length === 0 ? (
                       <p style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>Nenhum integrante vinculado.</p>
                     ) : (
-                      <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', marginBottom: '12px' }}>
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', marginBottom: '12px' }}>
                         {teamMembers.map((m) => {
                           const memberKey = m.id ?? m.membership_id ?? m.member_id;
                           const isLeader = m.is_team_leader || (selectedTeam && selectedTeam.leader_member_id === (m.member_id ?? m.id));
                           const memberTargetId = m.member_id ?? m.id;
+                          const memberQualifications = memberQualsMap[memberTargetId] || [];
+
                           return (
                             <div
                               key={memberKey}
@@ -740,22 +990,48 @@ export default function TeamsPage({ onBack }) {
                                 display: 'flex',
                                 alignItems: 'center',
                                 justifyContent: 'space-between',
-                                padding: '6px 10px',
+                                padding: '8px 10px',
                                 background: 'var(--bg-surface)',
                                 borderRadius: '6px',
                                 border: '1px solid var(--border-subtle)',
                                 fontSize: '0.82rem',
+                                gap: '8px',
                               }}
                             >
-                              <span>
-                                {m.display_name} {isLeader && <strong style={{ color: 'var(--primary)' }}>(Líder)</strong>}
-                              </span>
+                              <div style={{ flex: 1, minWidth: 0 }}>
+                                <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                                  <span style={{ fontWeight: 600, color: 'var(--text-primary)' }}>{m.display_name}</span>
+                                  {isLeader && <span className="badge badge-primary" style={{ fontSize: '0.68rem', padding: '1px 5px' }}>Líder</span>}
+                                </div>
+                                <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px', marginTop: '4px' }}>
+                                  {memberQualifications.length > 0 ? (
+                                    memberQualifications.map((q) => {
+                                      const qualKey = q.id || q.qualification_id || q.team_role_id || q.role_id;
+                                      const rName = q.role_name || teamRoles.find((tr) => (tr.id ?? tr.team_role_id ?? tr.role_id) === (q.team_role_id ?? q.role_id))?.name || 'Aptidão';
+                                      return (
+                                        <span
+                                          key={qualKey}
+                                          className="badge badge-primary"
+                                          style={{ fontSize: '0.7rem', padding: '1px 6px', fontWeight: 500 }}
+                                        >
+                                          {rName}
+                                        </span>
+                                      );
+                                    })
+                                  ) : (
+                                    <span style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }}>
+                                      Sem função técnica atribuída
+                                    </span>
+                                  )}
+                                </div>
+                              </div>
+
                               <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
                                 <button
                                   type="button"
                                   onClick={() => handleOpenQuals(m)}
                                   className="btn btn-secondary"
-                                  style={{ fontSize: '0.72rem', padding: '2px 6px', display: 'inline-flex', alignItems: 'center', gap: '4px' }}
+                                  style={{ fontSize: '0.72rem', padding: '3px 8px', display: 'inline-flex', alignItems: 'center', gap: '4px' }}
                                   title="Gerenciar aptidões técnicas"
                                 >
                                   <Award size={13} /> Aptidões
@@ -764,7 +1040,7 @@ export default function TeamsPage({ onBack }) {
                                   <button
                                     type="button"
                                     onClick={() => handleRemoveMember(memberTargetId)}
-                                    style={{ background: 'transparent', border: 'none', color: '#ef4444', cursor: 'pointer', padding: '2px' }}
+                                    style={{ background: 'transparent', border: 'none', color: '#ef4444', cursor: 'pointer', padding: '4px' }}
                                     title="Remover da equipe"
                                   >
                                     <Trash2 size={14} />
@@ -778,27 +1054,51 @@ export default function TeamsPage({ onBack }) {
                     )}
 
                     {/* Form para vincular integrante */}
-                    <form onSubmit={handleAddMember} style={{ display: 'flex', gap: '6px' }}>
-                      <select
-                        value={selectedMemberToAdd}
-                        onChange={(e) => setSelectedMemberToAdd(e.target.value)}
-                        style={{ flex: 1, fontSize: '0.8rem', padding: '6px 8px', borderRadius: '6px', border: '1px solid var(--border-subtle)' }}
-                      >
-                        <option value="">Selecione um membro...</option>
-                        {availableMembers
-                          .filter((am) => !teamMembers.some((tm) => tm.member_id === (am.member_id || am.id)))
-                          .map((am) => {
-                            const mId = am.member_id || am.id;
-                            return (
-                              <option key={mId} value={mId}>
-                                {am.display_name}
-                              </option>
-                            );
-                          })}
-                      </select>
-                      <button type="submit" className="btn btn-primary" disabled={!selectedMemberToAdd || isSubmitting} style={{ fontSize: '0.78rem', padding: '6px 10px' }}>
-                        Vincular
-                      </button>
+                    <form onSubmit={handleAddMember} style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                      {selectedRoleIds.length > 0 && (
+                        <div style={{ fontSize: '0.76rem', color: 'var(--text-secondary)', display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: '4px' }}>
+                          <span>Função técnica a vincular:</span>
+                          {teamRoles
+                            .filter((r) => selectedRoleIds.includes(r.id ?? r.team_role_id ?? r.role_id))
+                            .map((r) => (
+                              <span
+                                key={r.id ?? r.team_role_id ?? r.role_id}
+                                className="badge badge-primary"
+                                style={{ fontSize: '0.7rem', padding: '1px 6px' }}
+                              >
+                                {r.name}
+                              </span>
+                            ))}
+                        </div>
+                      )}
+
+                      <div style={{ display: 'flex', gap: '6px' }}>
+                        <select
+                          value={selectedMemberToAdd}
+                          onChange={(e) => setSelectedMemberToAdd(e.target.value)}
+                          style={{ flex: 1, fontSize: '0.8rem', padding: '6px 8px', borderRadius: '6px', border: '1px solid var(--border-subtle)' }}
+                        >
+                          <option value="">Selecione um membro...</option>
+                          {availableMembers
+                            .filter((am) => !teamMembers.some((tm) => tm.member_id === (am.member_id || am.id)))
+                            .map((am) => {
+                              const mId = am.member_id || am.id;
+                              return (
+                                <option key={mId} value={mId}>
+                                  {am.display_name}
+                                </option>
+                              );
+                            })}
+                        </select>
+                        <button
+                          type="submit"
+                          className="btn btn-primary"
+                          disabled={!selectedMemberToAdd || isSubmitting}
+                          style={{ fontSize: '0.78rem', padding: '6px 12px', whiteSpace: 'nowrap' }}
+                        >
+                          {selectedRoleIds.length > 0 ? 'Vincular com Função' : 'Vincular'}
+                        </button>
+                      </div>
                     </form>
                   </div>
                 </>
@@ -826,8 +1126,37 @@ export default function TeamsPage({ onBack }) {
                 />
               </div>
 
+              <div style={{ marginBottom: '14px' }}>
+                <label style={{ display: 'block', fontSize: '0.85rem', marginBottom: '4px', fontWeight: 600 }}>
+                  Líder da Equipe <span style={{ fontWeight: 400, color: 'var(--text-secondary)' }}>(Opcional)</span>
+                </label>
+                <select
+                  value={newTeamLeaderId}
+                  onChange={(e) => setNewTeamLeaderId(e.target.value)}
+                  style={{ width: '100%', padding: '8px 10px', borderRadius: '6px', border: '1px solid var(--border-subtle)' }}
+                >
+                  <option value="">Selecione o líder (opcional)...</option>
+                  {availableMembers.map((am) => {
+                    const mId = am.member_id || am.id;
+                    return (
+                      <option key={mId} value={mId}>
+                        {am.display_name}
+                      </option>
+                    );
+                  })}
+                </select>
+              </div>
+
               <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px' }}>
-                <button type="button" className="btn btn-secondary" onClick={() => setIsCreateModalOpen(false)}>
+                <button
+                  type="button"
+                  className="btn btn-secondary"
+                  onClick={() => {
+                    setIsCreateModalOpen(false);
+                    setNewTeamName('');
+                    setNewTeamLeaderId('');
+                  }}
+                >
                   Cancelar
                 </button>
                 <button type="submit" className="btn btn-primary" disabled={!newTeamName.trim() || isSubmitting}>
@@ -839,23 +1168,30 @@ export default function TeamsPage({ onBack }) {
         </div>
       )}
 
-      {/* Modal: Transferir Liderança */}
+      {/* Modal: Selecionar / Transferir Liderança */}
       {isTransferModalOpen && selectedTeam && (
         <div className="modal-backdrop" style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 }}>
           <div className="card" style={{ width: '90%', maxWidth: '450px', padding: '20px' }}>
-            <h2 style={{ fontSize: '1.2rem', margin: '0 0 12px' }}>Transferir Liderança: {selectedTeam.name}</h2>
+            <h2 style={{ fontSize: '1.2rem', margin: '0 0 12px' }}>
+              {selectedTeam.leader_member_id ? `Transferir Liderança: ${selectedTeam.name}` : `Selecionar Líder: ${selectedTeam.name}`}
+            </h2>
             <p style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', marginBottom: '14px' }}>
-              Selecione o novo membro ativo que assumirá a liderança desta equipe.
+              {selectedTeam.leader_member_id
+                ? `Líder atual: ${selectedTeam.leader_name || 'Designado'}. Selecione o novo membro ativo que assumirá a liderança desta equipe.`
+                : 'Esta equipe ainda não possui líder. Selecione o membro ativo que assumirá a liderança.'}
             </p>
             <form onSubmit={handleTransferLeadership}>
               <div style={{ marginBottom: '14px' }}>
+                <label style={{ display: 'block', fontSize: '0.85rem', marginBottom: '4px', fontWeight: 600 }}>
+                  {selectedTeam.leader_member_id ? 'Novo Líder' : 'Líder da Equipe'}
+                </label>
                 <select
                   required
                   value={newLeaderId}
                   onChange={(e) => setNewLeaderId(e.target.value)}
                   style={{ width: '100%', padding: '8px 10px', borderRadius: '6px', border: '1px solid var(--border-subtle)' }}
                 >
-                  <option value="">Selecione o novo líder...</option>
+                  <option value="">{selectedTeam.leader_member_id ? 'Selecione o novo líder...' : 'Selecione o líder...'}</option>
                   {availableMembers
                     .filter((am) => (am.member_id || am.id) !== selectedTeam.leader_member_id)
                     .map((am) => {
@@ -870,11 +1206,20 @@ export default function TeamsPage({ onBack }) {
               </div>
 
               <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px' }}>
-                <button type="button" className="btn btn-secondary" onClick={() => setIsTransferModalOpen(false)}>
+                <button
+                  type="button"
+                  className="btn btn-secondary"
+                  onClick={() => {
+                    setIsTransferModalOpen(false);
+                    setNewLeaderId('');
+                  }}
+                >
                   Cancelar
                 </button>
                 <button type="submit" className="btn btn-primary" disabled={!newLeaderId || isSubmitting}>
-                  {isSubmitting ? 'Transferindo...' : 'Confirmar Transferência'}
+                  {isSubmitting
+                    ? (selectedTeam.leader_member_id ? 'Transferindo...' : 'Salvando...')
+                    : (selectedTeam.leader_member_id ? 'Confirmar Transferência' : 'Confirmar Líder')}
                 </button>
               </div>
             </form>
@@ -927,7 +1272,18 @@ export default function TeamsPage({ onBack }) {
                       }}
                     >
                       <div>
-                        <strong style={{ fontSize: '0.85rem' }}>{role.name}</strong>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                          <strong style={{ fontSize: '0.85rem' }}>{role.name}</strong>
+                          <span
+                            style={{
+                              fontSize: '0.7rem',
+                              fontWeight: 600,
+                              color: isQualified ? '#16a34a' : 'var(--text-muted)',
+                            }}
+                          >
+                            {isQualified ? '● Habilitado' : '○ Não habilitado'}
+                          </span>
+                        </div>
                         {role.description && <p style={{ margin: '2px 0 0', fontSize: '0.75rem', color: 'var(--text-secondary)' }}>{role.description}</p>}
                       </div>
 
