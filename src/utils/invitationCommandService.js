@@ -109,6 +109,119 @@ export function clearInviteTokenFromUrl() {
 }
 
 /**
+ * Extrai e interpreta erros de redirecionamento do Supabase Auth presentes no hash ou search
+ * (ex.: link de confirmação ou recuperação expirado ou inválido).
+ *
+ * @param {string|Location} [locationObj] - Objeto window.location ou string de URL
+ * @returns {{ error: string, errorCode: string, errorDescription: string, message: string }|null}
+ */
+export function extractAuthRedirectError(locationObj) {
+  const loc = locationObj || (typeof window !== 'undefined' ? window.location : null);
+  if (!loc) return null;
+
+  const hash = typeof loc === 'string' ? (loc.includes('#') ? loc.slice(loc.indexOf('#')) : '') : loc.hash || '';
+  const search = typeof loc === 'string' ? (loc.includes('?') ? loc.slice(loc.indexOf('?'), loc.includes('#') ? loc.indexOf('#') : undefined) : '') : loc.search || '';
+
+  let params = null;
+
+  // 1. Procura no hash (formato padrão do Supabase Auth: #error=...&error_code=...&error_description=...)
+  if (hash && hash.includes('error=')) {
+    const raw = hash.startsWith('#') ? hash.slice(1) : hash;
+    const queryIdx = raw.indexOf('?');
+    const paramStr = queryIdx !== -1 ? raw.slice(queryIdx + 1) : raw;
+    params = new URLSearchParams(paramStr);
+  }
+
+  // 2. Se não encontrou no hash, procura no search (?error=...)
+  if ((!params || !params.get('error')) && search && search.includes('error=')) {
+    params = new URLSearchParams(search.startsWith('?') ? search.slice(1) : search);
+  }
+
+  if (!params || !params.get('error')) {
+    return null;
+  }
+
+  const error = params.get('error') || '';
+  const errorCode = params.get('error_code') || '';
+  const errorDescription = params.get('error_description') || '';
+
+  const lowerDesc = errorDescription.toLowerCase();
+  const lowerCode = errorCode.toLowerCase();
+
+  let message = 'Não foi possível validar o link de acesso. Por favor, solicite um novo envio.';
+
+  if (
+    lowerCode === 'otp_expired' ||
+    lowerDesc.includes('expired') ||
+    lowerDesc.includes('has expired') ||
+    lowerDesc.includes('invalid or has expired')
+  ) {
+    message = 'O link de confirmação ou recuperação expirou ou já foi utilizado. Por favor, solicite um novo envio para continuar.';
+  } else if (lowerCode === 'access_denied' || error === 'access_denied') {
+    message = 'Acesso não autorizado pelo serviço de autenticação. Por favor, tente novamente ou solicite um novo link.';
+  }
+
+  return {
+    error,
+    errorCode,
+    errorDescription,
+    message,
+  };
+}
+
+/**
+ * Remove parâmetros de erro de autenticação da URL via history.replaceState,
+ * preservando a rota, fragmentos legítimos e tokens de convite caso existam.
+ */
+export function clearAuthRedirectErrorFromUrl() {
+  if (typeof window === 'undefined' || !window.history || !window.location) return;
+
+  const loc = window.location;
+  const hash = loc.hash || '';
+  const search = loc.search || '';
+  const pathname = loc.pathname || '/';
+
+  let newHash = hash;
+  let newSearch = search;
+
+  if (hash.includes('error=')) {
+    const raw = hash.startsWith('#') ? hash.slice(1) : hash;
+    const queryIdx = raw.indexOf('?');
+    if (queryIdx === -1 && !raw.includes('/')) {
+      newHash = '';
+    } else {
+      const parts = raw.split('?');
+      const routePart = parts[0];
+      const queryPart = parts[1] || '';
+      const params = new URLSearchParams(queryPart || routePart);
+      params.delete('error');
+      params.delete('error_code');
+      params.delete('error_description');
+      const remaining = params.toString();
+      if (queryPart) {
+        newHash = remaining ? `#${routePart}?${remaining}` : (routePart ? `#${routePart}` : '');
+      } else {
+        newHash = remaining ? `#${remaining}` : '';
+      }
+    }
+  }
+
+  if (search.includes('error=')) {
+    const params = new URLSearchParams(search);
+    params.delete('error');
+    params.delete('error_code');
+    params.delete('error_description');
+    const remaining = params.toString();
+    newSearch = remaining ? `?${remaining}` : '';
+  }
+
+  const cleanUrl = `${pathname}${newSearch}${newHash}`;
+  if (cleanUrl !== `${pathname}${search}${hash}`) {
+    window.history.replaceState(null, '', cleanUrl);
+  }
+}
+
+/**
  * Valida e normaliza o e-mail do destinatário do convite.
  *
  * @param {string} email

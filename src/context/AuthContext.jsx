@@ -13,6 +13,8 @@ import {
   extractInviteTokenFromUrl,
   clearInviteTokenFromUrl,
   clearAllInvitationStorageForUser,
+  extractAuthRedirectError,
+  clearAuthRedirectErrorFromUrl,
 } from '../utils/invitationCommandService';
 
 const AuthContext = createContext(null);
@@ -43,7 +45,16 @@ export const STORAGE_KEY_SELECTED_CHURCH_PREFIX = 'selected_church_';
 export function AuthProvider({ children }) {
   const [session, setSession]                     = useState(undefined);
   const [authState, setAuthState]                 = useState('initializing');
-  const [authError, setAuthError]                 = useState(null);
+  const [authError, setAuthError]                 = useState(() => {
+    if (typeof window !== 'undefined') {
+      const redirectError = extractAuthRedirectError();
+      if (redirectError) {
+        clearAuthRedirectErrorFromUrl();
+        return redirectError.message;
+      }
+    }
+    return null;
+  });
   const [churchAccess, setChurchAccess]           = useState(null);
   const [availableAccesses, setAvailableAccesses] = useState([]);
   const [creationConfirmation, setCreationConfirmation] = useState(null);
@@ -109,11 +120,16 @@ export function AuthProvider({ children }) {
 
   /**
    * Limpa o contexto de vínculo e cancela timers pendentes.
+   *
+   * @param {object} [options]
+   * @param {boolean} [options.preserveAuthError] - Se true, não reseta authError (ex: erro de link expirado na inicialização)
    */
-  const clearAccessContext = useCallback(() => {
+  const clearAccessContext = useCallback((options = {}) => {
     setChurchAccess(null);
     churchAccessRef.current = null;
-    setAuthError(null);
+    if (!options?.preserveAuthError) {
+      setAuthError(null);
+    }
     if (scheduledTimerRef.current) {
       clearTimeout(scheduledTimerRef.current);
       scheduledTimerRef.current = null;
@@ -385,7 +401,7 @@ export function AuthProvider({ children }) {
         creationConfirmationRef.current = null;
         setCreationConfirmation(null);
         invalidateChurchCommandSession();
-        clearAccessContext();
+        clearAccessContext({ preserveAuthError: true });
         if (transition.shouldClearMemberStorage) {
           clearMemberCommandStorage();
         }
@@ -491,6 +507,12 @@ export function AuthProvider({ children }) {
         }
         setPendingInviteToken(fromUrl);
         clearInviteTokenFromUrl();
+      }
+
+      const redirectError = extractAuthRedirectError();
+      if (redirectError) {
+        setAuthError(redirectError.message);
+        clearAuthRedirectErrorFromUrl();
       }
     }
 

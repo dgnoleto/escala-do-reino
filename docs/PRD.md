@@ -93,6 +93,8 @@ Admin da igreja não pode definir ou alterar credenciais de outro usuário. Para
 
 Antes do piloto com membros, configurar e testar o envio de confirmação e recuperação por um serviço SMTP. Durante o desenvolvimento, o envio padrão do Supabase fica restrito aos endereços da equipe do projeto e aos limites do serviço. Manter confirmação de e-mail habilitada.
 
+**Complemento autorizado em 18/10/2026 — confirmação e recuperação seguras no ambiente de uso (Issue #24):** a aplicação web trata os redirecionamentos de erro do Supabase Auth para links de confirmação e recuperação expirados ou inválidos (`otp_expired`), higienizando os parâmetros da barra de endereços para não expor tokens ou dados de erro no histórico de navegação e apresentando orientação protetiva imediata para novo envio. O fluxo de primeiro acesso por convite preserva o token de alta entropia retido em `sessionStorage` enquanto a confirmação de e-mail estiver pendente, restaurando automaticamente o resgate do convite na comunidade assim que a conta for confirmada e autenticada. Senhas são definidas pela própria pessoa e mantidas exclusivamente na memória do formulário durante o envio. A confirmação de e-mail permanece estritamente habilitada e obrigatória.
+
 ### 3.2 Papéis e limites
 
 | Papel | Responsabilidade |

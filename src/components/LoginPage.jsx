@@ -104,6 +104,12 @@ export default function LoginPage() {
     }
   }, [pendingInviteToken, isPasswordRecovery]);
 
+  useEffect(() => {
+    if (authError) {
+      setEmailConfirmationPending(false);
+    }
+  }, [authError]);
+
   // Formulário em memória (senhas nunca são persistidas em storage)
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -367,6 +373,20 @@ export default function LoginPage() {
             >
               {loading ? <Spinner /> : 'Salvar Nova Senha'}
             </button>
+
+            <button
+              type="button"
+              className="btn btn-link login-toggle-link"
+              onClick={() => {
+                setMode('login');
+                setAuthError(null);
+                setInfoMessage(null);
+              }}
+              disabled={loading}
+              id="btn-cancel-update-password"
+            >
+              <ArrowLeft size={13} /> Voltar ao login
+            </button>
           </form>
         ) : mode === 'forgot_password' ? (
           /* 2. MODO: ESQUECI MINHA SENHA */
@@ -564,6 +584,7 @@ export default function LoginPage() {
                   {mode === 'login' && (
                     <button
                       type="button"
+                      id="btn-forgot-password"
                       className="btn-link-forgot"
                       onClick={() => {
                         setMode('forgot_password');
