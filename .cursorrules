@@ -1,0 +1,20 @@
+# Diretrizes de Otimização e Governança de Contexto (Cursor Rules)
+
+## 1. Escopo Restrito
+- É terminantemente proibido realizar varreduras completas no projeto ou indexar árvores inteiras de diretórios.
+- Leia, analise e modifique estritamente os arquivos expressamente citados no prompt ou diretamente afetados pela demanda.
+- Não abra nem inspecione arquivos de controllers, services, utilitários ou componentes secundários a menos que sejam explicitamente solicitados.
+
+## 2. Validação de Negócio (BDD / Gherkin)
+- Para toda implementação de nova lógica de negócio ou alteração funcional, exija a definição de cenários em formato BDD (sintaxe Gherkin: Dado / Quando / Então ou Given / When / Then).
+- Os cenários devem estar presentes nos testes automatizados correspondentes ou devidamente documentados em blocos de comentários no topo da função/módulo para permitir auditabilidade funcional imediata.
+
+## 3. Manipulação de Dados e Consultas Otimizadas
+- Mantenha as operações de banco de dados estritamente otimizadas, utilizando exclusivamente o cliente nativo mapeado no projeto (Supabase Client `@supabase/supabase-js`) e comandos SQL nativos em migrations/scripts.
+- É proibido criar abstrações desnecessárias, wrappers genéricos, DAOs redundantes ou camadas extras de indireção sobre as consultas.
+- Realize filtros, ordenações e projeções de colunas estritamente necessárias diretamente na consulta/banco, evitando processamento em memória de grandes volumes.
+
+## 4. Economia de Retorno e Tokens
+- É terminantemente proibido reescrever arquivos integralmente quando a alteração envolver apenas linhas ou blocos pontuais.
+- Apresente apenas os trechos modificados (diffs pontuais ou blocos com referências precisas de substituição), preservando o contexto mínimo estritamente necessário para aplicação da mudança.
+- Forneça respostas concisas, diretas e objetivas, eliminando saudações, explicações prolixas ou redundâncias conceituais.

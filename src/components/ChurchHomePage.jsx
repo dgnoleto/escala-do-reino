@@ -3,6 +3,8 @@ import { useAuth } from '../context/AuthContext';
 import { supabase } from '../lib/supabaseClient';
 import MembersPage from './MembersPage';
 import TeamsPage from './TeamsPage';
+import ChurchSettingsPage from './ChurchSettingsPage';
+import ChurchLogo from './ChurchLogo';
 import CreateChurchModal from './CreateChurchModal';
 import { Church, PlusCircle, ShieldAlert, Loader2, AlertCircle, Mail, RefreshCw, Clock, Users } from 'lucide-react';
 import { checkChurchCreationEligibility, loadPendingChurchCommand } from '../utils/churchCommandService';
@@ -29,7 +31,7 @@ import { loadAccessRequestMarker, removeAccessRequestMarker } from '../utils/inv
  * Acessibilidade: foco inicial no título, regiões semânticas, rótulos descritivos.
  */
 export default function ChurchHomePage() {
-  const { session, churchAccess, availableAccesses, selectChurch, signOut, refreshAccess, recordCreationConfirmation, reloadChurchAccess } = useAuth();
+  const { session, sessionId, churchAccess, availableAccesses, selectChurch, signOut, refreshAccess, recordCreationConfirmation, reloadChurchAccess } = useAuth();
   const [currentView, setCurrentView] = useState('home');
   const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
 
@@ -105,6 +107,10 @@ export default function ChurchHomePage() {
 
   const profileLabel = isAdmin ? 'Administrador' : 'Membro';
 
+  if (currentView === 'church-settings' && isAdmin) {
+    return <ChurchSettingsPage key={`${userId}:${sessionId}:${churchAccess.church_id}`} onBack={() => setCurrentView('home')} />;
+  }
+
   // Navegação para a tela de membros do administrador
   if (currentView === 'members' && isAdmin) {
     return <MembersPage onBack={() => setCurrentView('home')} />;
@@ -122,12 +128,7 @@ export default function ChurchHomePage() {
         {/* Cabeçalho da igreja */}
         <div className="church-home-header">
           <div className="church-home-logo" aria-hidden="true">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75"
-                 strokeLinecap="round" strokeLinejoin="round">
-              <path d="M3 22V10L12 3l9 7v12H3z" />
-              <path d="M12 3v4M10 7h4" />
-              <rect x="9" y="14" width="6" height="8" rx="1" />
-            </svg>
+            <ChurchLogo churchId={churchAccess?.church_id} userId={userId} sessionId={sessionId} />
           </div>
 
           <div className="church-home-header-text">
@@ -391,6 +392,21 @@ export default function ChurchHomePage() {
           </div>
         )}
 
+        {isAdmin && (
+          <div className="church-home-admin-section">
+            <div className="church-home-admin-box">
+              <div className="church-home-admin-icon" aria-hidden="true"><Church size={20} /></div>
+              <div className="church-home-admin-info">
+                <span className="church-home-admin-title">Dados da Igreja</span>
+                <span className="church-home-admin-desc">Atualize o endereço, a localização no Google Maps e a logo.</span>
+              </div>
+            </div>
+            <button id="btn-goto-church-settings" className="btn btn-primary church-home-admin-btn" type="button" onClick={() => setCurrentView('church-settings')}>
+              Acessar Dados da Igreja
+            </button>
+          </div>
+        )}
+
         {/* Bloco de Gestão de Membros exclusivo para Administrador */}
         {isAdmin && (
           <div className="church-home-admin-section">
@@ -440,7 +456,7 @@ export default function ChurchHomePage() {
           </div>
           <button
             id="btn-goto-teams"
-            className="btn btn-secondary church-home-admin-btn"
+            className="btn btn-primary church-home-admin-btn"
             onClick={() => setCurrentView('teams')}
             type="button"
             aria-label="Acessar Ministérios e Equipes"

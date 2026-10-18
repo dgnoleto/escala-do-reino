@@ -1,6 +1,6 @@
 # Estado atual — Escala do Reino
 
-Atualização do checkpoint local: 17/10/2026. As versões de main e provas históricas abaixo conservam a data de sua conferência original. Este documento resume o estado conhecido e deve ser atualizado a cada entrega relevante. Relatórios históricos preservam os fatos de sua própria data; consultar também as issues abertas.
+Atualização do checkpoint local: 18/10/2026. As versões de main e provas históricas abaixo conservam a data de sua conferência original. Este documento resume o estado conhecido e deve ser atualizado a cada entrega relevante. Relatórios históricos preservam os fatos de sua própria data; consultar também as issues abertas.
 
 ## Versão de referência
 
@@ -38,6 +38,12 @@ Não há deploy do novo frontend demonstrado por esta entrega. PR #9 não altera
 - Exclusão lógica/recuperação permanecem na etapa 4. Ambientes sem integração efetiva continuam bloqueados por P0021; o candidato 016 mantém a recusa quando falta a fonte real. Restauração não devolve acesso. Não inferir CPF, envio automático de convites ou novos privilégios.
 
 ## Próximo passo de leitura
+
+**Checkpoint inicial em 18/10/2026 — Dados da Igreja:** código de navegação e edição preparado para administradores ativos, com endereço, Maps, upload/remoção de logo e exibição da identidade visual no cabeçalho. O candidato SQL 017 implementa autorização no servidor, versão, auditoria, recibos e políticas de Storage privado. Ensaio S01–S22 aprovado como `postgres` em base descartável dentro de contêiner existente, com Auth/Storage nativos, ROLLBACK e remoção da base. As 41 tabelas medidas da origem HTTP e 44 da origem Storage, mais os schemas completos, permaneceram coincidentes. Nesse checkpoint ainda não havia instalação permanente, concorrência real ou upload físico/HTTP; não representava liberação no piloto. Ver [relatório](historico/2026-10-18-ensaio-cadastro-igreja-017.md) e [contrato](CADASTRO-IGREJA.md). Os checkpoints anteriores conservam seus próprios limites.
+
+**Checkpoint posterior autorizado — instalação 017 no EscalaReinoLab:** ensaio no alvo com ROLLBACK preservado, instalação com COMMIT e verificações aprovadas. H01–H15 passaram contra Auth/Storage/HTTP reais; C01–C05 passaram com PIDs distintos e bloqueio observado, incluindo perda de autoridade durante espera e replay. Na interface, admin editou/recarregou, membro não recebeu acesso, perda de administração removeu o formulário e remoção da referência da logo foi confirmada. A seleção automática de arquivo no Chrome ficou bloqueada pela permissão da extensão; upload físico foi aprovado separadamente por SDK/HTTP. Os 214 registros medidos antes das fixtures permaneceram coincidentes; funções anteriores e laboratório HTTP preservados. 342 testes/39 suítes e build aprovados. Ponte/Vite/aba temporários encerrados; instalação, fixtures e histórico retidos no laboratório. Piloto, porta 3000 e `.env.local` não alterados. [Relatório completo](historico/2026-10-18-instalacao-e-validacao-cadastro-igreja-017.md).
+
+**Checkpoint posterior autorizado — 017 no piloto:** instalado com COMMIT no projeto `jvpctgqudvjealzileib` após conferência de estrutura e ensaio com ROLLBACK. As 49 tabelas medidas e 70 funções anteriores permaneceram coincidentes; permissões, proprietários, RLS, gatilhos e políticas anteriores preservados. Quatro RPCs públicas, helper privado, tabela de recibos com RLS e seis políticas de Storage conferidos; bucket privado de 2 MB para PNG/JPEG/WebP, inicialmente vazio. Nenhuma fixture criada no piloto. Na sessão existente do administrador em localhost:3000, **Dados da Igreja** abriu e carregou endereço/Maps; nenhuma alteração cadastral ou upload real foi enviado. Backend instalado; frontend desta entrega ainda local, sem commit/push/PR/merge/deploy. `.env.local`, porta 3000 e serviços preservados. [Relatório e evidência](historico/2026-10-18-aplicacao-cadastro-igreja-017-piloto.md). Os checkpoints anteriores conservam seus limites históricos.
 
 1. [Guia de entrada para QA](qa/GUIA-ENTRADA-QA.md).
 2. [PRD](PRD.md) e [contrato de convites](CONTRATO-CONVITES-ACESSO.md), conforme o fluxo.

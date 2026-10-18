@@ -23,6 +23,10 @@ import {
 import IssueInvitationModal from './IssueInvitationModal';
 import AdminInvitationsTab from './AdminInvitationsTab';
 import AdminRequestsTab from './AdminRequestsTab';
+import {
+  manageChurchAdmin,
+  formatPermissionErrorMessage,
+} from '../utils/memberPermissionService';
 
 /**
  * MembersPage — tela de gestão de membros para administrador autorizado.
@@ -145,6 +149,11 @@ export default function MembersPage({ onBack }) {
   const [deactivating, setDeactivating]                   = useState(false);
   const [deactivateError, setDeactivateError]             = useState(null);
 
+  // Estado para modal de permissão administrativa (Issue #23)
+  const [permissionModal, setPermissionModal]             = useState(null); // { member, action }
+  const [managingPermission, setManagingPermission]       = useState(false);
+  const [permissionError, setPermissionError]             = useState(null);
+
 
   // Estado do formulário de criação
   const [showCreateModal, setShowCreateModal]   = useState(false);
@@ -182,6 +191,9 @@ export default function MembersPage({ onBack }) {
     setShowCreateModal(false);
     setRestoreModalMember(null);
     setDeactivateModalMember(null);
+    setPermissionModal(null);
+    setManagingPermission(false);
+    setPermissionError(null);
     setFormError(null);
     setSuccessMessage(null);
     setNameInput('');
@@ -780,6 +792,56 @@ export default function MembersPage({ onBack }) {
     }
   }
 
+  /**
+   * Confirma alteração de permissão administrativa (concessão, revogação ou saída voluntária).
+   * Cobre CA01, CA02, CA03 e CA04.
+   */
+  async function handleConfirmPermission() {
+    const targetChurchId = churchId;
+    const targetUserId = currentUserId;
+    const targetGen = liveContextRef.current.generation;
+    if (!permissionModal || managingPermission || !isOnline || !isCurrentContext(targetChurchId, targetUserId, targetGen)) return;
+
+    const { member, action } = permissionModal;
+    const commandId = crypto.randomUUID();
+
+    setManagingPermission(true);
+    setPermissionError(null);
+
+    try {
+      const res = await manageChurchAdmin(supabase, {
+        churchId: targetChurchId,
+        targetMemberId: member.member_id || member.id,
+        action,
+        commandId,
+      });
+
+      if (!isMountedRef.current || !isCurrentContext(targetChurchId, targetUserId, targetGen)) return;
+
+      if (!res.success) {
+        setPermissionError(res.errorMessage);
+        return;
+      }
+
+      setPermissionModal(null);
+      const isGrant = action === 'grant';
+      const successMsg = isGrant
+        ? `Permissão de administrador concedida a "${member.display_name}" com sucesso!`
+        : member.is_current_user
+        ? `Você renunciou à administração da igreja com sucesso.`
+        : `Permissão de administrador retirada de "${member.display_name}" com sucesso!`;
+      setSuccessMessage(successMsg);
+      loadMembers(page);
+    } catch (err) {
+      if (!isMountedRef.current || !isCurrentContext(targetChurchId, targetUserId, targetGen)) return;
+      setPermissionError(formatPermissionErrorMessage(err));
+    } finally {
+      if (isMountedRef.current && isCurrentContext(targetChurchId, targetUserId, targetGen)) {
+        setManagingPermission(false);
+      }
+    }
+  }
+
   // Se não for admin, apresentar bloqueio claro de perfil
   if (!isAdmin) {
     return (
@@ -1230,6 +1292,26 @@ export default function MembersPage({ onBack }) {
                               {m.display_name.charAt(0).toUpperCase()}
                             </div>
                             <span className="member-name-text">{m.display_name}</span>
+                            {m.is_admin && (
+                              <span
+                                className="badge badge-admin"
+                                title="Administrador da Igreja"
+                                style={{
+                                  display: 'inline-flex',
+                                  alignItems: 'center',
+                                  gap: '3px',
+                                  background: '#e0e7ff',
+                                  color: '#3730a3',
+                                  fontSize: '0.72rem',
+                                  padding: '1px 6px',
+                                  borderRadius: '4px',
+                                  fontWeight: 600,
+                                  marginLeft: '6px'
+                                }}
+                              >
+                                <Shield size={11} aria-hidden="true" /> Admin
+                              </span>
+                            )}
                           </div>
                         </td>
                         <td>
@@ -1254,6 +1336,37 @@ export default function MembersPage({ onBack }) {
                                 >
                                   <Send size={12} /> Convidar
                                 </button>
+                                {m.is_admin ? (
+                                  <button
+                                    type="button"
+                                    className="btn btn-secondary btn-sm"
+                                    onClick={() => {
+                                      setPermissionModal({ member: m, action: 'revoke' });
+                                      setPermissionError(null);
+                                    }}
+                                    id={`btn-revoke-admin-${m.member_id || m.id}`}
+                                    title={m.is_current_user ? 'Renunciar à administração' : `Retirar administração de ${m.display_name}`}
+                                    style={{ fontSize: '0.75rem', padding: '3px 8px', display: 'inline-flex', alignItems: 'center', gap: '4px', color: '#b45309' }}
+                                  >
+                                    <Shield size={12} /> {m.is_current_user ? 'Renunciar Admin' : 'Retirar Admin'}
+                                  </button>
+                                ) : (
+                                  m.has_active_access && (
+                                    <button
+                                      type="button"
+                                      className="btn btn-secondary btn-sm"
+                                      onClick={() => {
+                                        setPermissionModal({ member: m, action: 'grant' });
+                                        setPermissionError(null);
+                                      }}
+                                      id={`btn-grant-admin-${m.member_id || m.id}`}
+                                      title={`Conceder administração para ${m.display_name}`}
+                                      style={{ fontSize: '0.75rem', padding: '3px 8px', display: 'inline-flex', alignItems: 'center', gap: '4px', color: '#1d4ed8' }}
+                                    >
+                                      <Shield size={12} /> Tornar Admin
+                                    </button>
+                                  )
+                                )}
                                 <button
                                   type="button"
                                   className="btn btn-secondary btn-sm btn-delete-member"
@@ -1487,6 +1600,105 @@ export default function MembersPage({ onBack }) {
                     </>
                   ) : (
                     'Confirmar exclusão'
+                  )}
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Modal de Gestão de Permissões Administrativas (CA01 a CA04) */}
+        {permissionModal && (
+          <div className="modal-backdrop" role="dialog" aria-modal="true" aria-labelledby="modal-perm-title">
+            <div className="modal-card">
+              <div className="modal-header">
+                <div className="modal-title-row">
+                  <Shield size={18} color="var(--primary)" />
+                  <h2 id="modal-perm-title">
+                    {permissionModal.action === 'grant'
+                      ? 'Conceder Administração'
+                      : permissionModal.member.is_current_user
+                      ? 'Renunciar à Administração'
+                      : 'Retirar Administração'}
+                  </h2>
+                </div>
+                <button
+                  type="button"
+                  className="modal-close-btn"
+                  onClick={() => {
+                    if (!managingPermission) setPermissionModal(null);
+                  }}
+                  disabled={managingPermission}
+                  aria-label="Fechar modal"
+                >
+                  <X size={18} />
+                </button>
+              </div>
+
+              <div style={{ margin: '12px 0', fontSize: '0.9rem', color: 'var(--text-secondary)', lineHeight: '1.5' }}>
+                {permissionModal.action === 'grant' ? (
+                  <>
+                    <p>
+                      Deseja conceder permissão de <strong>Administrador</strong> para <strong>{permissionModal.member.display_name}</strong>?
+                    </p>
+                    <div style={{ marginTop: '10px', padding: '10px 12px', background: '#eff6ff', borderRadius: '6px', border: '1px solid #bfdbfe', fontSize: '0.85rem', color: '#1e40af' }}>
+                      <strong>Efeito da ação:</strong> Esta pessoa poderá gerenciar cadastros, equipes e configurações da igreja. Esta concessão <strong>não altera</strong> lideranças litúrgicas nem escalas de culto existentes. Uma conta não pode administrar ativamente mais de uma igreja no sistema.
+                    </div>
+                  </>
+                ) : permissionModal.member.is_current_user ? (
+                  <>
+                    <p>
+                      Deseja <strong>renunciar à sua permissão de administrador</strong> na igreja <strong>{churchName}</strong>?
+                    </p>
+                    <div style={{ marginTop: '10px', padding: '10px 12px', background: '#fffbeb', borderRadius: '6px', border: '1px solid #fde68a', fontSize: '0.85rem', color: '#92400e' }}>
+                      <strong>Aviso de continuidade:</strong> Você continuará com acesso como membro comum da igreja. A operação será recusada se você for o único administrador ativo remanescente da igreja.
+                    </div>
+                  </>
+                ) : (
+                  <>
+                    <p>
+                      Deseja <strong>retirar a administração</strong> de <strong>{permissionModal.member.display_name}</strong>?
+                    </p>
+                    <div style={{ marginTop: '10px', padding: '10px 12px', background: '#fffbeb', borderRadius: '6px', border: '1px solid #fde68a', fontSize: '0.85rem', color: '#92400e' }}>
+                      <strong>Efeito da ação:</strong> O membro perderá as permissões administrativas na igreja, mas seu cadastro, histórico de atuação e funções litúrgicas serão mantidos. A operação será recusada se a igreja ficar sem nenhum outro administrador ativo.
+                    </div>
+                  </>
+                )}
+              </div>
+
+              {permissionError && (
+                <div className="form-error-banner" role="alert" style={{ marginBottom: '16px' }}>
+                  <AlertCircle size={15} />
+                  <span>{permissionError}</span>
+                </div>
+              )}
+
+              <div className="modal-actions">
+                <button
+                  type="button"
+                  className="btn btn-secondary"
+                  onClick={() => setPermissionModal(null)}
+                  disabled={managingPermission}
+                >
+                  Cancelar
+                </button>
+                <button
+                  type="button"
+                  className={`btn ${permissionModal.action === 'grant' ? 'btn-primary' : 'btn-secondary'}`}
+                  style={permissionModal.action === 'revoke' ? { color: '#b45309', borderColor: '#f59e0b' } : {}}
+                  onClick={handleConfirmPermission}
+                  disabled={managingPermission || !isOnline}
+                >
+                  {managingPermission ? (
+                    <>
+                      <RefreshCw size={14} className="spin-icon" /> Processando…
+                    </>
+                  ) : permissionModal.action === 'grant' ? (
+                    'Confirmar Concessão'
+                  ) : permissionModal.member.is_current_user ? (
+                    'Confirmar Renúncia'
+                  ) : (
+                    'Confirmar Retirada'
                   )}
                 </button>
               </div>
