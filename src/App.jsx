@@ -332,7 +332,11 @@ function AuthGate() {
       return <AccessPendingPage />;
 
     case 'access_granted':
-      return <ChurchHomePage />;
+      return (
+        <AppProvider allowMemoryFallback={false}>
+          <ChurchHomePage />
+        </AppProvider>
+      );
 
     case 'access_error':
       return <AccessErrorPage />;

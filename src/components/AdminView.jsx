@@ -31,7 +31,7 @@ import {
   canDeleteServiceTemplate
 } from '../utils/serviceTemplateService';
 
-export default function AdminView() {
+export default function AdminView({ onBack, initialTab = 'event_types' } = {}) {
   const {
     church,
     members,
@@ -65,10 +65,13 @@ export default function AdminView() {
     events = [],
     addAuditLog,
     isOnline,
-    isDataStale
+    isDataStale,
+    remoteLoading,
+    remoteError,
+    reloadRemoteData
   } = useApp();
 
-  const [activeAdminTab, setActiveAdminTab] = useState('invites');
+  const [activeAdminTab, setActiveAdminTab] = useState(initialTab);
 
   // Formulário de Convite de Acesso (PRD 3.1 & Cenário M40)
   const [inviteEmail, setInviteEmail] = useState('');
@@ -128,23 +131,37 @@ export default function AdminView() {
   const [selectedStandardActForTemplate, setSelectedStandardActForTemplate] = useState('');
 
   // Designação da Liderança da Liturgia (PRD 3.2 & Cenário M05)
-  const [selectedEventIdForLiturgy, setSelectedEventIdForLiturgy] = useState(event.id);
-  const targetEventForLiturgy = events.find(e => e.id === selectedEventIdForLiturgy) || event;
-  const [selectedLiturgyLeader, setSelectedLiturgyLeader] = useState(targetEventForLiturgy.liturgyLeaderId);
+  const [selectedEventIdForLiturgy, setSelectedEventIdForLiturgy] = useState(() => (event?.id || events?.[0]?.id || ''));
+  const targetEventForLiturgy = events.find(e => e.id === selectedEventIdForLiturgy) || event || {};
+  const [selectedLiturgyLeader, setSelectedLiturgyLeader] = useState(() => (targetEventForLiturgy?.liturgyLeaderId || ''));
+  const [liturgySuccess, setLiturgySuccess] = useState('');
+  const [liturgyError, setLiturgyError] = useState('');
 
   // Proteção de Acesso (PRD 3.2 & Cenário M40)
   if (!isAdmin) {
     return (
-      <div className="card admin-denied-card">
-        <Shield size={48} color="#ef4444" />
-        <h2>Acesso Administrativo Restrito</h2>
-        <p>
-          Conforme o <strong>PRD 3.2 e Cenário M40</strong>, apenas administradores com permissão concedida podem
-          gerenciar cadastros, emitir convites de acesso ou designar lideranças.
+      <div className="card admin-denied-card" style={{ maxWidth: '600px', margin: '2rem auto', textAlign: 'center', padding: '2rem' }}>
+        {onBack && (
+          <div style={{ textAlign: 'left', marginBottom: '1.5rem' }}>
+            <button
+              type="button"
+              className="btn btn-secondary"
+              id="btn-back-to-home"
+              onClick={onBack}
+              style={{ display: 'inline-flex', alignItems: 'center', gap: '0.5rem' }}
+            >
+              ← Voltar ao Início da Igreja
+            </button>
+          </div>
+        )}
+        <Shield size={48} color="#ef4444" style={{ margin: '0 auto 1rem' }} />
+        <h2 style={{ fontSize: '1.25rem', marginBottom: '0.75rem' }}>Acesso Administrativo Restrito</h2>
+        <p style={{ color: 'var(--text-secondary)', fontSize: '0.9rem', lineHeight: 1.5 }}>
+          Conforme as regras de governança e permissões da igreja, apenas administradores autorizados
+          podem gerenciar cadastros, emitir convites de acesso ou designar lideranças.
         </p>
-        <p className="denied-hint">
-          Você está conectado como <strong>{currentUser.name}</strong>. Para testar o painel administrativo,
-          mude seu perfil para <strong>Pastor Marcos Ribeiro (Administrador)</strong> no topo da página.
+        <p className="denied-hint" style={{ marginTop: '1rem', fontSize: '0.85rem', color: 'var(--text-muted)' }}>
+          Você está conectado como <strong>{currentUser?.name || 'Membro'}</strong> ({currentUser?.role || 'Membro'}).
         </p>
       </div>
     );
@@ -500,15 +517,77 @@ export default function AdminView() {
   };
 
   const handleDesignateLeader = () => {
-    designateLiturgyLeader(selectedLiturgyLeader, selectedEventIdForLiturgy);
+    setLiturgySuccess('');
+    setLiturgyError('');
+    if (!targetEventForLiturgy?.id) {
+      setLiturgyError('Nenhum evento selecionado para designação.');
+      return;
+    }
+    designateLiturgyLeader(selectedLiturgyLeader, targetEventForLiturgy.id);
     const memberName = members.find(m => m.id === selectedLiturgyLeader)?.name || 'Membro';
-    alert(`Liderança da Liturgia do evento '${targetEventForLiturgy.title}' atualizada com sucesso para ${memberName}!`);
+    setLiturgySuccess(`Liderança da Liturgia do evento '${targetEventForLiturgy.title || 'Culto'}' atualizada com sucesso para ${memberName}!`);
+    setTimeout(() => setLiturgySuccess(''), 4000);
   };
 
   const isControlsDisabled = !isOnline || isDataStale;
 
   return (
     <div className="admin-container">
+      {/* Barra de Navegação Superior / Voltar ao Início */}
+      {onBack && (
+        <div style={{ marginBottom: '1.25rem', display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '0.75rem' }}>
+          <button
+            type="button"
+            className="btn btn-secondary"
+            id="btn-back-to-home"
+            onClick={onBack}
+            style={{ display: 'inline-flex', alignItems: 'center', gap: '0.5rem', fontWeight: 600 }}
+          >
+            ← Voltar ao Início da Igreja
+          </button>
+          <span className="badge badge-pending" style={{ fontSize: '0.85rem' }}>
+            Igreja: {church?.name || 'Igreja Conectada'}
+          </span>
+        </div>
+      )}
+
+      {/* Banner de Indisponibilidade Remota das Migrações 020-023 */}
+      {remoteError && (
+        <div
+          id="banner-backend-unavailability"
+          className="card"
+          style={{
+            borderLeft: '4px solid #f59e0b',
+            background: '#fffbeb',
+            color: '#92400e',
+            marginBottom: '1.25rem',
+            padding: '1rem'
+          }}
+        >
+          <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', fontWeight: 600 }}>
+            <AlertCircle size={20} color="#d97706" />
+            <span>Indisponibilidade de Serviços de Cadastros no Supabase</span>
+          </div>
+          <p style={{ margin: '0.5rem 0 0 0', fontSize: '0.9rem' }}>
+            {remoteError}
+          </p>
+          <p style={{ margin: '0.25rem 0 0 0', fontSize: '0.8rem', color: '#b45309' }}>
+            As tabelas ou RPCs das migrações 020 a 023 ainda não estão disponíveis no banco. A interface está em modo de visualização segura; cadastros não serão gravados localmente como falso sucesso.
+          </p>
+          {reloadRemoteData && (
+            <button
+              type="button"
+              className="btn btn-secondary"
+              onClick={reloadRemoteData}
+              disabled={remoteLoading}
+              style={{ marginTop: '0.5rem', fontSize: '0.8rem', padding: '0.35rem 0.75rem' }}
+            >
+              {remoteLoading ? 'Verificando conexão...' : 'Tentar reconectar'}
+            </button>
+          )}
+        </div>
+      )}
+
       {/* Cabeçalho de Administração */}
       <div className="card admin-header-card">
         <div>
@@ -667,62 +746,79 @@ export default function AdminView() {
             Controlar uma edição de culto não concede controle sobre as demais, e ser administrador não concede condução automática.
           </p>
 
-          <div className="current-event-leader-box">
-            <div className="form-group" style={{ marginBottom: '16px' }}>
-              <label className="form-label" style={{ fontWeight: 700 }}>Selecione a Edição do Evento:</label>
-              <select
-                id="select-admin-liturgy-event"
-                className="form-select"
-                value={selectedEventIdForLiturgy}
-                onChange={e => {
-                  setSelectedEventIdForLiturgy(e.target.value);
-                  const ev = events.find(item => item.id === e.target.value);
-                  if (ev) setSelectedLiturgyLeader(ev.liturgyLeaderId);
-                }}
-                disabled={isControlsDisabled}
-              >
-                {events.map(ev => (
-                  <option key={ev.id} value={ev.id}>
-                    {ev.title} ({ev.date} às {ev.scheduledStartTime}) — Líder Atual: {members.find(m => m.id === ev.liturgyLeaderId)?.name || 'Não designado'}
-                  </option>
-                ))}
-              </select>
+          {liturgySuccess && (
+            <div className="success-banner" style={{ marginBottom: '1rem' }}>
+              <CheckCircle2 size={16} /> {liturgySuccess}
             </div>
-
-            <div className="current-lead-header">
-              Evento em Configuração: <strong>{targetEventForLiturgy.title}</strong> ({targetEventForLiturgy.date})
+          )}
+          {liturgyError && (
+            <div className="error-banner" style={{ marginBottom: '1rem', color: '#dc2626' }}>
+              <AlertCircle size={16} /> {liturgyError}
             </div>
+          )}
 
-            <div className="designation-form-row">
-              <div className="form-group" style={{ flex: 1, marginBottom: 0 }}>
-                <label className="form-label">Selecione o Líder da Liturgia Designado:</label>
+          {events.length === 0 ? (
+            <div style={{ padding: '1.25rem', background: 'var(--bg-inset)', border: '1px solid var(--border-subtle)', borderRadius: '8px', color: 'var(--text-secondary)' }}>
+              Nenhum culto ou evento cadastrado para esta igreja no momento. Crie um evento no Planejamento de Cultos para poder designar a liderança da liturgia.
+            </div>
+          ) : (
+            <div className="current-event-leader-box">
+              <div className="form-group" style={{ marginBottom: '16px' }}>
+                <label className="form-label" style={{ fontWeight: 700 }}>Selecione a Edição do Evento:</label>
                 <select
-                  id="select-admin-liturgy-leader"
+                  id="select-admin-liturgy-event"
                   className="form-select"
-                  value={selectedLiturgyLeader}
-                  onChange={e => setSelectedLiturgyLeader(e.target.value)}
+                  value={selectedEventIdForLiturgy}
+                  onChange={e => {
+                    setSelectedEventIdForLiturgy(e.target.value);
+                    const ev = events.find(item => item.id === e.target.value);
+                    if (ev) setSelectedLiturgyLeader(ev.liturgyLeaderId);
+                  }}
                   disabled={isControlsDisabled}
                 >
-                  {members.map(m => (
-                    <option key={m.id} value={m.id}>
-                      {m.name} — Papéis: {m.roles.join(', ')} ({m.teams.join(', ')})
+                  {events.map(ev => (
+                    <option key={ev.id} value={ev.id}>
+                      {ev.title} ({ev.date} às {ev.scheduledStartTime}) — Líder Atual: {members.find(m => m.id === ev.liturgyLeaderId)?.name || 'Não designado'}
                     </option>
                   ))}
                 </select>
               </div>
 
-              <button
-                type="button"
-                id="btn-save-admin-liturgy-designation"
-                className="btn btn-primary"
-                onClick={handleDesignateLeader}
-                disabled={isControlsDisabled}
-                style={{ marginTop: '22px' }}
-              >
-                Salvar Designação do Culto
-              </button>
+              <div className="current-lead-header">
+                Evento em Configuração: <strong>{targetEventForLiturgy?.title || 'Culto'}</strong> ({targetEventForLiturgy?.date || ''})
+              </div>
+
+              <div className="designation-form-row">
+                <div className="form-group" style={{ flex: 1, marginBottom: 0 }}>
+                  <label className="form-label">Selecione o Líder da Liturgia Designado:</label>
+                  <select
+                    id="select-admin-liturgy-leader"
+                    className="form-select"
+                    value={selectedLiturgyLeader}
+                    onChange={e => setSelectedLiturgyLeader(e.target.value)}
+                    disabled={isControlsDisabled}
+                  >
+                    {members.map(m => (
+                      <option key={m.id} value={m.id}>
+                        {m.name} — Papéis: {m.roles?.join(', ')} ({m.teams?.join(', ')})
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                <button
+                  type="button"
+                  id="btn-save-admin-liturgy-designation"
+                  className="btn btn-primary"
+                  onClick={handleDesignateLeader}
+                  disabled={isControlsDisabled}
+                  style={{ marginTop: '22px' }}
+                >
+                  Salvar Designação do Culto
+                </button>
+              </div>
             </div>
-          </div>
+          )}
         </div>
       )}
 

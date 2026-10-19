@@ -21,7 +21,7 @@ import {
   ShieldCheck
 } from 'lucide-react';
 
-export default function PlanningView() {
+export default function PlanningView({ onBack } = {}) {
   const {
     event,
     setEvent,
@@ -52,7 +52,10 @@ export default function PlanningView() {
     addAuditLog,
     isOnline,
     isDataStale,
-    church
+    church,
+    remoteLoading,
+    remoteError,
+    reloadRemoteData
   } = useApp();
 
   // Modal de Criação de Edição de Culto (Issue #28)
@@ -64,7 +67,7 @@ export default function PlanningView() {
   const [newEventEndDate, setNewEventEndDate] = useState('2026-10-25');
   const [newEventEndTime, setNewEventEndTime] = useState('20:45');
   const [newEventTemplateId, setNewEventTemplateId] = useState('');
-  const [newEventLiturgyLeader, setNewEventLiturgyLeader] = useState('carlos');
+  const [newEventLiturgyLeader, setNewEventLiturgyLeader] = useState(() => currentUser?.id || '');
   const [newEventDurationPolicy, setNewEventDurationPolicy] = useState('warn');
   const [createEventError, setCreateEventError] = useState('');
   const [createEventSuccess, setCreateEventSuccess] = useState('');
@@ -83,7 +86,7 @@ export default function PlanningView() {
   const [formTitle, setFormTitle] = useState('');
   const [formCategory, setFormCategory] = useState('Liturgia');
   const [formDuration, setFormDuration] = useState(10);
-  const [formResponsible, setFormResponsible] = useState('carlos');
+  const [formResponsible, setFormResponsible] = useState(() => currentUser?.id || (members?.[0]?.id || ''));
   const [formNotes, setFormNotes] = useState('');
   const [formRequiresPlayback, setFormRequiresPlayback] = useState(false);
 
@@ -106,7 +109,7 @@ export default function PlanningView() {
     setFormTitle('');
     setFormCategory('Liturgia');
     setFormDuration(10);
-    setFormResponsible('carlos');
+    setFormResponsible(currentUser?.id || (members?.[0]?.id || ''));
     setFormNotes('');
     setFormRequiresPlayback(false);
     setActivityModalOpen(true);
@@ -255,7 +258,7 @@ export default function PlanningView() {
     setNewEventEndDate('2026-10-25');
     setNewEventEndTime('20:45');
     setNewEventTemplateId('');
-    setNewEventLiturgyLeader(currentUser?.id || 'carlos');
+    setNewEventLiturgyLeader(currentUser?.id || (members?.[0]?.id || ''));
     setNewEventDurationPolicy('warn');
     setCreateEventError('');
     setCreateEventSuccess('');
@@ -349,8 +352,87 @@ export default function PlanningView() {
 
   return (
     <div className="planning-view-container">
-      {/* SELETOR DE EDIÇÕES DE CULTO E NOVA EDIÇÃO (PRD §5 / Issue #28) */}
-      <div className="card" id="planning-event-selector-bar" style={{ padding: '16px 20px', background: 'var(--bg-inset)', border: '1px solid var(--border-subtle)', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '16px' }}>
+      {/* Barra de Navegação Superior / Voltar ao Início */}
+      {onBack && (
+        <div style={{ marginBottom: '1.25rem', display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '0.75rem' }}>
+          <button
+            type="button"
+            className="btn btn-secondary"
+            id="btn-back-to-home"
+            onClick={onBack}
+            style={{ display: 'inline-flex', alignItems: 'center', gap: '0.5rem', fontWeight: 600 }}
+          >
+            ← Voltar ao Início da Igreja
+          </button>
+          <span className="badge badge-pending" style={{ fontSize: '0.85rem' }}>
+            Igreja: {church?.name || 'Igreja Conectada'}
+          </span>
+        </div>
+      )}
+
+      {/* Banner de Indisponibilidade Remota das Migrações 020-023 */}
+      {remoteError && (
+        <div
+          id="banner-backend-unavailability"
+          className="card"
+          style={{
+            borderLeft: '4px solid #f59e0b',
+            background: '#fffbeb',
+            color: '#92400e',
+            marginBottom: '1.25rem',
+            padding: '1rem'
+          }}
+        >
+          <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', fontWeight: 600 }}>
+            <AlertCircle size={20} color="#d97706" />
+            <span>Indisponibilidade de Serviços de Planejamento no Supabase</span>
+          </div>
+          <p style={{ margin: '0.5rem 0 0 0', fontSize: '0.9rem' }}>
+            {remoteError}
+          </p>
+          <p style={{ margin: '0.25rem 0 0 0', fontSize: '0.8rem', color: '#b45309' }}>
+            As tabelas ou RPCs das migrações 020 a 023 ainda não estão disponíveis no banco. A interface está em modo de visualização segura; novos eventos ou rascunhos não serão gravados localmente como falso sucesso.
+          </p>
+          {reloadRemoteData && (
+            <button
+              type="button"
+              className="btn btn-secondary"
+              onClick={reloadRemoteData}
+              disabled={remoteLoading}
+              style={{ marginTop: '0.5rem', fontSize: '0.8rem', padding: '0.35rem 0.75rem' }}
+            >
+              {remoteLoading ? 'Verificando conexão...' : 'Tentar reconectar'}
+            </button>
+          )}
+        </div>
+      )}
+
+      {(!event || events.length === 0) ? (
+        <div className="card" style={{ padding: '2.5rem 1.5rem', textAlign: 'center' }}>
+          <Calendar size={48} color="var(--primary)" style={{ margin: '0 auto 1rem' }} />
+          <h2 style={{ fontSize: '1.25rem', marginBottom: '0.5rem' }}>Nenhum Culto Cadastrado</h2>
+          <p style={{ color: 'var(--text-secondary)', fontSize: '0.9rem', maxWidth: '500px', margin: '0 auto 1.5rem', lineHeight: 1.5 }}>
+            {(isAdmin || isLiturgyLeader)
+              ? 'Não existem edições de culto cadastradas para esta igreja. Clique abaixo para cadastrar a primeira edição e iniciar o planejamento litúrgico.'
+              : 'Não existem edições de culto cadastradas para esta igreja no momento. O cronograma litúrgico estará disponível assim que a liderança cadastrar o culto.'}
+          </p>
+          {(isAdmin || isLiturgyLeader) && (
+            <button
+              type="button"
+              id="btn-open-create-event-modal"
+              className="btn btn-primary"
+              onClick={handleOpenCreateEventModal}
+              disabled={isControlsDisabled}
+              style={{ display: 'inline-flex', alignItems: 'center', gap: '0.5rem', margin: '0 auto' }}
+            >
+              <Plus size={16} /> Nova Edição de Culto
+            </button>
+          )}
+        </div>
+      ) : (
+        <>
+          {/* SELETOR DE EDIÇÕES DE CULTO E NOVA EDIÇÃO (PRD §5 / Issue #28) */}
+          <div className="card" id="planning-event-selector-bar" style={{ padding: '16px 20px', background: 'var(--bg-inset)', border: '1px solid var(--border-subtle)', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '16px' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: '12px', flexWrap: 'wrap' }}>
           <Calendar size={18} color="var(--primary)" />
           <div>
@@ -772,6 +854,8 @@ export default function PlanningView() {
           </div>
         )}
       </div>
+        </>
+      )}
 
       {/* MODAL DE CRIAÇÃO / EDIÇÃO DE ATIVIDADE */}
       {activityModalOpen && (

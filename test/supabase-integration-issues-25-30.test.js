@@ -250,6 +250,69 @@ describe('Integração Frontend-RPCs Supabase (Issues #25 a #30)', () => {
       assert.match(res.error, /Política de duração inválida/);
       assert.match(res.error, /warn.*block/);
     });
+
+    test('2.6 Validação de compatibilidade contratual de parâmetros com RPCs (020 a 023)', async () => {
+      let intercepted = [];
+      const capturingClient = {
+        rpc: async (fn, params) => {
+          intercepted.push({ fn, params });
+          return { data: [], error: null };
+        }
+      };
+
+      // 020: Consulta, atualização e alternância de status de motivos
+      await fetchCancellationReasonsRemote(capturingClient, TEST_CHURCH_A, true);
+      assert.equal(intercepted[0].fn, 'list_cancellation_reasons');
+      assert.equal(intercepted[0].params.p_church_id, TEST_CHURCH_A);
+      assert.equal(intercepted[0].params.p_only_active, false);
+      assert.equal(intercepted[0].params.p_include_inactive, undefined);
+
+      await updateCancellationReasonRemote(capturingClient, TEST_CHURCH_A, 'cr-1', 'Novo Motivo');
+      assert.equal(intercepted[1].fn, 'update_cancellation_reason');
+      assert.equal(intercepted[1].params.p_new_name, 'Novo Motivo');
+
+      await toggleCancellationReasonStatusRemote(capturingClient, TEST_CHURCH_A, 'cr-1', false);
+      assert.equal(intercepted[2].fn, 'toggle_cancellation_reason_status');
+      assert.equal(intercepted[2].params.p_active, false);
+
+      // 021: Consulta de tipos e atividades padrão
+      await fetchEventTypesRemote(capturingClient, TEST_CHURCH_A, true);
+      assert.equal(intercepted[3].fn, 'list_event_types');
+      assert.equal(intercepted[3].params.p_only_active, false);
+      assert.equal(intercepted[3].params.p_include_inactive, undefined);
+
+      await fetchStandardActivitiesRemote(capturingClient, TEST_CHURCH_A, true);
+      assert.equal(intercepted[4].fn, 'list_standard_activities');
+      assert.equal(intercepted[4].params.p_only_active, false);
+      assert.equal(intercepted[4].params.p_include_inactive, undefined);
+
+      // 022: Modelos de culto (contrato estrito)
+      await fetchServiceTemplatesRemote(capturingClient, TEST_CHURCH_A, true);
+      assert.equal(intercepted[5].fn, 'list_service_templates');
+      assert.equal(intercepted[5].params.p_only_active, false);
+
+      await getServiceTemplateRemote(capturingClient, { templateId: 'tpl-123' });
+      assert.equal(intercepted[6].fn, 'get_service_template');
+      assert.equal(intercepted[6].params.p_template_id, 'tpl-123');
+      assert.equal(intercepted[6].params.p_church_id, undefined);
+
+      await updateServiceTemplateRemote(capturingClient, TEST_CHURCH_A, 'tpl-123', { name: 'Modelo Atualizado' });
+      assert.equal(intercepted[7].fn, 'update_service_template');
+      assert.equal(intercepted[7].params.p_church_id, undefined);
+
+      await toggleServiceTemplateStatusRemote(capturingClient, TEST_CHURCH_A, 'tpl-123', false);
+      assert.equal(intercepted[8].fn, 'toggle_service_template_status');
+      assert.equal(intercepted[8].params.p_active, false);
+      assert.equal(intercepted[8].params.p_church_id, undefined);
+
+      await deleteServiceTemplateRemote(capturingClient, TEST_CHURCH_A, 'tpl-123');
+      assert.equal(intercepted[9].fn, 'delete_service_template');
+      assert.equal(intercepted[9].params.p_church_id, undefined);
+
+      await instantiateServiceTemplateRemote(capturingClient, TEST_CHURCH_A, 'tpl-123');
+      assert.equal(intercepted[10].fn, 'instantiate_service_template');
+      assert.equal(intercepted[10].params.p_event_id, undefined);
+    });
   });
 
   describe('3. Integração AppContext: Supabase Remoto vs Fallback Local', () => {

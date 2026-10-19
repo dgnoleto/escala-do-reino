@@ -390,7 +390,7 @@ export async function fetchServiceTemplatesRemote(supabaseClient, churchId, incl
   try {
     const { data, error } = await invokeSupabaseRpc(supabaseClient, 'list_service_templates', {
       p_church_id: churchId,
-      p_include_inactive: includeInactive,
+      p_only_active: !includeInactive,
     });
     if (error) {
       return { success: false, data: [], error: serviceTemplateErrorMessage(error), rawError: error };
@@ -407,13 +407,12 @@ export async function fetchServiceTemplatesRemote(supabaseClient, churchId, incl
 /**
  * Busca modelo de culto por ID no Supabase.
  */
-export async function getServiceTemplateRemote(supabaseClient, { churchId, templateId }) {
-  if (!churchId || !templateId) {
+export async function getServiceTemplateRemote(supabaseClient, { templateId } = {}) {
+  if (!templateId) {
     return { success: false, template: null, error: 'Parâmetros obrigatórios ausentes.' };
   }
   try {
     const { data, error } = await invokeSupabaseRpc(supabaseClient, 'get_service_template', {
-      p_church_id: churchId,
       p_template_id: templateId,
     });
     if (error) {
@@ -550,12 +549,11 @@ export async function updateServiceTemplateRemote(
 
   try {
     const { data, error } = await invokeSupabaseRpc(supabaseClient, 'update_service_template', {
-      p_church_id: churchId,
       p_command_id: cmdId,
       p_template_id: templateId,
+      p_event_type_id: eventTypeId || null,
       p_name: validation.cleanName,
       p_description: validation.cleanDesc || null,
-      p_event_type_id: eventTypeId || null,
       p_activities: cleanActs,
       p_parallel_services: cleanServices,
     });
@@ -573,30 +571,31 @@ export async function updateServiceTemplateRemote(
  * Alterna status (ativo/inativo) de modelo no Supabase.
  */
 export async function toggleServiceTemplateStatusRemote(supabaseClient, churchIdOrOpts, maybeTemplateId = null, maybeActive = null) {
-  let churchId, commandId, templateId;
+  let churchId, commandId, templateId, active;
   if (typeof churchIdOrOpts === 'object' && churchIdOrOpts !== null) {
-    ({ churchId, commandId, templateId } = churchIdOrOpts);
+    ({ churchId, commandId, templateId, active = null } = churchIdOrOpts);
   } else {
     churchId = churchIdOrOpts;
     templateId = maybeTemplateId;
+    active = maybeActive;
   }
 
-  if (!churchId || !templateId) {
+  if (!templateId || active === null || active === undefined) {
     return { success: false, error: 'Parâmetros obrigatórios ausentes.' };
   }
   const cmdId = commandId || generateCommandUuid();
   try {
     const { data, error } = await invokeSupabaseRpc(supabaseClient, 'toggle_service_template_status', {
-      p_church_id: churchId,
       p_command_id: cmdId,
       p_template_id: templateId,
+      p_active: Boolean(active),
     });
     if (error) {
       return { success: false, error: serviceTemplateErrorMessage(error), rawError: error };
     }
     const receipt = Array.isArray(data) ? data[0] : data;
-    const active = receipt?.result_payload?.active ?? maybeActive;
-    return { success: true, active, receipt, error: null };
+    const resolvedActive = receipt?.result_payload?.active ?? active;
+    return { success: true, active: resolvedActive, receipt, error: null };
   } catch (err) {
     return { success: false, error: serviceTemplateErrorMessage(err), rawError: err };
   }
@@ -614,13 +613,12 @@ export async function deleteServiceTemplateRemote(supabaseClient, churchIdOrOpts
     templateId = maybeTemplateId;
   }
 
-  if (!churchId || !templateId) {
+  if (!templateId) {
     return { success: false, error: 'Parâmetros obrigatórios ausentes.' };
   }
   const cmdId = commandId || generateCommandUuid();
   try {
     const { data, error } = await invokeSupabaseRpc(supabaseClient, 'delete_service_template', {
-      p_church_id: churchId,
       p_command_id: cmdId,
       p_template_id: templateId,
     });
@@ -637,26 +635,24 @@ export async function deleteServiceTemplateRemote(supabaseClient, churchIdOrOpts
 /**
  * Aplica modelo a uma edição de evento no Supabase.
  */
-export async function instantiateServiceTemplateRemote(supabaseClient, churchIdOrOpts, maybeTemplateId = null, maybeEventId = null) {
-  let churchId, commandId, templateId, eventId;
+export async function instantiateServiceTemplateRemote(supabaseClient, churchIdOrOpts, maybeTemplateId = null) {
+  let churchId, commandId, templateId;
   if (typeof churchIdOrOpts === 'object' && churchIdOrOpts !== null) {
-    ({ churchId, commandId, templateId, eventId } = churchIdOrOpts);
+    ({ churchId, commandId, templateId } = churchIdOrOpts);
   } else {
     churchId = churchIdOrOpts;
     templateId = maybeTemplateId;
-    eventId = maybeEventId;
   }
 
-  if (!churchId || !templateId || !eventId) {
+  if (!churchId || !templateId) {
     return { success: false, error: 'Parâmetros obrigatórios ausentes.' };
   }
   const cmdId = commandId || generateCommandUuid();
   try {
     const { data, error } = await invokeSupabaseRpc(supabaseClient, 'instantiate_service_template', {
-      p_church_id: churchId,
       p_command_id: cmdId,
+      p_church_id: churchId,
       p_template_id: templateId,
-      p_event_id: eventId,
     });
     if (error) {
       return { success: false, error: serviceTemplateErrorMessage(error), rawError: error };
