@@ -732,19 +732,19 @@ end;
 $function$;
 
 -- 8. Permissões de Execução e Ownership
-revoke all on function public.create_church_event_edition(uuid, uuid, text, text, timestamptz, timestamptz, uuid, text) from public, anon;
+revoke all on function public.create_church_event_edition(uuid, uuid, text, text, timestamptz, timestamptz, uuid, text) from public, anon, service_role;
 grant execute on function public.create_church_event_edition(uuid, uuid, text, text, timestamptz, timestamptz, uuid, text) to authenticated;
 
-revoke all on function public.reorder_event_items(uuid, uuid, uuid, uuid[]) from public, anon;
+revoke all on function public.reorder_event_items(uuid, uuid, uuid, uuid[]) from public, anon, service_role;
 grant execute on function public.reorder_event_items(uuid, uuid, uuid, uuid[]) to authenticated;
 
-revoke all on function public.set_event_duration_policy(uuid, uuid, uuid, text) from public, anon;
+revoke all on function public.set_event_duration_policy(uuid, uuid, uuid, text) from public, anon, service_role;
 grant execute on function public.set_event_duration_policy(uuid, uuid, uuid, text) to authenticated;
 
-revoke all on function public.publish_event_program(uuid, uuid, uuid) from public, anon;
+revoke all on function public.publish_event_program(uuid, uuid, uuid) from public, anon, service_role;
 grant execute on function public.publish_event_program(uuid, uuid, uuid) to authenticated;
 
-revoke all on function public.save_event_program_draft(uuid, uuid, uuid) from public, anon;
+revoke all on function public.save_event_program_draft(uuid, uuid, uuid) from public, anon, service_role;
 grant execute on function public.save_event_program_draft(uuid, uuid, uuid) to authenticated;
 
 alter function public.create_church_event_edition(uuid, uuid, text, text, timestamptz, timestamptz, uuid, text) owner to postgres;

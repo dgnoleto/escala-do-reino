@@ -838,25 +838,25 @@ end;
 $function$;
 
 -- 13. Permissões de Execução e Ownership
-revoke all on function public.list_service_templates(uuid, boolean, uuid) from public, anon;
+revoke all on function public.list_service_templates(uuid, boolean, uuid) from public, anon, service_role;
 grant execute on function public.list_service_templates(uuid, boolean, uuid) to authenticated;
 
-revoke all on function public.get_service_template(uuid) from public, anon;
+revoke all on function public.get_service_template(uuid) from public, anon, service_role;
 grant execute on function public.get_service_template(uuid) to authenticated;
 
-revoke all on function public.create_service_template(uuid, uuid, uuid, text, text, jsonb, jsonb) from public, anon;
+revoke all on function public.create_service_template(uuid, uuid, uuid, text, text, jsonb, jsonb) from public, anon, service_role;
 grant execute on function public.create_service_template(uuid, uuid, uuid, text, text, jsonb, jsonb) to authenticated;
 
-revoke all on function public.update_service_template(uuid, uuid, uuid, text, text, jsonb, jsonb) from public, anon;
+revoke all on function public.update_service_template(uuid, uuid, uuid, text, text, jsonb, jsonb) from public, anon, service_role;
 grant execute on function public.update_service_template(uuid, uuid, uuid, text, text, jsonb, jsonb) to authenticated;
 
-revoke all on function public.toggle_service_template_status(uuid, uuid, boolean) from public, anon;
+revoke all on function public.toggle_service_template_status(uuid, uuid, boolean) from public, anon, service_role;
 grant execute on function public.toggle_service_template_status(uuid, uuid, boolean) to authenticated;
 
-revoke all on function public.delete_service_template(uuid, uuid) from public, anon;
+revoke all on function public.delete_service_template(uuid, uuid) from public, anon, service_role;
 grant execute on function public.delete_service_template(uuid, uuid) to authenticated;
 
-revoke all on function public.instantiate_service_template(uuid, uuid, uuid) from public, anon;
+revoke all on function public.instantiate_service_template(uuid, uuid, uuid) from public, anon, service_role;
 grant execute on function public.instantiate_service_template(uuid, uuid, uuid) to authenticated;
 
 alter function public.list_service_templates(uuid, boolean, uuid) owner to postgres;
