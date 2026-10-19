@@ -6,9 +6,20 @@ import TeamsPage from './TeamsPage';
 import ChurchSettingsPage from './ChurchSettingsPage';
 import ChurchLogo from './ChurchLogo';
 import CreateChurchModal from './CreateChurchModal';
-import { Church, PlusCircle, ShieldAlert, Loader2, AlertCircle, Mail, RefreshCw, Clock, Users } from 'lucide-react';
+import AdminView from './AdminView';
+import PlanningView from './PlanningView';
+import { AppProvider, AppContext } from '../context/AppContext';
+import { Church, PlusCircle, ShieldAlert, Loader2, AlertCircle, Mail, RefreshCw, Clock, Users, Calendar, Layers } from 'lucide-react';
 import { checkChurchCreationEligibility, loadPendingChurchCommand } from '../utils/churchCommandService';
 import { loadAccessRequestMarker, removeAccessRequestMarker } from '../utils/invitationCommandService';
+
+function AppContextWrapper({ children }) {
+  const existingContext = React.useContext(AppContext);
+  if (existingContext) {
+    return children;
+  }
+  return <AppProvider allowMemoryFallback={false}>{children}</AppProvider>;
+}
 
 /**
  * ChurchHomePage — tela inicial para contas com vínculo confirmado.
@@ -119,6 +130,24 @@ export default function ChurchHomePage() {
   // Navegação para a tela de ministérios e equipes (Admin ou Membro)
   if (currentView === 'teams') {
     return <TeamsPage onBack={() => setCurrentView('home')} />;
+  }
+
+  // Navegação para cadastros administrativos e modelos litúrgicos
+  if (currentView === 'admin') {
+    return (
+      <AppContextWrapper>
+        <AdminView onBack={() => setCurrentView('home')} initialTab="event_types" />
+      </AppContextWrapper>
+    );
+  }
+
+  // Navegação para planejamento de cultos (Admin ou Membro)
+  if (currentView === 'planning') {
+    return (
+      <AppContextWrapper>
+        <PlanningView onBack={() => setCurrentView('home')} />
+      </AppContextWrapper>
+    );
   }
 
   return (
@@ -439,6 +468,32 @@ export default function ChurchHomePage() {
           </div>
         )}
 
+        {/* Bloco de Cadastros e Modelos Litúrgicos exclusivo para Administrador */}
+        {isAdmin && (
+          <div className="church-home-admin-section" style={{ marginTop: '12px' }}>
+            <div className="church-home-admin-box">
+              <div className="church-home-admin-icon" aria-hidden="true">
+                <Layers size={20} />
+              </div>
+              <div className="church-home-admin-info">
+                <span className="church-home-admin-title">Cadastros &amp; Modelos Litúrgicos</span>
+                <span className="church-home-admin-desc">
+                  Gerencie tipos de eventos, atividades padrão com durações, modelos de culto e motivos de cancelamento.
+                </span>
+              </div>
+            </div>
+            <button
+              id="btn-goto-admin-cadastros"
+              className="btn btn-primary church-home-admin-btn"
+              onClick={() => setCurrentView('admin')}
+              type="button"
+              aria-label="Acessar Cadastros e Modelos Litúrgicos"
+            >
+              Acessar Cadastros
+            </button>
+          </div>
+        )}
+
         {/* Bloco de Gestão de Ministérios e Equipes */}
         <div className="church-home-admin-section" style={{ marginTop: '12px' }}>
           <div className="church-home-admin-box">
@@ -462,6 +517,32 @@ export default function ChurchHomePage() {
             aria-label="Acessar Ministérios e Equipes"
           >
             Acessar Equipes
+          </button>
+        </div>
+
+        {/* Bloco de Planejamento de Cultos (Admin e Membro) */}
+        <div className="church-home-admin-section" style={{ marginTop: '12px' }}>
+          <div className="church-home-admin-box">
+            <div className="church-home-admin-icon" aria-hidden="true">
+              <Calendar size={20} />
+            </div>
+            <div className="church-home-admin-info">
+              <span className="church-home-admin-title">Planejamento de Cultos</span>
+              <span className="church-home-admin-desc">
+                {isAdmin
+                  ? 'Crie e estruture edições de cultos, ordem litúrgica, durações e escalas das equipes.'
+                  : 'Consulte as programações de cultos, ordem litúrgica e escalas das equipes.'}
+              </span>
+            </div>
+          </div>
+          <button
+            id="btn-goto-planning"
+            className="btn btn-primary church-home-admin-btn"
+            onClick={() => setCurrentView('planning')}
+            type="button"
+            aria-label="Acessar Planejamento de Cultos"
+          >
+            Acessar Planejamento
           </button>
         </div>
 
@@ -522,8 +603,8 @@ export default function ChurchHomePage() {
           </svg>
           <span>
             {isAdmin
-              ? 'O planejamento e a condução dos cultos estarão disponíveis nos próximos incrementos.'
-              : 'Seu acesso foi confirmado. O cronograma e as escalas estarão disponíveis em breve.'}
+              ? 'Planejamento de cultos e cadastros litúrgicos integrados à sua jornada. Acesse as seções acima.'
+              : 'Seu acesso foi confirmado. Acompanhe as escalas e o planejamento de cultos acima.'}
           </span>
         </div>
 

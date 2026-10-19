@@ -229,7 +229,7 @@ export async function fetchCancellationReasonsRemote(supabaseClient, churchId, i
   try {
     const { data, error } = await invokeSupabaseRpc(supabaseClient, 'list_cancellation_reasons', {
       p_church_id: churchId,
-      p_include_inactive: includeInactive,
+      p_only_active: !includeInactive,
     });
     if (error) {
       return { success: false, data: [], error: cancellationReasonErrorMessage(error), rawError: error };
@@ -313,7 +313,7 @@ export async function updateCancellationReasonRemote(supabaseClient, churchIdOrO
       p_church_id: churchId,
       p_command_id: cmdId,
       p_reason_id: reasonId,
-      p_name: validation.cleanName,
+      p_new_name: validation.cleanName,
     });
     if (error) {
       return { success: false, error: cancellationReasonErrorMessage(error), rawError: error };
@@ -329,12 +329,13 @@ export async function updateCancellationReasonRemote(supabaseClient, churchIdOrO
  * Alterna status (ativo/inativo) de motivo no Supabase.
  */
 export async function toggleCancellationReasonStatusRemote(supabaseClient, churchIdOrOpts, maybeReasonId = null, maybeActive = null) {
-  let churchId, commandId, reasonId;
+  let churchId, commandId, reasonId, active;
   if (typeof churchIdOrOpts === 'object' && churchIdOrOpts !== null) {
-    ({ churchId, commandId, reasonId } = churchIdOrOpts);
+    ({ churchId, commandId, reasonId, active = null } = churchIdOrOpts);
   } else {
     churchId = churchIdOrOpts;
     reasonId = maybeReasonId;
+    active = maybeActive;
   }
 
   if (!churchId || !reasonId) {
@@ -346,13 +347,14 @@ export async function toggleCancellationReasonStatusRemote(supabaseClient, churc
       p_church_id: churchId,
       p_command_id: cmdId,
       p_reason_id: reasonId,
+      p_active: active !== null && active !== undefined ? Boolean(active) : true,
     });
     if (error) {
       return { success: false, error: cancellationReasonErrorMessage(error), rawError: error };
     }
     const receipt = Array.isArray(data) ? data[0] : data;
-    const active = receipt?.result_payload?.active ?? maybeActive;
-    return { success: true, active, receipt, error: null };
+    const resolvedActive = receipt?.result_payload?.active ?? active;
+    return { success: true, active: resolvedActive, receipt, error: null };
   } catch (err) {
     return { success: false, error: cancellationReasonErrorMessage(err), rawError: err };
   }

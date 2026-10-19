@@ -383,7 +383,7 @@ export async function fetchEventTypesRemote(supabaseClient, churchId, includeIna
   try {
     const { data, error } = await invokeSupabaseRpc(supabaseClient, 'list_event_types', {
       p_church_id: churchId,
-      p_include_inactive: includeInactive,
+      p_only_active: !includeInactive,
     });
     if (error) {
       return { success: false, data: [], error: eventTypeActivityErrorMessage(error), rawError: error };
@@ -559,7 +559,7 @@ export async function fetchStandardActivitiesRemote(supabaseClient, churchId, in
   try {
     const { data, error } = await invokeSupabaseRpc(supabaseClient, 'list_standard_activities', {
       p_church_id: churchId,
-      p_include_inactive: includeInactive,
+      p_only_active: !includeInactive,
     });
     if (error) {
       return { success: false, data: [], error: eventTypeActivityErrorMessage(error), rawError: error };

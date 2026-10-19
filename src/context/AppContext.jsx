@@ -1,6 +1,6 @@
 import React, { createContext, useContext, useState, useEffect, useCallback, useRef } from 'react';
-import { AuthContext } from './AuthContext';
-import { supabase as defaultSupabaseClient, isSupabaseConfigured } from '../lib/supabaseClient';
+import { useAuth } from './AuthContext';
+import { supabase as defaultSupabaseClient } from '../lib/supabaseClient';
 import {
   INITIAL_CHURCH,
   INITIAL_MEMBERS,
@@ -78,7 +78,7 @@ import {
   eventPlanningErrorMessage,
 } from '../utils/eventPlanningService';
 
-const AppContext = createContext(null);
+export const AppContext = createContext(null);
 
 export function AppProvider({
   children,
@@ -87,21 +87,25 @@ export function AppProvider({
   supabaseClient: propSupabaseClient = null,
   allowMemoryFallback = undefined,
 }) {
-  const authContext = useContext(AuthContext);
+  let authContext = null;
+  try {
+    authContext = useAuth();
+  } catch {
+    authContext = null;
+  }
   const effectiveChurchId = propChurchId || authContext?.churchAccess?.church_id || null;
   const effectiveClient = propSupabaseClient || (authContext ? defaultSupabaseClient : null);
 
-  // Diferenciação estrita entre ambiente real e testes/demonstração intencional
-  const isExplicitDemo = allowMemoryFallback === true;
-  const isNodeTest = typeof process !== 'undefined' && (process.env?.NODE_ENV === 'test' || Boolean(process.env?.NODE_TEST_CONTEXT));
+  // Diferenciação estrita entre ambiente real autenticado e testes/demonstração
+  const isRealAuthSession = Boolean(authContext?.churchAccess);
 
   const isMemoryFallbackAllowed = allowMemoryFallback === false
     ? false
     : allowMemoryFallback === true
       ? true
-      : Boolean(isNodeTest && !propSupabaseClient && !propChurchId && !authContext);
+      : Boolean(!isRealAuthSession);
 
-  const isRealEnvironment = !isMemoryFallbackAllowed;
+  const isRealEnvironment = isRealAuthSession;
   const isRemoteConfigured = Boolean(effectiveClient && effectiveChurchId);
 
   const previousChurchIdRef = useRef(effectiveChurchId);
@@ -121,23 +125,45 @@ export function AppProvider({
   };
 
   // Configurações e Dados Base
-  const [church] = useState(INITIAL_CHURCH);
-  const [members, setMembers] = useState(INITIAL_MEMBERS);
-  const [teams, setTeams] = useState(INITIAL_TEAMS);
+  const [church, setChurch] = useState(() => {
+    if (authContext?.churchAccess) {
+      return {
+        id: authContext.churchAccess.church_id,
+        name: authContext.churchAccess.church_name,
+        timezone: authContext.churchAccess.timezone || 'America/Sao_Paulo',
+        defaultDurationPolicy: authContext.churchAccess.default_duration_policy || 'warn',
+      };
+    }
+    return INITIAL_CHURCH;
+  });
+
+  useEffect(() => {
+    if (authContext?.churchAccess) {
+      setChurch({
+        id: authContext.churchAccess.church_id,
+        name: authContext.churchAccess.church_name,
+        timezone: authContext.churchAccess.timezone || 'America/Sao_Paulo',
+        defaultDurationPolicy: authContext.churchAccess.default_duration_policy || 'warn',
+      });
+    }
+  }, [authContext?.churchAccess]);
+
+  const [members, setMembers] = useState(() => (isRealEnvironment ? [] : INITIAL_MEMBERS));
+  const [teams, setTeams] = useState(() => (isRealEnvironment ? [] : INITIAL_TEAMS));
   const [cancelReasons, setCancelReasons] = useState(() =>
-    INITIAL_CANCEL_REASONS.map((r, idx) => toReasonObject(r, idx))
+    isRealEnvironment ? [] : INITIAL_CANCEL_REASONS.map((r, idx) => toReasonObject(r, idx))
   );
   const [eventTypes, setEventTypes] = useState(() =>
-    INITIAL_EVENT_TYPES.map((t, idx) => toEventTypeObject(t, idx))
+    isRealEnvironment ? [] : INITIAL_EVENT_TYPES.map((t, idx) => toEventTypeObject(t, idx))
   );
   const [standardActivities, setStandardActivities] = useState(() =>
-    INITIAL_STANDARD_ACTIVITIES.map((a, idx) => toStandardActivityObject(a, idx))
+    isRealEnvironment ? [] : INITIAL_STANDARD_ACTIVITIES.map((a, idx) => toStandardActivityObject(a, idx))
   );
   const [serviceTemplates, setServiceTemplates] = useState(() =>
-    INITIAL_SERVICE_TEMPLATES.map((st, idx) => toServiceTemplateObject(st, idx))
+    isRealEnvironment ? [] : INITIAL_SERVICE_TEMPLATES.map((st, idx) => toServiceTemplateObject(st, idx))
   );
-  const [accessInvites, setAccessInvites] = useState(INITIAL_ACCESS_INVITES);
-  const [auditLogs, setAuditLogs] = useState(INITIAL_AUDIT_LOGS);
+  const [accessInvites, setAccessInvites] = useState(() => (isRealEnvironment ? [] : INITIAL_ACCESS_INVITES));
+  const [auditLogs, setAuditLogs] = useState(() => (isRealEnvironment ? [] : INITIAL_AUDIT_LOGS));
 
   // Estados de Sincronização Remota com Supabase (Issues #25 a #30)
   const [remoteLoading, setRemoteLoading] = useState(false);
@@ -177,6 +203,106 @@ export function AppProvider({
       if (typesRes.success) setEventTypes(typesRes.data);
       if (actsRes.success) setStandardActivities(actsRes.data);
       if (templatesRes.success) setServiceTemplates(templatesRes.data);
+
+      const firstFailed = [reasonsRes, typesRes, actsRes, templatesRes].find(r => !r.success);
+      if (firstFailed) {
+        setRemoteError(firstFailed.error);
+      }
+
+      // Consulta complementar de membros e equipes reais da igreja se disponível
+      try {
+        const { data: membersData, error: membersErr } = await effectiveClient.rpc('list_church_members', {
+          p_church_id: effectiveChurchId,
+          p_limit: 100,
+          p_offset: 0
+        });
+        if (!membersErr && Array.isArray(membersData)) {
+          const mappedMembers = membersData.map(m => ({
+            id: m.member_id,
+            name: m.display_name,
+            roles: ['membro'],
+            active: m.status === 'active',
+            skills: [],
+            teams: []
+          }));
+          if (authContext?.churchAccess?.is_admin && authContext?.churchAccess?.member_id) {
+            const foundMe = mappedMembers.find(m => m.id === authContext.churchAccess.member_id);
+            if (foundMe) {
+              foundMe.roles = ['admin', 'membro'];
+            } else {
+              mappedMembers.unshift({
+                id: authContext.churchAccess.member_id,
+                name: authContext.churchAccess.display_name,
+                roles: ['admin', 'membro'],
+                active: true,
+                skills: [],
+                teams: []
+              });
+            }
+          }
+          if (mappedMembers.length > 0) {
+            setMembers(mappedMembers);
+          }
+        }
+      } catch {
+        // Consulta auxiliar não-bloqueante
+      }
+
+      try {
+        const { data: teamsData, error: teamsErr } = await effectiveClient.rpc('list_church_teams', {
+          p_church_id: effectiveChurchId
+        });
+        if (!teamsErr && Array.isArray(teamsData)) {
+          const mappedTeams = teamsData.map(t => ({
+            id: t.id,
+            name: t.name,
+            leaderId: t.leader_member_id || null
+          }));
+          if (mappedTeams.length > 0) {
+            setTeams(mappedTeams);
+          }
+        }
+      } catch {
+        // Consulta auxiliar não-bloqueante
+      }
+
+      try {
+        const { data: eventsData, error: eventsErr } = await effectiveClient.rpc('list_church_events', {
+          p_church_id: effectiveChurchId,
+          p_status_filter: null,
+          p_limit: 50,
+          p_offset: 0
+        });
+        if (!eventsErr && Array.isArray(eventsData)) {
+          const mappedEvents = eventsData.map(ev => ({
+            id: ev.id,
+            title: ev.title,
+            date: ev.event_date || (ev.planned_start_at ? ev.planned_start_at.split('T')[0] : '2026-10-25'),
+            scheduledStartTime: ev.start_time || (ev.planned_start_at ? new Date(ev.planned_start_at).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' }) : '19:00'),
+            plannedDurationMinutes: ev.planned_duration_minutes || 105,
+            durationPolicy: ev.duration_policy || 'warn',
+            programStatus: ev.program_status || 'draft',
+            programVersion: ev.program_version || 1,
+            liturgyLeaderId: ev.liturgy_leader_member_id || null,
+            activities: Array.isArray(ev.items) ? ev.items.map((it, idx) => ({
+              id: it.id || `act-${idx}`,
+              title: it.title,
+              plannedDurationMinutes: it.planned_duration_minutes || 5,
+              category: it.category || 'Liturgia',
+              responsibleMemberId: it.responsible_member_id || null,
+              status: 'pendente',
+              roster: []
+            })) : [],
+            parallelServices: []
+          }));
+          if (mappedEvents.length > 0) {
+            setEvents(mappedEvents);
+            setCurrentEventId(mappedEvents[0].id);
+          }
+        }
+      } catch {
+        // Consulta auxiliar não-bloqueante
+      }
     } catch (err) {
       if (loadRequestSeqRef.current === currentSeq) {
         setRemoteError(err.message || 'Falha ao sincronizar dados remotos.');
@@ -186,7 +312,7 @@ export function AppProvider({
         setRemoteLoading(false);
       }
     }
-  }, [effectiveClient, effectiveChurchId]);
+  }, [effectiveClient, effectiveChurchId, authContext?.churchAccess]);
 
   useEffect(() => {
     if (effectiveClient && effectiveChurchId) {
@@ -194,21 +320,26 @@ export function AppProvider({
     }
   }, [effectiveClient, effectiveChurchId, reloadRemoteData]);
 
-  // Usuário Atual Ativo (Simulação de Perfis para avaliação de papéis)
-  // Padrão: Carlos Oliveira (Líder da Liturgia do Culto)
-  const [currentUserId, setCurrentUserId] = useState(initialUserId);
+  // Usuário Atual Ativo (Sessão real se autenticado, ou fallback controlado para testes)
+  const [currentUserId, setCurrentUserId] = useState(() => {
+    if (authContext?.churchAccess?.member_id) {
+      return authContext.churchAccess.member_id;
+    }
+    return initialUserId;
+  });
 
   // Estado dos Eventos da Igreja (Issue #28)
-  const [events, setEvents] = useState([INITIAL_EVENT]);
-  const [currentEventId, setCurrentEventId] = useState(INITIAL_EVENT.id);
+  const [events, setEvents] = useState(() => (isRealEnvironment ? [] : [INITIAL_EVENT]));
+  const [currentEventId, setCurrentEventId] = useState(() => (isRealEnvironment ? null : INITIAL_EVENT.id));
 
   // Evento Ativo
-  const event = events.find(e => e.id === currentEventId) || events[0] || INITIAL_EVENT;
+  const event = events.find(e => e.id === currentEventId) || events[0] || (isRealEnvironment ? null : INITIAL_EVENT);
 
   const setEvent = (updater) => {
     setEvents(prevEvents => {
       const targetId = currentEventId;
-      const targetEvent = prevEvents.find(e => e.id === targetId) || prevEvents[0] || INITIAL_EVENT;
+      const targetEvent = prevEvents.find(e => e.id === targetId) || prevEvents[0] || (isRealEnvironment ? null : INITIAL_EVENT);
+      if (!targetEvent) return prevEvents;
       const nextEvent = typeof updater === 'function' ? updater(targetEvent) : updater;
       const exists = prevEvents.some(e => e.id === nextEvent.id);
       if (exists) {
@@ -232,11 +363,33 @@ export function AppProvider({
     }
   }, [theme]);
 
-  const currentUser = members.find(m => m.id === currentUserId) || members[0];
+  const currentUser = React.useMemo(() => {
+    if (authContext?.churchAccess) {
+      return {
+        id: authContext.churchAccess.member_id,
+        name: authContext.churchAccess.display_name,
+        roles: authContext.churchAccess.is_admin ? ['admin', 'membro'] : ['membro'],
+        active: true,
+        skills: [],
+        teams: []
+      };
+    }
+    return members.find(m => m.id === currentUserId) || members[0] || {
+      id: 'default-user',
+      name: 'Membro',
+      roles: ['membro'],
+      active: true,
+      skills: [],
+      teams: []
+    };
+  }, [authContext?.churchAccess, members, currentUserId]);
 
   // Helper de Permissões (PRD 3.2 & 4)
-  const isAdmin = currentUser.roles.includes("admin");
-  const isLiturgyLeader = event.liturgyLeaderId === currentUser.id;
+  const isAdmin = authContext?.churchAccess != null
+    ? Boolean(authContext.churchAccess.is_admin)
+    : (currentUser?.roles?.includes("admin") ?? false);
+
+  const isLiturgyLeader = event ? event.liturgyLeaderId === currentUser.id : false;
   const isTeamLeader = currentUser.roles.includes("lider_equipe") || teams.some(t => t.leaderId === currentUser.id);
 
   // Função para adicionar registro no Histórico de 1 Ano (PRD 10.5)
@@ -256,9 +409,10 @@ export function AppProvider({
   // Contagem regressiva da atividade, com contagem progressiva de tempo excedido se passar de zero.
   useEffect(() => {
     let interval = null;
-    if (event.status === "em_andamento" && event.currentActivityStatus === "em_execucao") {
+    if (event?.status === "em_andamento" && event?.currentActivityStatus === "em_execucao") {
       interval = setInterval(() => {
         setEvent(prev => {
+          if (!prev) return prev;
           const newElapsed = prev.activityElapsedSeconds + 1;
           return {
             ...prev,
@@ -270,13 +424,13 @@ export function AppProvider({
     return () => {
       if (interval) clearInterval(interval);
     };
-  }, [event.status, event.currentActivityStatus]);
+  }, [event?.status, event?.currentActivityStatus]);
 
   // Contagem de Intervalo entre Atividades (PRD 7.5)
   const [breakElapsedSeconds, setBreakElapsedSeconds] = useState(0);
   useEffect(() => {
     let interval = null;
-    if (event.inBreak) {
+    if (event?.inBreak) {
       interval = setInterval(() => {
         setBreakElapsedSeconds(sec => sec + 1);
       }, 1000);
@@ -286,7 +440,7 @@ export function AppProvider({
     return () => {
       if (interval) clearInterval(interval);
     };
-  }, [event.inBreak]);
+  }, [event?.inBreak]);
 
   // AÇÕES LITÚRGICAS (Exclusivas da Liturgia no MVP - PRD 7)
 
@@ -1564,7 +1718,7 @@ export function AppProvider({
     }));
     addAuditLog(
       "Designação da Liturgia",
-      `Pastor Marcos designou ${leader?.name || 'Membro'} como Líder da Liturgia para o evento.`
+      `${currentUser?.name || 'Administrador'} designou ${leader?.name || 'Membro'} como Líder da Liturgia para o evento.`
     );
   };
 
@@ -1792,6 +1946,7 @@ export function AppProvider({
   const publishCurrentProgram = () => {
     const authCheck = ensureAuthorizedContext();
     if (!authCheck.allowed) return { success: false, error: authCheck.error };
+    if (!event) return { success: false, error: 'Nenhum evento selecionado para publicação.' };
 
     try {
       const published = publishEventProgram(event, currentUser.id);
@@ -1836,6 +1991,7 @@ export function AppProvider({
   const saveCurrentProgramDraft = () => {
     const authCheck = ensureAuthorizedContext();
     if (!authCheck.allowed) return { success: false, error: authCheck.error };
+    if (!event) return { success: false, error: 'Nenhum evento selecionado para salvar rascunho.' };
 
     try {
       const draft = saveEventProgramDraft(event);
