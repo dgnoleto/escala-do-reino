@@ -162,6 +162,46 @@ export const INITIAL_STANDARD_ACTIVITIES = [
   { id: "sa-6", name: "Momento de Dízimos e Ofertas", defaultDurationMinutes: 10, category: "Liturgia", description: "Cântico de gratidão e recolhimento de ofertas", active: true },
   { id: "sa-7", name: "Oração Final e Bênção Apostólica", defaultDurationMinutes: 5, category: "Liturgia", description: "Encerramento litúrgico do culto", active: true }
 ];
+export const INITIAL_SERVICE_TEMPLATES = [
+  {
+    id: "st-1",
+    eventTypeId: "et-1",
+    name: "Culto de Celebração de Domingo (Padrão Completo)",
+    description: "Estrutura completa com louvor congregacional, ministração da palavra e apoios de portaria, som e transmissão",
+    active: true,
+    activities: [
+      { id: "sta-1", title: "Boas-Vindas e Oração Inicial", category: "Liturgia", plannedDurationMinutes: 5, displayOrder: 1, notes: "Acolhimento aos presentes e oração de abertura", requiresPlayback: false },
+      { id: "sta-2", title: "Louvor e Adoração Congregacional", category: "Louvor", plannedDurationMinutes: 25, displayOrder: 2, notes: "Bloco unificado de adoração", requiresPlayback: false },
+      { id: "sta-3", title: "Oportunidade Especial de Louvor", category: "Música Especial", plannedDurationMinutes: 7, displayOrder: 3, notes: "Solo ou grupo especial", requiresPlayback: true },
+      { id: "sta-4", title: "Dízimos, Ofertas e Comunicação", category: "Liturgia", plannedDurationMinutes: 8, displayOrder: 4, notes: "Vídeo institucional e oração", requiresPlayback: false },
+      { id: "sta-5", title: "Ministração da Palavra (Sermão)", category: "Mensagem", plannedDurationMinutes: 45, displayOrder: 5, notes: "Pregação central e exposição bíblica", requiresPlayback: false },
+      { id: "sta-6", title: "Apelo, Oração e Ministração Final", category: "Oração", plannedDurationMinutes: 10, displayOrder: 6, notes: "Fundo instrumental suave", requiresPlayback: false },
+      { id: "sta-7", title: "Bênção Apostólica e Encerramento", category: "Liturgia", plannedDurationMinutes: 5, displayOrder: 7, notes: "Despedida e convite para a comunhão", requiresPlayback: false }
+    ],
+    parallelServices: [
+      { id: "stps-1", teamId: "recepcao", serviceName: "Recepção & Portaria", prepRequiredMinutes: 15, isDefaultActive: true, displayOrder: 1 },
+      { id: "stps-2", teamId: "som", serviceName: "Sonoplastia & Retorno", prepRequiredMinutes: 30, isDefaultActive: true, displayOrder: 2 },
+      { id: "stps-3", teamId: "midia", serviceName: "Transmissão ao Vivo & Projeção", prepRequiredMinutes: 20, isDefaultActive: true, displayOrder: 3 }
+    ]
+  },
+  {
+    id: "st-2",
+    eventTypeId: "et-2",
+    name: "Culto de Doutrina e Oração (Sem Transmissão)",
+    description: "Estrutura simplificada voltada ao ensino e intercessão, sem transmissão ao vivo por padrão",
+    active: true,
+    activities: [
+      { id: "sta-201", title: "Abertura e Cânticos de Oração", category: "Louvor", plannedDurationMinutes: 15, displayOrder: 1, notes: "Cânticos congregacionais de reflexão", requiresPlayback: false },
+      { id: "sta-202", title: "Estudo Bíblico e Doutrina", category: "Mensagem", plannedDurationMinutes: 45, displayOrder: 2, notes: "Exposição temática e ensino pastoral", requiresPlayback: false },
+      { id: "sta-203", title: "Momento de Intercessão Comunitária", category: "Oração", plannedDurationMinutes: 20, displayOrder: 3, notes: "Oração por motivos da igreja e enfermos", requiresPlayback: false },
+      { id: "sta-204", title: "Oração Final e Comunhão", category: "Liturgia", plannedDurationMinutes: 10, displayOrder: 4, notes: "Encerramento e avisos finais", requiresPlayback: false }
+    ],
+    parallelServices: [
+      { id: "stps-201", teamId: "recepcao", serviceName: "Recepção & Portaria", prepRequiredMinutes: 10, isDefaultActive: true, displayOrder: 1 },
+      { id: "stps-202", teamId: "som", serviceName: "Sonoplastia & Áudio Ambiente", prepRequiredMinutes: 15, isDefaultActive: true, displayOrder: 2 }
+    ]
+  }
+];
 
 export const INITIAL_ACCESS_INVITES = [
   { id: "inv-1", email: "joao.silva@gmail.com", memberName: "João Silva", status: "Pendente", sentAt: "2026-09-28 14:00" },

@@ -6,6 +6,7 @@ import {
   INITIAL_CANCEL_REASONS,
   INITIAL_EVENT_TYPES,
   INITIAL_STANDARD_ACTIVITIES,
+  INITIAL_SERVICE_TEMPLATES,
   INITIAL_ACCESS_INVITES,
   INITIAL_EVENT,
   INITIAL_AUDIT_LOGS
@@ -23,6 +24,15 @@ import {
   canDeleteEventType,
   canDeleteStandardActivity,
 } from '../utils/eventTypeActivityService';
+import {
+  toServiceTemplateObject,
+  toTemplateActivity,
+  toTemplateParallelService,
+  validateServiceTemplate,
+  instantiateTemplateForEvent,
+  removeParallelServiceFromEvent,
+  canDeleteServiceTemplate,
+} from '../utils/serviceTemplateService';
 
 const AppContext = createContext(null);
 
@@ -39,6 +49,9 @@ export function AppProvider({ children, initialUserId = "carlos" }) {
   );
   const [standardActivities, setStandardActivities] = useState(() =>
     INITIAL_STANDARD_ACTIVITIES.map((a, idx) => toStandardActivityObject(a, idx))
+  );
+  const [serviceTemplates, setServiceTemplates] = useState(() =>
+    INITIAL_SERVICE_TEMPLATES.map((st, idx) => toServiceTemplateObject(st, idx))
   );
   const [accessInvites, setAccessInvites] = useState(INITIAL_ACCESS_INVITES);
   const [auditLogs, setAuditLogs] = useState(INITIAL_AUDIT_LOGS);
@@ -794,6 +807,125 @@ export function AppProvider({ children, initialUserId = "carlos" }) {
     return { success: true };
   };
 
+  // Gerenciamento de Modelos Reutilizáveis de Culto (PRD §5, M28 - Issue #27)
+  const addServiceTemplate = (data) => {
+    if (!isAdmin) return { success: false, error: "Apenas administradores podem cadastrar modelos de culto." };
+    const validation = validateServiceTemplate(data, serviceTemplates);
+    if (!validation.valid) {
+      return { success: false, error: validation.error };
+    }
+    const activities = Array.isArray(data.activities)
+      ? data.activities.map((a, i) => toTemplateActivity(a, i)).filter(Boolean)
+      : [];
+    const parallelServices = Array.isArray(data.parallelServices)
+      ? data.parallelServices.map((s, i) => toTemplateParallelService(s, i)).filter(Boolean)
+      : [];
+
+    const newTemplate = {
+      id: `st-${Date.now()}`,
+      eventTypeId: data.eventTypeId || null,
+      name: validation.cleanName,
+      description: validation.cleanDesc,
+      active: true,
+      activities,
+      parallelServices,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString()
+    };
+    setServiceTemplates(prev => [...prev, newTemplate]);
+    addAuditLog("Cadastro de Modelo de Culto", `Novo modelo de culto cadastrado: "${validation.cleanName}".`);
+    return { success: true, template: newTemplate };
+  };
+
+  const updateServiceTemplate = (id, data) => {
+    if (!isAdmin) return { success: false, error: "Apenas administradores podem alterar modelos de culto." };
+    const target = serviceTemplates.find(t => t.id === id);
+    if (!target) return { success: false, error: "Modelo de culto não encontrado." };
+    const validation = validateServiceTemplate(data, serviceTemplates, id);
+    if (!validation.valid) {
+      return { success: false, error: validation.error };
+    }
+    const previousName = target.name;
+    const activities = Array.isArray(data.activities)
+      ? data.activities.map((a, i) => toTemplateActivity(a, i)).filter(Boolean)
+      : target.activities;
+    const parallelServices = Array.isArray(data.parallelServices)
+      ? data.parallelServices.map((s, i) => toTemplateParallelService(s, i)).filter(Boolean)
+      : target.parallelServices;
+
+    setServiceTemplates(prev =>
+      prev.map(t => t.id === id ? {
+        ...t,
+        eventTypeId: data.eventTypeId !== undefined ? data.eventTypeId : t.eventTypeId,
+        name: validation.cleanName,
+        description: validation.cleanDesc,
+        activities,
+        parallelServices,
+        updatedAt: new Date().toISOString()
+      } : t)
+    );
+    addAuditLog("Alteração de Modelo de Culto", `Modelo de culto alterado de "${previousName}" para "${validation.cleanName}".`);
+    return { success: true };
+  };
+
+  const toggleServiceTemplateStatus = (id) => {
+    if (!isAdmin) return { success: false, error: "Apenas administradores podem alterar o status de modelos de culto." };
+    const target = serviceTemplates.find(t => t.id === id);
+    if (!target) return { success: false, error: "Modelo de culto não encontrado." };
+    const nextActive = !target.active;
+    setServiceTemplates(prev =>
+      prev.map(t => t.id === id ? { ...t, active: nextActive, updatedAt: new Date().toISOString() } : t)
+    );
+    addAuditLog(
+      nextActive ? "Reativação de Modelo de Culto" : "Desativação de Modelo de Culto",
+      `Modelo de culto "${target.name}" foi ${nextActive ? "reativado" : "desativado"}.`
+    );
+    return { success: true, active: nextActive };
+  };
+
+  const deleteServiceTemplate = (id) => {
+    if (!isAdmin) return { success: false, error: "Apenas administradores podem excluir modelos de culto." };
+    const target = serviceTemplates.find(t => t.id === id);
+    if (!target) return { success: false, error: "Modelo de culto não encontrado." };
+    const deleteCheck = canDeleteServiceTemplate(target, [event]);
+    if (!deleteCheck.canDelete) {
+      return { success: false, error: deleteCheck.reason };
+    }
+    setServiceTemplates(prev => prev.filter(t => t.id !== id));
+    addAuditLog("Exclusão de Modelo de Culto", `Modelo de culto "${target.name}" foi removido do cadastro.`);
+    return { success: true };
+  };
+
+  const applyServiceTemplateToEvent = (templateId) => {
+    if (!isAdmin && !isLiturgyLeader) {
+      return { success: false, error: "Apenas administradores ou líderes da liturgia podem aplicar modelos de culto." };
+    }
+    const template = serviceTemplates.find(t => t.id === templateId);
+    if (!template) {
+      return { success: false, error: "Modelo de culto não encontrado." };
+    }
+    const updatedEvent = instantiateTemplateForEvent(template, event);
+    setEvent(updatedEvent);
+    addAuditLog(
+      "Aplicação de Modelo no Culto",
+      `Modelo '${template.name}' aplicado ao planejamento. Atividades litúrgicas e apoios padrão configurados sem alocação nominal de pessoas (PRD §5 / M28).`
+    );
+    return { success: true };
+  };
+
+  const removeParallelServiceFromCurrentEvent = (serviceId) => {
+    if (!isAdmin && !isLiturgyLeader) {
+      return { success: false, error: "Permissão insuficiente." };
+    }
+    const updatedEvent = removeParallelServiceFromEvent(event, serviceId);
+    setEvent(updatedEvent);
+    addAuditLog(
+      "Ajuste de Apoio no Culto",
+      `Serviço de apoio removido desta edição do culto sem alterar o modelo original (PRD CA02).`
+    );
+    return { success: true };
+  };
+
   const sendAccessInvite = (email, memberName) => {
     if (!isAdmin) return;
     const newInv = {
@@ -836,6 +968,8 @@ export function AppProvider({ children, initialUserId = "carlos" }) {
         setEventTypes,
         standardActivities,
         setStandardActivities,
+        serviceTemplates,
+        setServiceTemplates,
         accessInvites,
         auditLogs,
         currentUser,
@@ -880,6 +1014,12 @@ export function AppProvider({ children, initialUserId = "carlos" }) {
         updateStandardActivity,
         toggleStandardActivityStatus,
         deleteStandardActivity,
+        addServiceTemplate,
+        updateServiceTemplate,
+        toggleServiceTemplateStatus,
+        deleteServiceTemplate,
+        applyServiceTemplateToEvent,
+        removeParallelServiceFromCurrentEvent,
         sendAccessInvite,
         designateLiturgyLeader,
         addAuditLog

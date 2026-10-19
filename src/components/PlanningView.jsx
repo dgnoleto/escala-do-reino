@@ -28,11 +28,18 @@ export default function PlanningView() {
     members,
     teams,
     standardActivities = [],
+    serviceTemplates = [],
+    applyServiceTemplateToEvent,
+    removeParallelServiceFromCurrentEvent,
     checkAssignmentConflict,
     addAuditLog,
     isOnline,
     isDataStale
   } = useApp();
+
+  // Template de Culto Reutilizável (PRD §5 / M28 - Issue #27)
+  const [selectedTemplateId, setSelectedTemplateId] = useState('');
+  const [templateFeedback, setTemplateFeedback] = useState('');
 
   // Modais de Criação / Edição de Atividade
   const [activityModalOpen, setActivityModalOpen] = useState(false);
@@ -193,6 +200,16 @@ export default function PlanningView() {
     addAuditLog("Voluntário Escalado", `Membro escalado como '${role}' na atividade.`);
   };
 
+  const handleApplyTemplate = () => {
+    if (!selectedTemplateId) return;
+    const res = applyServiceTemplateToEvent(selectedTemplateId);
+    if (res.success) {
+      const tpl = serviceTemplates.find(t => t.id === selectedTemplateId);
+      setTemplateFeedback(`Modelo "${tpl?.name || ''}" aplicado com sucesso! Atividades litúrgicas e apoios configurados sem pessoas escaladas (CA03).`);
+      setTimeout(() => setTemplateFeedback(''), 5000);
+    }
+  };
+
   const isControlsDisabled = !isOnline || isDataStale;
 
   return (
@@ -242,6 +259,55 @@ export default function PlanningView() {
             </div>
           )}
         </div>
+      </div>
+
+      {/* SELETOR DE MODELO REUTILIZÁVEL (PRD §5 / M28 - Issue #27) */}
+      <div className="card" style={{ padding: '16px 20px', background: 'var(--bg-inset)', border: '1px solid var(--border-subtle)' }}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '16px' }}>
+          <div style={{ flex: 1, minWidth: '260px' }}>
+            <span style={{ fontSize: '11px', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--primary)', display: 'block', marginBottom: '2px' }}>
+              Modelo Reutilizável de Culto (PRD §5 / #27)
+            </span>
+            <span style={{ fontSize: '13px', color: 'var(--text-secondary)' }}>
+              Carregue a estrutura padrão com atividades e apoios técnicos (portaria/transmissão) sem alocação automática de pessoas (CA03).
+            </span>
+          </div>
+
+          <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
+            <select
+              id="select-service-template"
+              className="form-select"
+              value={selectedTemplateId}
+              onChange={e => setSelectedTemplateId(e.target.value)}
+              style={{ minWidth: '240px' }}
+              disabled={(!isLiturgyLeader && !isAdmin) || isControlsDisabled}
+            >
+              <option value="">-- Selecionar Modelo de Culto --</option>
+              {serviceTemplates.filter(t => t.active !== false).map(t => (
+                <option key={t.id} value={t.id}>
+                  {t.name} ({t.activities?.length || 0} etapas)
+                </option>
+              ))}
+            </select>
+
+            <button
+              type="button"
+              id="btn-apply-service-template"
+              className="btn btn-secondary"
+              onClick={handleApplyTemplate}
+              disabled={!selectedTemplateId || (!isLiturgyLeader && !isAdmin) || isControlsDisabled}
+            >
+              Aplicar Modelo ao Culto
+            </button>
+          </div>
+        </div>
+
+        {templateFeedback && (
+          <div style={{ marginTop: '10px', padding: '8px 12px', background: 'rgba(16, 185, 129, 0.12)', border: '1px solid rgba(16, 185, 129, 0.3)', borderRadius: 'var(--radius-sm)', color: '#10b981', fontSize: '12px', fontWeight: 600 }}>
+            <Check size={14} style={{ display: 'inline', marginRight: '6px', verticalAlign: 'middle' }} />
+            {templateFeedback}
+          </div>
+        )}
       </div>
 
       {/* Barra de Ações & Lista de Atividades */}
@@ -352,6 +418,68 @@ export default function PlanningView() {
             </div>
           </div>
         ))}
+      </div>
+
+      {/* SEÇÃO DE SERVIÇOS PARALELOS E APOIOS DA EDIÇÃO (PRD §5, §7.7, M28 & CA01, CA02) */}
+      <div className="card" id="section-parallel-services" style={{ marginTop: '16px' }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '12px', marginBottom: '12px' }}>
+          <div>
+            <h2 style={{ fontSize: '18px', fontWeight: 700, margin: '0 0 4px 0' }}>
+              Serviços Paralelos & Apoios Técnicos desta Edição ({event.parallelServices?.length || 0})
+            </h2>
+            <p style={{ fontSize: '13px', color: 'var(--text-secondary)', margin: 0 }}>
+              Acompanham os marcos do culto (início e término) sem cronômetro próprio. Conforme o <strong>PRD §5 e CA02</strong>,
+              retirar a transmissão ou outro apoio desta edição específica não altera o modelo nem outros eventos.
+            </p>
+          </div>
+        </div>
+
+        {(!event.parallelServices || event.parallelServices.length === 0) ? (
+          <div style={{ padding: '16px', background: 'var(--bg-inset)', borderRadius: 'var(--radius-md)', textAlign: 'center', color: 'var(--text-muted)', fontSize: '13px' }}>
+            Nenhum apoio técnico ou serviço paralelo ativo nesta edição de culto.
+          </div>
+        ) : (
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: '12px' }}>
+            {event.parallelServices.map(serv => (
+              <div
+                key={serv.id}
+                style={{
+                  padding: '14px',
+                  background: 'var(--bg-surface)',
+                  border: '1px solid var(--border-subtle)',
+                  borderRadius: 'var(--radius-md)',
+                  display: 'flex',
+                  flexDirection: 'column',
+                  gap: '8px'
+                }}
+              >
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+                  <h3 style={{ fontSize: '14px', fontWeight: 700, margin: 0 }}>{serv.name}</h3>
+                  <span className="badge badge-secondary" style={{ fontSize: '11px' }}>{serv.teamId}</span>
+                </div>
+                <div style={{ fontSize: '12px', color: 'var(--text-muted)' }}>
+                  Tempo de preparação: <strong>{serv.prepRequiredMinutes || 0} min</strong> antes do culto
+                </div>
+                <div style={{ fontSize: '12px', color: 'var(--text-muted)' }}>
+                  Voluntários escalados: <strong>{serv.volunteers?.length || 0}</strong> (preenchimento nominal)
+                </div>
+                <div style={{ marginTop: 'auto', paddingTop: '8px', borderTop: '1px solid var(--border-subtle)', display: 'flex', justifyContent: 'flex-end' }}>
+                  <button
+                    type="button"
+                    id={`btn-remove-parallel-service-${serv.teamId || serv.id}`}
+                    className="btn btn-sm btn-secondary"
+                    onClick={() => removeParallelServiceFromCurrentEvent(serv.id)}
+                    disabled={(!isLiturgyLeader && !isAdmin) || isControlsDisabled}
+                    style={{ color: '#ef4444', fontSize: '11px' }}
+                    title="Retira este serviço apenas desta edição de culto (PRD CA02)"
+                  >
+                    <Trash2 size={12} style={{ marginRight: '4px' }} /> Retirar Desta Edição (CA02)
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
       </div>
 
       {/* MODAL DE CRIAÇÃO / EDIÇÃO DE ATIVIDADE */}

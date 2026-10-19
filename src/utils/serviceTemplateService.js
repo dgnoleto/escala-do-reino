@@ -1,0 +1,314 @@
+/**
+ * serviceTemplateService.js
+ * Regras de validação, integridade e instanciação de Modelos Reutilizáveis de Culto (Issue #27).
+ * Alinhado ao PRD §4, §5 e M28 (Critérios CA01 a CA04).
+ */
+
+export const MAX_NAME_LENGTH = 100;
+export const MIN_NAME_LENGTH = 1;
+export const MAX_DESC_LENGTH = 255;
+export const MIN_DURATION_MINUTES = 1;
+export const MAX_DURATION_MINUTES = 720; // 12 horas
+export const MAX_PREP_MINUTES = 180; // 3 horas
+
+/**
+ * Normaliza o texto com Unicode NFC e remove espaços nas extremidades (trim).
+ */
+export function normalizeNfcText(value) {
+  if (typeof value !== 'string') return '';
+  return value.normalize('NFC').trim();
+}
+
+/**
+ * Converte um item para o formato padronizado de Atividade do Modelo.
+ * Garante que NÃO contenha pessoas escaladas nem voluntários (CA03).
+ */
+export function toTemplateActivity(item, index = 0) {
+  if (!item) return null;
+  const duration = parseInt(item.plannedDurationMinutes || item.defaultDurationMinutes, 10);
+  return {
+    id: item.id || `ta-${Date.now()}-${index}`,
+    standardActivityId: item.standardActivityId || null,
+    title: normalizeNfcText(item.title || item.name || 'Nova Etapa'),
+    category: normalizeNfcText(item.category || 'Liturgia'),
+    plannedDurationMinutes: !isNaN(duration) && duration >= MIN_DURATION_MINUTES && duration <= MAX_DURATION_MINUTES ? duration : 10,
+    displayOrder: typeof item.displayOrder === 'number' ? item.displayOrder : index + 1,
+    notes: normalizeNfcText(item.notes || item.description || ''),
+    requiresPlayback: Boolean(item.requiresPlayback),
+  };
+}
+
+/**
+ * Converte um item para o formato padronizado de Serviço Paralelo / Apoio do Modelo.
+ * Garante que NÃO contenha pessoas escaladas nem voluntários (CA03).
+ */
+export function toTemplateParallelService(item, index = 0) {
+  if (!item) return null;
+  const prep = parseInt(item.prepRequiredMinutes, 10);
+  return {
+    id: item.id || `tps-${Date.now()}-${index}`,
+    teamId: normalizeNfcText(item.teamId || 'apoio'),
+    serviceName: normalizeNfcText(item.serviceName || item.name || 'Serviço de Apoio'),
+    prepRequiredMinutes: !isNaN(prep) && prep >= 0 && prep <= MAX_PREP_MINUTES ? prep : 0,
+    isDefaultActive: item.isDefaultActive !== false,
+    displayOrder: typeof item.displayOrder === 'number' ? item.displayOrder : index + 1,
+  };
+}
+
+/**
+ * Converte um item para o formato padronizado de Modelo de Culto.
+ */
+export function toServiceTemplateObject(item, index = 0) {
+  if (!item) return null;
+
+  const activities = Array.isArray(item.activities)
+    ? item.activities.map((a, i) => toTemplateActivity(a, i)).filter(Boolean)
+    : [];
+
+  const parallelServices = Array.isArray(item.parallelServices)
+    ? item.parallelServices.map((s, i) => toTemplateParallelService(s, i)).filter(Boolean)
+    : [];
+
+  return {
+    id: item.id || `st-${Date.now()}-${index}`,
+    eventTypeId: item.eventTypeId || null,
+    name: normalizeNfcText(item.name || ''),
+    description: normalizeNfcText(item.description || ''),
+    active: item.active !== false,
+    activities,
+    parallelServices,
+    createdAt: item.createdAt || null,
+    updatedAt: item.updatedAt || null,
+  };
+}
+
+/**
+ * Filtra modelos ativos.
+ */
+export function getActiveTemplates(templates = []) {
+  if (!Array.isArray(templates)) return [];
+  return templates.filter(t => t && t.active !== false);
+}
+
+/**
+ * Validação de Modelo de Culto.
+ */
+export function validateServiceTemplate(data = {}, existingTemplates = [], currentId = null) {
+  const cleanName = normalizeNfcText(data.name || '');
+  const cleanDesc = normalizeNfcText(data.description || '');
+
+  if (!cleanName || cleanName.length < MIN_NAME_LENGTH) {
+    return {
+      valid: false,
+      error: 'Nome do modelo é obrigatório.',
+      cleanName: '',
+      cleanDesc: '',
+    };
+  }
+
+  if (cleanName.length > MAX_NAME_LENGTH) {
+    return {
+      valid: false,
+      error: `O nome do modelo deve ter no máximo ${MAX_NAME_LENGTH} caracteres.`,
+      cleanName,
+      cleanDesc,
+    };
+  }
+
+  if (cleanDesc.length > MAX_DESC_LENGTH) {
+    return {
+      valid: false,
+      error: `A descrição deve ter no máximo ${MAX_DESC_LENGTH} caracteres.`,
+      cleanName,
+      cleanDesc,
+    };
+  }
+
+  // Verificar duplicidade de nome (case-insensitive)
+  const isDuplicate = existingTemplates.some(t => {
+    if (!t) return false;
+    if (currentId && t.id === currentId) return false;
+    return normalizeNfcText(t.name).toLowerCase() === cleanName.toLowerCase();
+  });
+
+  if (isDuplicate) {
+    return {
+      valid: false,
+      error: 'Já existe um modelo de culto com este nome cadastrado.',
+      cleanName,
+      cleanDesc,
+    };
+  }
+
+  // Validação de atividades (se fornecidas)
+  if (Array.isArray(data.activities)) {
+    for (let i = 0; i < data.activities.length; i++) {
+      const act = data.activities[i];
+      const title = normalizeNfcText(act.title || act.name || '');
+      if (!title || title.length < 1) {
+        return {
+          valid: false,
+          error: `Atividade na posição ${i + 1} deve ter um título.`,
+          cleanName,
+          cleanDesc,
+        };
+      }
+      const duration = parseInt(act.plannedDurationMinutes || act.defaultDurationMinutes, 10);
+      if (isNaN(duration) || duration < MIN_DURATION_MINUTES || duration > MAX_DURATION_MINUTES) {
+        return {
+          valid: false,
+          error: `Duração da atividade '${title}' deve estar entre ${MIN_DURATION_MINUTES} e ${MAX_DURATION_MINUTES} minutos.`,
+          cleanName,
+          cleanDesc,
+        };
+      }
+    }
+  }
+
+  // Validação de apoios / serviços paralelos (se fornecidos)
+  if (Array.isArray(data.parallelServices)) {
+    for (let i = 0; i < data.parallelServices.length; i++) {
+      const serv = data.parallelServices[i];
+      const sName = normalizeNfcText(serv.serviceName || serv.name || '');
+      if (!sName || sName.length < 1) {
+        return {
+          valid: false,
+          error: `Serviço de apoio na posição ${i + 1} deve ter um nome.`,
+          cleanName,
+          cleanDesc,
+        };
+      }
+      const prep = parseInt(serv.prepRequiredMinutes, 10);
+      if (!isNaN(prep) && (prep < 0 || prep > MAX_PREP_MINUTES)) {
+        return {
+          valid: false,
+          error: `Tempo de preparação de '${sName}' deve estar entre 0 e ${MAX_PREP_MINUTES} minutos.`,
+          cleanName,
+          cleanDesc,
+        };
+      }
+    }
+  }
+
+  return {
+    valid: true,
+    error: null,
+    cleanName,
+    cleanDesc,
+  };
+}
+
+/**
+ * Instancia um Modelo de Culto para um Evento / Edição específica (CA01, CA02, CA03, CA04).
+ *
+ * Invariantes rigorosas:
+ * 1. Clona profundamente as atividades e apoios em novas entidades com novos IDs.
+ * 2. CA03: O modelo NÃO escala pessoas:
+ *    - `roster: []` nas atividades (sem participantes escalados).
+ *    - `responsibleMemberId: null` ou indefinido.
+ *    - `volunteers: []` nos serviços paralelos (sem voluntários escalados).
+ *    - `leaderId: null` ou indefinido nos serviços paralelos.
+ * 3. CA02: O evento resultante é completamente independente do modelo e de outros eventos.
+ * 4. Preserva os dados do evento existente (id, título, data, horários, liderança da liturgia).
+ */
+export function instantiateTemplateForEvent(template, targetEvent = {}) {
+  if (!template) return targetEvent;
+
+  const activities = (template.activities || []).map((a, idx) => ({
+    id: `act-${Date.now()}-${idx + 1}-${Math.floor(Math.random() * 1000)}`,
+    title: a.title,
+    category: a.category || 'Liturgia',
+    plannedDurationMinutes: a.plannedDurationMinutes || 10,
+    responsibleMemberId: null, // CA03: Não escala pessoas automaticamente
+    responsibleTeamId: null,
+    status: 'pendente',
+    realStartTime: null,
+    realEndTime: null,
+    cancellationReason: null,
+    notes: a.notes || '',
+    requiresPlayback: Boolean(a.requiresPlayback),
+    musics: [],
+    roster: [], // CA03: Sem pessoas escaladas
+  }));
+
+  const parallelServices = (template.parallelServices || [])
+    .filter(s => s.isDefaultActive !== false)
+    .map((s, idx) => ({
+      id: `serv-${Date.now()}-${idx + 1}-${Math.floor(Math.random() * 1000)}`,
+      name: s.serviceName,
+      teamId: s.teamId,
+      leaderId: null, // CA03: Sem líderes pré-escalados
+      volunteers: [], // CA03: Sem voluntários pré-alocados
+      status: 'Aguardando culto',
+      prepRequiredMinutes: s.prepRequiredMinutes || 0,
+    }));
+
+  return {
+    ...targetEvent,
+    templateId: template.id,
+    templateName: template.name,
+    activities,
+    parallelServices,
+  };
+}
+
+/**
+ * Remove um serviço paralelo específico da edição de um evento (CA02).
+ * Exemplo: retirar transmissão daquele culto por decisão operacional ou pane técnica.
+ * A remoção altera APENAS o evento fornecido; o modelo original e outros eventos permanecem intocados.
+ */
+export function removeParallelServiceFromEvent(event, serviceId) {
+  if (!event || !Array.isArray(event.parallelServices)) return event;
+  return {
+    ...event,
+    parallelServices: event.parallelServices.filter(s => s.id !== serviceId),
+  };
+}
+
+/**
+ * Adiciona ou substitui um serviço paralelo na edição de um evento (CA02).
+ */
+export function addParallelServiceToEvent(event, service) {
+  if (!event) return event;
+  const currentServices = Array.isArray(event.parallelServices) ? event.parallelServices : [];
+  const newService = {
+    id: service.id || `serv-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
+    name: normalizeNfcText(service.name || service.serviceName || 'Serviço de Apoio'),
+    teamId: normalizeNfcText(service.teamId || 'apoio'),
+    leaderId: service.leaderId || null,
+    volunteers: Array.isArray(service.volunteers) ? [...service.volunteers] : [],
+    status: service.status || 'Aguardando culto',
+    prepRequiredMinutes: typeof service.prepRequiredMinutes === 'number' ? service.prepRequiredMinutes : 0,
+  };
+
+  return {
+    ...event,
+    parallelServices: [...currentServices, newService],
+  };
+}
+
+/**
+ * Verifica se um modelo está referenciado em eventos existentes (CA04).
+ */
+export function isTemplateUsedInEvents(templateId, events = []) {
+  if (!templateId) return false;
+  const eventList = Array.isArray(events) ? events : [events];
+  return eventList.some(e => {
+    if (!e) return false;
+    return e.templateId === templateId || e.metadata?.template_id === templateId;
+  });
+}
+
+/**
+ * Determina se um modelo pode ser excluído fisicamente com segurança ou se deve ser desativado (CA04).
+ */
+export function canDeleteServiceTemplate(template, events = []) {
+  if (!template) return { canDelete: false, reason: 'Modelo inválido.' };
+  if (isTemplateUsedInEvents(template.id, events)) {
+    return {
+      canDelete: false,
+      reason: 'Este modelo já foi utilizado no planejamento de eventos existentes. Para preservar o histórico, desative-o em vez de excluí-lo.',
+    };
+  }
+  return { canDelete: true, reason: null };
+}

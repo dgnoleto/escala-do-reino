@@ -26,6 +26,10 @@ import {
   canDeleteEventType,
   canDeleteStandardActivity
 } from '../utils/eventTypeActivityService';
+import {
+  isTemplateUsedInEvents,
+  canDeleteServiceTemplate
+} from '../utils/serviceTemplateService';
 
 export default function AdminView() {
   const {
@@ -35,6 +39,7 @@ export default function AdminView() {
     cancelReasons,
     eventTypes,
     standardActivities,
+    serviceTemplates = [],
     accessInvites,
     currentUser,
     isAdmin,
@@ -50,6 +55,10 @@ export default function AdminView() {
     updateStandardActivity,
     toggleStandardActivityStatus,
     deleteStandardActivity,
+    addServiceTemplate,
+    updateServiceTemplate,
+    toggleServiceTemplateStatus,
+    deleteServiceTemplate,
     sendAccessInvite,
     designateLiturgyLeader,
     event,
@@ -96,6 +105,26 @@ export default function AdminView() {
   const [editingActCategory, setEditingActCategory] = useState('Liturgia');
   const [editingActDesc, setEditingActDesc] = useState('');
   const [editingActError, setEditingActError] = useState('');
+
+  // Formulário de Modelos Reutilizáveis de Culto (PRD §5 - Issue #27)
+  const [templateName, setTemplateName] = useState('');
+  const [templateDesc, setTemplateDesc] = useState('');
+  const [templateEventTypeId, setTemplateEventTypeId] = useState('');
+  const [templateActivities, setTemplateActivities] = useState([
+    { title: 'Boas-Vindas e Oração Inicial', category: 'Liturgia', plannedDurationMinutes: 5, notes: '' },
+    { title: 'Louvor e Adoração Congregacional', category: 'Louvor', plannedDurationMinutes: 25, notes: '' },
+    { title: 'Ministração da Palavra', category: 'Palavra', plannedDurationMinutes: 45, notes: '' },
+    { title: 'Bênção e Encerramento', category: 'Liturgia', plannedDurationMinutes: 5, notes: '' }
+  ]);
+  const [templateParallelServices, setTemplateParallelServices] = useState([
+    { teamId: 'recepcao', serviceName: 'Recepção & Portaria', prepRequiredMinutes: 15, isDefaultActive: true },
+    { teamId: 'som', serviceName: 'Sonoplastia & Retorno', prepRequiredMinutes: 30, isDefaultActive: true },
+    { teamId: 'midia', serviceName: 'Transmissão ao Vivo & Mídia', prepRequiredMinutes: 20, isDefaultActive: true }
+  ]);
+  const [templateError, setTemplateError] = useState('');
+  const [templateSuccess, setTemplateSuccess] = useState('');
+  const [editingTemplateId, setEditingTemplateId] = useState(null);
+  const [selectedStandardActForTemplate, setSelectedStandardActForTemplate] = useState('');
 
   // Designação da Liderança da Liturgia (PRD 3.2 & Cenário M05)
   const [selectedLiturgyLeader, setSelectedLiturgyLeader] = useState(event.liturgyLeaderId);
@@ -338,6 +367,135 @@ export default function AdminView() {
     }
   };
 
+  // Handlers para Modelos de Culto (Issue #27)
+  const handleSaveTemplate = (e) => {
+    e.preventDefault();
+    setTemplateError('');
+    setTemplateSuccess('');
+
+    const payload = {
+      name: templateName,
+      description: templateDesc,
+      eventTypeId: templateEventTypeId || null,
+      activities: templateActivities,
+      parallelServices: templateParallelServices
+    };
+
+    if (editingTemplateId) {
+      const res = updateServiceTemplate(editingTemplateId, payload);
+      if (!res.success) {
+        setTemplateError(res.error);
+      } else {
+        setEditingTemplateId(null);
+        setTemplateName('');
+        setTemplateDesc('');
+        setTemplateEventTypeId('');
+        setTemplateSuccess('Modelo de culto atualizado com sucesso!');
+        setTimeout(() => setTemplateSuccess(''), 3000);
+      }
+    } else {
+      const res = addServiceTemplate(payload);
+      if (!res.success) {
+        setTemplateError(res.error);
+      } else {
+        setTemplateName('');
+        setTemplateDesc('');
+        setTemplateEventTypeId('');
+        setTemplateSuccess('Modelo de culto cadastrado com sucesso!');
+        setTimeout(() => setTemplateSuccess(''), 3000);
+      }
+    }
+  };
+
+  const handleStartEditTemplate = (tpl) => {
+    setEditingTemplateId(tpl.id);
+    setTemplateName(tpl.name);
+    setTemplateDesc(tpl.description || '');
+    setTemplateEventTypeId(tpl.eventTypeId || '');
+    setTemplateActivities(tpl.activities && tpl.activities.length > 0 ? [...tpl.activities] : []);
+    setTemplateParallelServices(tpl.parallelServices && tpl.parallelServices.length > 0 ? [...tpl.parallelServices] : []);
+    setTemplateError('');
+    setTemplateSuccess('');
+  };
+
+  const handleCancelEditTemplate = () => {
+    setEditingTemplateId(null);
+    setTemplateName('');
+    setTemplateDesc('');
+    setTemplateEventTypeId('');
+    setTemplateError('');
+  };
+
+  const handleToggleTemplateStatus = (id) => {
+    setTemplateError('');
+    setTemplateSuccess('');
+    const res = toggleServiceTemplateStatus(id);
+    if (!res.success) {
+      setTemplateError(res.error);
+    } else {
+      setTemplateSuccess(res.active ? 'Modelo de culto reativado com sucesso!' : 'Modelo de culto desativado.');
+      setTimeout(() => setTemplateSuccess(''), 3000);
+    }
+  };
+
+  const handleDeleteTemplate = (id) => {
+    setTemplateError('');
+    setTemplateSuccess('');
+    const res = deleteServiceTemplate(id);
+    if (!res.success) {
+      setTemplateError(res.error);
+    } else {
+      setTemplateSuccess('Modelo de culto excluído com sucesso.');
+      setTimeout(() => setTemplateSuccess(''), 3000);
+    }
+  };
+
+  const handleAddActivityToTemplate = () => {
+    if (selectedStandardActForTemplate) {
+      const std = standardActivities.find(a => a.id === selectedStandardActForTemplate);
+      if (std) {
+        setTemplateActivities(prev => [
+          ...prev,
+          {
+            standardActivityId: std.id,
+            title: std.name,
+            category: std.category || 'Liturgia',
+            plannedDurationMinutes: std.defaultDurationMinutes || 10,
+            notes: std.description || ''
+          }
+        ]);
+        setSelectedStandardActForTemplate('');
+        return;
+      }
+    }
+    setTemplateActivities(prev => [
+      ...prev,
+      {
+        title: `Nova Etapa Litúrgica (${prev.length + 1})`,
+        category: 'Liturgia',
+        plannedDurationMinutes: 10,
+        notes: ''
+      }
+    ]);
+  };
+
+  const handleRemoveActivityFromTemplate = (idx) => {
+    setTemplateActivities(prev => prev.filter((_, i) => i !== idx));
+  };
+
+  const handleToggleParallelServiceInTemplate = (idx) => {
+    setTemplateParallelServices(prev =>
+      prev.map((s, i) => i === idx ? { ...s, isDefaultActive: !s.isDefaultActive } : s)
+    );
+  };
+
+  const handlePrepMinutesChange = (idx, val) => {
+    const parsed = parseInt(val, 10);
+    setTemplateParallelServices(prev =>
+      prev.map((s, i) => i === idx ? { ...s, prepRequiredMinutes: isNaN(parsed) ? 0 : Math.max(0, Math.min(180, parsed)) } : s)
+    );
+  };
+
   const handleDesignateLeader = () => {
     designateLiturgyLeader(selectedLiturgyLeader);
     alert(`Liderança da Liturgia deste evento atualizada com sucesso para ${members.find(m => m.id === selectedLiturgyLeader)?.name}!`);
@@ -392,6 +550,14 @@ export default function AdminView() {
           id="tab-admin-activities"
         >
           <Clock size={16} /> Atividades & Durações (PRD §5)
+        </button>
+
+        <button
+          className={`admin-tab-btn ${activeAdminTab === 'templates' ? 'active' : ''}`}
+          onClick={() => setActiveAdminTab('templates')}
+          id="tab-admin-templates"
+        >
+          <Layers size={16} /> Modelos de Culto (PRD §5 / #27)
         </button>
 
         <button
@@ -1325,6 +1491,351 @@ export default function AdminView() {
                           </div>
                         </div>
                       )}
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* ABA: MODELOS DE CULTO COM ATIVIDADES E APOIOS PADRÃO (PRD §5 & M28 - Issue #27) */}
+      {activeAdminTab === 'templates' && (
+        <div className="grid-2">
+          {/* Formulário de Criação / Edição de Modelo */}
+          <div className="card">
+            <h2 className="tab-sec-title">
+              <Layers size={18} color="var(--primary)" /> {editingTemplateId ? 'Editar Modelo de Culto' : 'Novo Modelo Reutilizável de Culto'}
+            </h2>
+            <p className="tab-sec-desc">
+              Estruture modelos vinculados ao tipo de evento com a sequência litúrgica e os apoios padrão (como portaria e transmissão).
+              Conforme o <strong>PRD §5 e CA03</strong>, o modelo organiza as etapas sem escalar ou reservar pessoas automaticamente.
+            </p>
+
+            {templateSuccess && (
+              <div className="success-banner">
+                <CheckCircle2 size={16} /> {templateSuccess}
+              </div>
+            )}
+
+            {templateError && (
+              <div className="error-banner">
+                <AlertCircle size={16} /> {templateError}
+              </div>
+            )}
+
+            <form onSubmit={handleSaveTemplate}>
+              <div className="form-group">
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <label className="form-label" htmlFor="template-name-input">
+                    Nome do Modelo:
+                  </label>
+                  <span style={{ fontSize: '11px', color: 'var(--text-muted)' }}>
+                    {templateName.length}/100
+                  </span>
+                </div>
+                <input
+                  id="template-name-input"
+                  type="text"
+                  className="form-input"
+                  placeholder="Ex: Culto Dominical com Apoio Completo"
+                  maxLength={100}
+                  value={templateName}
+                  onChange={e => setTemplateName(e.target.value)}
+                  disabled={isControlsDisabled}
+                  required
+                />
+              </div>
+
+              <div className="form-group">
+                <label className="form-label" htmlFor="template-event-type-select">
+                  Tipo de Evento Vinculado:
+                </label>
+                <select
+                  id="template-event-type-select"
+                  className="form-select"
+                  value={templateEventTypeId}
+                  onChange={e => setTemplateEventTypeId(e.target.value)}
+                  disabled={isControlsDisabled}
+                >
+                  <option value="">-- Selecione o Tipo de Evento (Opcional) --</option>
+                  {eventTypes.filter(t => t.active !== false).map(t => (
+                    <option key={t.id} value={t.id}>{t.name}</option>
+                  ))}
+                </select>
+              </div>
+
+              <div className="form-group">
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <label className="form-label" htmlFor="template-desc-input">
+                    Descrição do Modelo (Opcional):
+                  </label>
+                  <span style={{ fontSize: '11px', color: 'var(--text-muted)' }}>
+                    {templateDesc.length}/255
+                  </span>
+                </div>
+                <textarea
+                  id="template-desc-input"
+                  className="form-input"
+                  rows={2}
+                  placeholder="Finalidade e orientações litúrgicas deste modelo"
+                  maxLength={255}
+                  value={templateDesc}
+                  onChange={e => setTemplateDesc(e.target.value)}
+                  disabled={isControlsDisabled}
+                />
+              </div>
+
+              {/* Construtor de Atividades Principais do Modelo */}
+              <div className="form-group" style={{ background: 'var(--bg-inset)', padding: '14px', borderRadius: 'var(--radius-md)', border: '1px solid var(--border-subtle)' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
+                  <label className="form-label" style={{ fontWeight: 700, margin: 0 }}>
+                    <Clock size={14} style={{ display: 'inline', marginRight: '4px', verticalAlign: 'middle' }} />
+                    Etapas Litúrgicas do Modelo ({templateActivities.length})
+                  </label>
+                  <span style={{ fontSize: '12px', color: 'var(--text-muted)', fontWeight: 600 }}>
+                    Total: {templateActivities.reduce((s, a) => s + (parseInt(a.plannedDurationMinutes) || 0), 0)} min
+                  </span>
+                </div>
+
+                <div style={{ display: 'flex', gap: '8px', marginBottom: '10px' }}>
+                  <select
+                    className="form-select"
+                    value={selectedStandardActForTemplate}
+                    onChange={e => setSelectedStandardActForTemplate(e.target.value)}
+                    style={{ flex: 1, fontSize: '12px' }}
+                  >
+                    <option value="">-- Escolher de Atividades Padrão --</option>
+                    {standardActivities.filter(a => a.active !== false).map(a => (
+                      <option key={a.id} value={a.id}>{a.name} ({a.defaultDurationMinutes} min)</option>
+                    ))}
+                  </select>
+                  <button
+                    type="button"
+                    className="btn btn-sm btn-secondary"
+                    onClick={handleAddActivityToTemplate}
+                    style={{ whiteSpace: 'nowrap' }}
+                  >
+                    <Plus size={14} /> Adicionar Etapa
+                  </button>
+                </div>
+
+                {templateActivities.length === 0 ? (
+                  <p style={{ fontSize: '12px', color: 'var(--text-muted)', fontStyle: 'italic', margin: 0 }}>
+                    Nenhuma atividade na sequência principal deste modelo.
+                  </p>
+                ) : (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                    {templateActivities.map((act, idx) => (
+                      <div
+                        key={idx}
+                        style={{
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'space-between',
+                          padding: '6px 10px',
+                          background: 'var(--bg-surface)',
+                          border: '1px solid var(--border-subtle)',
+                          borderRadius: 'var(--radius-sm)',
+                          fontSize: '12px'
+                        }}
+                      >
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flex: 1 }}>
+                          <span style={{ fontWeight: 800, color: 'var(--primary)' }}>{idx + 1}.</span>
+                          <span style={{ fontWeight: 600 }}>{act.title}</span>
+                          <span className="badge badge-primary" style={{ fontSize: '10px', padding: '2px 6px' }}>{act.category || 'Liturgia'}</span>
+                        </div>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                          <span style={{ color: 'var(--text-secondary)', fontWeight: 600 }}>{act.plannedDurationMinutes} min</span>
+                          <button
+                            type="button"
+                            onClick={() => handleRemoveActivityFromTemplate(idx)}
+                            style={{ background: 'transparent', border: 'none', color: '#ef4444', cursor: 'pointer', padding: '2px' }}
+                            title="Remover etapa"
+                          >
+                            <Trash2 size={13} />
+                          </button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              {/* Construtor de Serviços Paralelos / Apoios Padrão */}
+              <div className="form-group" style={{ background: 'var(--bg-inset)', padding: '14px', borderRadius: 'var(--radius-md)', border: '1px solid var(--border-subtle)' }}>
+                <label className="form-label" style={{ fontWeight: 700, marginBottom: '8px', display: 'block' }}>
+                  <Shield size={14} style={{ display: 'inline', marginRight: '4px', verticalAlign: 'middle' }} />
+                  Serviços Paralelos & Apoios Técnicos Padrão (CA01 / M28)
+                </label>
+                <p style={{ fontSize: '11px', color: 'var(--text-muted)', marginBottom: '10px' }}>
+                  Marque os apoios que acompanham o evento por padrão (com tempo de preparação prévio). Retirar transmissão da edição depois não altera o modelo (CA02).
+                </p>
+
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                  {templateParallelServices.map((serv, idx) => (
+                    <div
+                      key={idx}
+                      style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'space-between',
+                        padding: '8px 10px',
+                        background: 'var(--bg-surface)',
+                        border: '1px solid var(--border-subtle)',
+                        borderRadius: 'var(--radius-sm)',
+                        fontSize: '12px'
+                      }}
+                    >
+                      <label style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer', flex: 1, margin: 0 }}>
+                        <input
+                          type="checkbox"
+                          checked={serv.isDefaultActive}
+                          onChange={() => handleToggleParallelServiceInTemplate(idx)}
+                        />
+                        <span style={{ fontWeight: 600, color: serv.isDefaultActive ? 'var(--text-primary)' : 'var(--text-muted)' }}>
+                          {serv.serviceName}
+                        </span>
+                        <span className="badge badge-secondary" style={{ fontSize: '10px' }}>{serv.teamId}</span>
+                      </label>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                        <span style={{ fontSize: '11px', color: 'var(--text-muted)' }}>Prep:</span>
+                        <input
+                          type="number"
+                          className="form-input"
+                          style={{ width: '60px', padding: '2px 6px', fontSize: '11px' }}
+                          min="0"
+                          max="180"
+                          value={serv.prepRequiredMinutes}
+                          onChange={e => handlePrepMinutesChange(idx, e.target.value)}
+                        />
+                        <span style={{ fontSize: '11px', color: 'var(--text-muted)' }}>min</span>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              {/* Aviso Normativo CA03 */}
+              <div style={{ padding: '10px 12px', background: 'rgba(99, 102, 241, 0.08)', border: '1px solid rgba(99, 102, 241, 0.25)', borderRadius: 'var(--radius-sm)', marginBottom: '16px', fontSize: '11px', color: 'var(--text-secondary)' }}>
+                <strong>Regra Litúrgica (CA03 & PRD §5 / M28):</strong> O modelo define a estrutura e apoios, mas <em>não escala nem confirma pessoas automaticamente</em>. As lideranças definem suas equipes nominalmente após a criação do culto.
+              </div>
+
+              <div style={{ display: 'flex', gap: '10px' }}>
+                <button
+                  type="submit"
+                  id="btn-save-template"
+                  className="btn btn-primary"
+                  style={{ flex: 1 }}
+                  disabled={isControlsDisabled}
+                >
+                  <Check size={16} /> {editingTemplateId ? 'Salvar Alterações do Modelo' : 'Cadastrar Modelo de Culto'}
+                </button>
+                {editingTemplateId && (
+                  <button
+                    type="button"
+                    className="btn btn-secondary"
+                    onClick={handleCancelEditTemplate}
+                    disabled={isControlsDisabled}
+                  >
+                    <X size={16} /> Cancelar
+                  </button>
+                )}
+              </div>
+            </form>
+          </div>
+
+          {/* Listagem de Modelos Cadastrados */}
+          <div className="card">
+            <h2 className="tab-sec-title">
+              <Layers size={18} color="var(--primary)" /> Modelos de Culto Cadastrados ({serviceTemplates.length})
+            </h2>
+            <p className="tab-sec-desc">
+              Modelos reutilizáveis configurados para a igreja. Alterar ou desativar um modelo preserva integralmente os eventos passados e futuros já planejados (CA04).
+            </p>
+
+            {serviceTemplates.length === 0 ? (
+              <div style={{ textAlign: 'center', padding: '32px 16px', color: 'var(--text-muted)' }}>
+                <Layers size={36} style={{ margin: '0 auto 12px', opacity: 0.4 }} />
+                <p>Nenhum modelo de culto cadastrado.</p>
+              </div>
+            ) : (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                {serviceTemplates.map((tpl, idx) => {
+                  const evType = eventTypes.find(t => t.id === tpl.eventTypeId);
+                  const totalDur = (tpl.activities || []).reduce((s, a) => s + (parseInt(a.plannedDurationMinutes) || 0), 0);
+                  const isUsed = isTemplateUsedInEvents(tpl.id, [event]);
+                  const activeServices = (tpl.parallelServices || []).filter(s => s.isDefaultActive !== false);
+
+                  return (
+                    <div
+                      key={tpl.id}
+                      style={{
+                        padding: '16px',
+                        background: 'var(--bg-surface)',
+                        border: '1px solid var(--border-subtle)',
+                        borderRadius: 'var(--radius-md)',
+                        opacity: tpl.active ? 1 : 0.6
+                      }}
+                    >
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '8px' }}>
+                        <div>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '4px' }}>
+                            <h3 style={{ fontSize: '15px', fontWeight: 700, margin: 0 }}>{tpl.name}</h3>
+                            <span className={`badge ${tpl.active ? 'badge-primary' : 'badge-secondary'}`}>
+                              {tpl.active ? 'Ativo' : 'Desativado'}
+                            </span>
+                            {evType && (
+                              <span className="badge badge-secondary" style={{ fontSize: '11px' }}>
+                                {evType.name}
+                              </span>
+                            )}
+                          </div>
+                          {tpl.description && (
+                            <p style={{ fontSize: '12px', color: 'var(--text-secondary)', margin: '0 0 6px 0' }}>
+                              {tpl.description}
+                            </p>
+                          )}
+                          <div style={{ display: 'flex', gap: '12px', fontSize: '11px', color: 'var(--text-muted)' }}>
+                            <span><strong>{tpl.activities?.length || 0}</strong> atividades ({totalDur} min)</span>
+                            <span>•</span>
+                            <span><strong>{activeServices.length}</strong> apoios padrão ({activeServices.map(s => s.serviceName).join(', ') || 'Nenhum'})</span>
+                          </div>
+                        </div>
+
+                        <div style={{ display: 'flex', gap: '6px' }}>
+                          <button
+                            type="button"
+                            className="btn btn-secondary btn-sm"
+                            onClick={() => handleStartEditTemplate(tpl)}
+                            title="Editar modelo"
+                            disabled={isControlsDisabled}
+                          >
+                            <Edit2 size={12} />
+                          </button>
+                          <button
+                            type="button"
+                            className="btn btn-secondary btn-sm"
+                            onClick={() => handleToggleTemplateStatus(tpl.id)}
+                            title={tpl.active ? 'Desativar modelo' : 'Reativar modelo'}
+                            disabled={isControlsDisabled}
+                          >
+                            <Power size={12} />
+                          </button>
+                          <button
+                            type="button"
+                            id={`btn-delete-template-${idx}`}
+                            className="btn btn-secondary btn-sm"
+                            onClick={() => handleDeleteTemplate(tpl.id)}
+                            style={{ color: isUsed ? 'var(--text-muted)' : '#ef4444', opacity: isUsed ? 0.5 : 1 }}
+                            title={isUsed ? 'Modelo em uso no histórico não pode ser excluído fisicamente; desative-o' : 'Excluir modelo'}
+                            disabled={isControlsDisabled}
+                          >
+                            <Trash2 size={12} />
+                          </button>
+                        </div>
+                      </div>
                     </div>
                   );
                 })}
