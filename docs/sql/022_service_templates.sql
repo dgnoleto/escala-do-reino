@@ -42,9 +42,11 @@ create table app_private.service_templates (
   updated_at timestamptz not null default clock_timestamp(),
   constraint st_name_clean check (name = btrim(name) and char_length(name) between 1 and 100),
   constraint st_desc_clean check (description is null or (description = btrim(description) and char_length(description) <= 255)),
-  constraint st_church_id_id_unique unique (church_id, id),
-  constraint st_church_id_name_unique unique (church_id, lower(name))
+  constraint st_church_id_id_unique unique (church_id, id)
 );
+
+create unique index st_church_id_name_unique
+  on app_private.service_templates (church_id, lower(name));
 
 create index st_church_active_idx
   on app_private.service_templates (church_id, active, name);
@@ -142,10 +144,7 @@ begin
     select exists (
       select 1 from app_private.events e
       where e.church_id = p_church_id
-        and (
-          (e.metadata is not null and (e.metadata->>'template_id')::text = p_template_id::text)
-          or lower(btrim(coalesce(e.title, ''))) = lower(btrim(p_template_name))
-        )
+        and lower(btrim(coalesce(e.title, ''))) = lower(btrim(p_template_name))
     ) into v_used;
     if v_used then return true; end if;
   end if;

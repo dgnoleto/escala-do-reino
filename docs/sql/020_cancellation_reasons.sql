@@ -31,9 +31,11 @@ create table app_private.cancellation_reasons (
   created_at timestamptz not null default clock_timestamp(),
   updated_at timestamptz not null default clock_timestamp(),
   constraint cr_name_clean check (name = btrim(name) and char_length(name) between 1 and 120),
-  constraint cr_church_id_id_unique unique (church_id, id),
-  constraint cr_church_id_name_unique unique (church_id, lower(name))
+  constraint cr_church_id_id_unique unique (church_id, id)
 );
+
+create unique index cr_church_id_name_unique
+  on app_private.cancellation_reasons (church_id, lower(name));
 
 create index cr_church_active_idx
   on app_private.cancellation_reasons (church_id, active, name);
@@ -95,11 +97,11 @@ begin
     select exists (
       select 1 from app_private.audit_entries a
       where a.church_id = p_church_id
-        and a.target_type in ('activity_cancellation', 'cancellation_reason')
         and (
-          a.target_id = p_reason_id
-          or (a.details->>'cancellation_reason_id')::uuid = p_reason_id
-          or lower(btrim(coalesce(a.details->>'reason', ''))) = lower(btrim(p_reason_name))
+          a.target_type = 'activity_cancellation'
+          or a.action in ('cancel_activity', 'cancel_event')
+          or (a.details is not null and (a.details->>'cancellation_reason_id')::text = p_reason_id::text)
+          or (a.action in ('cancel_activity', 'cancel_event') and lower(btrim(coalesce(a.details->>'reason', ''))) = lower(btrim(p_reason_name)))
         )
     ) into v_used;
     if v_used then return true; end if;
@@ -175,8 +177,8 @@ begin
   perform pg_catalog.pg_advisory_xact_lock(hashtext(v_uid::text), hashtext(p_command_id::text));
 
   select * into v_receipt
-  from app_private.cancellation_reason_receipts
-  where user_id = v_uid and command_id = p_command_id;
+  from app_private.cancellation_reason_receipts r
+  where r.user_id = v_uid and r.command_id = p_command_id;
 
   if found then
     return query select
@@ -197,8 +199,8 @@ begin
   end if;
 
   if exists (
-    select 1 from app_private.cancellation_reasons
-    where church_id = p_church_id and lower(name) = lower(v_clean_name)
+    select 1 from app_private.cancellation_reasons cr
+    where cr.church_id = p_church_id and lower(cr.name) = lower(v_clean_name)
   ) then
     raise exception 'Já existe um motivo de cancelamento cadastrado com este nome nesta igreja.' using errcode = '23505';
   end if;
@@ -254,8 +256,8 @@ begin
   perform pg_catalog.pg_advisory_xact_lock(hashtext(v_uid::text), hashtext(p_command_id::text));
 
   select * into v_receipt
-  from app_private.cancellation_reason_receipts
-  where user_id = v_uid and command_id = p_command_id;
+  from app_private.cancellation_reason_receipts r
+  where r.user_id = v_uid and r.command_id = p_command_id;
 
   if found then
     return query select
@@ -276,8 +278,8 @@ begin
   end if;
 
   select * into v_reason
-  from app_private.cancellation_reasons
-  where id = p_reason_id and church_id = p_church_id
+  from app_private.cancellation_reasons cr
+  where cr.id = p_reason_id and cr.church_id = p_church_id
   for update;
 
   if not found then
@@ -285,17 +287,17 @@ begin
   end if;
 
   if exists (
-    select 1 from app_private.cancellation_reasons
-    where church_id = p_church_id and lower(name) = lower(v_clean_name) and id <> p_reason_id
+    select 1 from app_private.cancellation_reasons cr
+    where cr.church_id = p_church_id and lower(cr.name) = lower(v_clean_name) and cr.id <> p_reason_id
   ) then
     raise exception 'Já existe um motivo de cancelamento cadastrado com este nome nesta igreja.' using errcode = '23505';
   end if;
 
   v_prev_name := v_reason.name;
 
-  update app_private.cancellation_reasons
+  update app_private.cancellation_reasons cr
   set name = v_clean_name
-  where id = p_reason_id and church_id = p_church_id
+  where cr.id = p_reason_id and cr.church_id = p_church_id
   returning * into v_reason;
 
   -- Auditoria
@@ -343,8 +345,8 @@ begin
   perform pg_catalog.pg_advisory_xact_lock(hashtext(v_uid::text), hashtext(p_command_id::text));
 
   select * into v_receipt
-  from app_private.cancellation_reason_receipts
-  where user_id = v_uid and command_id = p_command_id;
+  from app_private.cancellation_reason_receipts r
+  where r.user_id = v_uid and r.command_id = p_command_id;
 
   if found then
     return query select
@@ -360,17 +362,17 @@ begin
   end if;
 
   select * into v_reason
-  from app_private.cancellation_reasons
-  where id = p_reason_id and church_id = p_church_id
+  from app_private.cancellation_reasons cr
+  where cr.id = p_reason_id and cr.church_id = p_church_id
   for update;
 
   if not found then
     raise exception 'Motivo de cancelamento não encontrado nesta igreja.' using errcode = 'P0002';
   end if;
 
-  update app_private.cancellation_reasons
+  update app_private.cancellation_reasons cr
   set active = p_active
-  where id = p_reason_id and church_id = p_church_id
+  where cr.id = p_reason_id and cr.church_id = p_church_id
   returning * into v_reason;
 
   -- Auditoria
@@ -420,8 +422,8 @@ begin
   perform pg_catalog.pg_advisory_xact_lock(hashtext(v_uid::text), hashtext(p_command_id::text));
 
   select * into v_receipt
-  from app_private.cancellation_reason_receipts
-  where user_id = v_uid and command_id = p_command_id;
+  from app_private.cancellation_reason_receipts r
+  where r.user_id = v_uid and r.command_id = p_command_id;
 
   if found then
     return query select
@@ -436,8 +438,8 @@ begin
   end if;
 
   select * into v_reason
-  from app_private.cancellation_reasons
-  where id = p_reason_id and church_id = p_church_id
+  from app_private.cancellation_reasons cr
+  where cr.id = p_reason_id and cr.church_id = p_church_id
   for update;
 
   if not found then
@@ -451,8 +453,8 @@ begin
       using errcode = '23503';
   end if;
 
-  delete from app_private.cancellation_reasons
-  where id = p_reason_id and church_id = p_church_id;
+  delete from app_private.cancellation_reasons cr
+  where cr.id = p_reason_id and cr.church_id = p_church_id;
 
   -- Auditoria
   insert into app_private.audit_entries (

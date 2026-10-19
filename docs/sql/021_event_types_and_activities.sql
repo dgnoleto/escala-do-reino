@@ -37,9 +37,11 @@ create table app_private.event_types (
   updated_at timestamptz not null default clock_timestamp(),
   constraint et_name_clean check (name = btrim(name) and char_length(name) between 1 and 100),
   constraint et_desc_clean check (description is null or (description = btrim(description) and char_length(description) <= 255)),
-  constraint et_church_id_id_unique unique (church_id, id),
-  constraint et_church_id_name_unique unique (church_id, lower(name))
+  constraint et_church_id_id_unique unique (church_id, id)
 );
+
+create unique index et_church_id_name_unique
+  on app_private.event_types (church_id, lower(name));
 
 create index et_church_active_idx
   on app_private.event_types (church_id, active, name);
@@ -66,9 +68,11 @@ create table app_private.standard_activities (
   constraint sa_duration_range check (default_duration_minutes between 1 and 720),
   constraint sa_cat_clean check (category is null or (category = btrim(category) and char_length(category) <= 50)),
   constraint sa_desc_clean check (description is null or (description = btrim(description) and char_length(description) <= 255)),
-  constraint sa_church_id_id_unique unique (church_id, id),
-  constraint sa_church_id_name_unique unique (church_id, lower(name))
+  constraint sa_church_id_id_unique unique (church_id, id)
 );
+
+create unique index sa_church_id_name_unique
+  on app_private.standard_activities (church_id, lower(name));
 
 create index sa_church_active_idx
   on app_private.standard_activities (church_id, active, name);

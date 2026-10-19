@@ -159,9 +159,9 @@ begin
     (pg_temp.st_id(88), pg_temp.st_id(100), 'Modelo Em Uso Histórico', true);
   
   if to_regclass('app_private.events') is not null then
-    insert into app_private.events(id, church_id, title, event_type, metadata) values
-      (pg_temp.st_id(880), pg_temp.st_id(100), 'Culto Histórico de Exemplo', 'Celebração',
-       jsonb_build_object('template_id', pg_temp.st_id(88)));
+    insert into app_private.events(id, church_id, title, event_type, timezone, planned_start_at, planned_end_at) values
+      (pg_temp.st_id(880), pg_temp.st_id(100), 'Modelo Em Uso Histórico', 'Celebração', 'America/Sao_Paulo',
+       now() - interval '1 day', now() - interval '1 day' + interval '2 hours');
   end if;
 
   q := format('select public.delete_service_template(%L, %L)', pg_temp.st_id(914), pg_temp.st_id(88));

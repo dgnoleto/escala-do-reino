@@ -10,6 +10,7 @@ declare
   payload jsonb;
   code text := '00000';
   message text;
+  ctx text;
 begin
   perform set_config('request.jwt.claim.sub', coalesce(pg_temp.ep_id(n)::text, ''), true);
   begin
@@ -17,11 +18,11 @@ begin
     execute q into payload;
     reset role;
   exception when others then
-    get stacked diagnostics code = returned_sqlstate, message = message_text;
+    get stacked diagnostics code = returned_sqlstate, message = message_text, ctx = pg_exception_context;
     reset role;
   end;
   if code <> expected then
-    raise exception 'Esperado %, recebido %: %', expected, code, message;
+    raise exception 'Esperado %, recebido %: % (context: %)', expected, code, message, ctx;
   end if;
   return payload;
 end $$;

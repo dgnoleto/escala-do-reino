@@ -320,8 +320,8 @@ begin
   end if;
 
   select * into v_event
-  from app_private.events
-  where church_id = p_church_id and id = p_event_id;
+  from app_private.events e
+  where e.church_id = p_church_id and e.id = p_event_id;
 
   if v_event is null then
     raise exception 'Evento não encontrado.' using errcode = 'P0002';
@@ -336,12 +336,12 @@ begin
 
   foreach v_item_id in array p_ordered_item_ids
   loop
-    update app_private.event_items
+    update app_private.event_items ei
     set sequence_order = v_order,
         updated_at = v_created_at
-    where church_id = p_church_id
-      and event_id = p_event_id
-      and id = v_item_id;
+    where ei.church_id = p_church_id
+      and ei.event_id = p_event_id
+      and ei.id = v_item_id;
     v_order := v_order + 1;
   end loop;
 
@@ -443,8 +443,8 @@ begin
   where ca.user_id = v_user_id and ca.church_id = p_church_id and ca.status = 'active';
 
   select * into v_event
-  from app_private.events
-  where church_id = p_church_id and id = p_event_id;
+  from app_private.events e
+  where e.church_id = p_church_id and e.id = p_event_id;
 
   if v_event is null then
     raise exception 'Evento não encontrado.' using errcode = 'P0002';
@@ -457,10 +457,10 @@ begin
 
   v_created_at := clock_timestamp();
 
-  update app_private.events
+  update app_private.events e
   set duration_policy = v_policy_clean,
       updated_at = v_created_at
-  where church_id = p_church_id and id = p_event_id;
+  where e.church_id = p_church_id and e.id = p_event_id;
 
   v_payload := jsonb_build_object(
     'event_id', p_event_id,
@@ -553,8 +553,8 @@ begin
   where ca.user_id = v_user_id and ca.church_id = p_church_id and ca.status = 'active';
 
   select * into v_event
-  from app_private.events
-  where church_id = p_church_id and id = p_event_id;
+  from app_private.events e
+  where e.church_id = p_church_id and e.id = p_event_id;
 
   if v_event is null then
     raise exception 'Evento não encontrado.' using errcode = 'P0002';
@@ -585,13 +585,13 @@ begin
 
   v_created_at := clock_timestamp();
 
-  update app_private.events
+  update app_private.events e
   set program_status = 'published',
       published_at = v_created_at,
       published_by_member_id = v_caller_member_id,
       program_version = program_version + 1,
       updated_at = v_created_at
-  where church_id = p_church_id and id = p_event_id;
+  where e.church_id = p_church_id and e.id = p_event_id;
 
   v_payload := jsonb_build_object(
     'event_id', p_event_id,
@@ -686,8 +686,8 @@ begin
   where ca.user_id = v_user_id and ca.church_id = p_church_id and ca.status = 'active';
 
   select * into v_event
-  from app_private.events
-  where church_id = p_church_id and id = p_event_id;
+  from app_private.events e
+  where e.church_id = p_church_id and e.id = p_event_id;
 
   if v_event is null then
     raise exception 'Evento não encontrado.' using errcode = 'P0002';
@@ -699,10 +699,10 @@ begin
 
   v_created_at := clock_timestamp();
 
-  update app_private.events
+  update app_private.events e
   set program_status = 'draft',
       updated_at = v_created_at
-  where church_id = p_church_id and id = p_event_id;
+  where e.church_id = p_church_id and e.id = p_event_id;
 
   v_payload := jsonb_build_object(
     'event_id', p_event_id,
