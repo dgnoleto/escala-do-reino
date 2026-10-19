@@ -210,12 +210,21 @@ export const INITIAL_ACCESS_INVITES = [
 
 export const INITIAL_EVENT = {
   id: "culto-dom-20261004",
+  churchId: "church-piloto-01",
   title: "Culto de Celebração de Domingo",
   type: "Celebração Geral",
   date: "2026-10-04",
   scheduledStartTime: "19:00",
+  plannedStartAt: "2026-10-04T19:00:00-03:00",
+  plannedEndAt: "2026-10-04T20:45:00-03:00",
+  timezone: "America/Sao_Paulo",
   plannedDurationMinutes: 105, // Soma das 7 atividades: 5+25+7+8+45+10+5 = 105 min
   liturgyLeaderId: "carlos", // Designado por evento pelo admin (PRD 3.2)
+  durationPolicy: "warn", // "warn" (alerta ignorável) ou "block" (bloqueio de publicação se exceder)
+  programStatus: "published", // "draft" ou "published" (Issue #30)
+  programVersion: 1,
+  publishedAt: "2026-10-01T10:00:00-03:00",
+  publishedByMemberId: "marcos",
   status: "pronto", // "pronto", "em_andamento", "encerrado"
   realStartTime: null,
   realEndTime: null,

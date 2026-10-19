@@ -33,6 +33,17 @@ import {
   removeParallelServiceFromEvent,
   canDeleteServiceTemplate,
 } from '../utils/serviceTemplateService';
+import {
+  createEventEditionObject,
+  validateEventEdition,
+  reorderEventActivities,
+  moveActivityUp,
+  moveActivityDown,
+  calculateProgramDurations,
+  publishEventProgram,
+  saveEventProgramDraft,
+  updateEventDurationPolicy
+} from '../utils/eventPlanningService';
 
 const AppContext = createContext(null);
 
@@ -60,8 +71,25 @@ export function AppProvider({ children, initialUserId = "carlos" }) {
   // Padrão: Carlos Oliveira (Líder da Liturgia do Culto)
   const [currentUserId, setCurrentUserId] = useState(initialUserId);
 
-  // Estado do Evento / Culto
-  const [event, setEvent] = useState(INITIAL_EVENT);
+  // Estado dos Eventos da Igreja (Issue #28)
+  const [events, setEvents] = useState([INITIAL_EVENT]);
+  const [currentEventId, setCurrentEventId] = useState(INITIAL_EVENT.id);
+
+  // Evento Ativo
+  const event = events.find(e => e.id === currentEventId) || events[0] || INITIAL_EVENT;
+
+  const setEvent = (updater) => {
+    setEvents(prevEvents => {
+      const targetId = currentEventId;
+      const targetEvent = prevEvents.find(e => e.id === targetId) || prevEvents[0] || INITIAL_EVENT;
+      const nextEvent = typeof updater === 'function' ? updater(targetEvent) : updater;
+      const exists = prevEvents.some(e => e.id === nextEvent.id);
+      if (exists) {
+        return prevEvents.map(e => e.id === nextEvent.id ? nextEvent : e);
+      }
+      return prevEvents.map(e => e.id === targetId ? nextEvent : e);
+    });
+  };
 
   // Simulação de Rede / Conexão (PRD 10.3)
   const [isOnline, setIsOnline] = useState(true);
@@ -470,17 +498,21 @@ export function AppProvider({ children, initialUserId = "carlos" }) {
       }
     }
 
-    // Regra: Membro escalado em Sonoplastia ou Transmissão ocupa todo o intervalo do culto
-    const isAudioMediaTeam = member.teams.includes("Sonoplastia & Áudio") || member.teams.includes("Transmissão & Mídia");
-    const isParallelService = event.parallelServices.some(s => s.volunteers.includes(memberId));
-    if (isParallelService && targetActivity && targetActivity.category === "Louvor") {
+    // Regra: Membro escalado em Sonoplastia, Transmissão ou outro apoio ocupa todo o intervalo com preparação antecedente (PRD 5.2 / M24, M50 & Issue #29 CA03)
+    const parallelService = (event.parallelServices || []).find(s =>
+      (s.volunteers || []).includes(memberId) || s.leaderId === memberId
+    );
+    if (parallelService && targetActivity && targetActivity.category === "Louvor") {
+      const prepNote = parallelService.prepRequiredMinutes > 0
+        ? ` (ocupação contínua incluindo ${parallelService.prepRequiredMinutes} min de preparação antecedente)`
+        : ' (ocupação contínua durante todo o culto)';
       return {
         hasConflict: true,
-        reason: `Bloqueio Litúrgico (PRD 5.2 / M24): ${member.name} está escalado(a) no serviço paralelo contínuo (Sonoplastia/Transmissão), que ocupa todo o culto.`,
+        reason: `Bloqueio Litúrgico (PRD 5.2 / M24 & Issue #29 CA03): ${member.name} está escalado(a) no serviço de apoio '${parallelService.name}'${prepNote}.`,
         eligibleCandidates: members.filter(m => 
           m.active && 
           m.id !== memberId &&
-          !event.parallelServices.some(s => s.volunteers.includes(m.id))
+          !(event.parallelServices || []).some(s => (s.volunteers || []).includes(m.id) || s.leaderId === m.id)
         )
       };
     }
@@ -939,23 +971,146 @@ export function AppProvider({ children, initialUserId = "carlos" }) {
     addAuditLog("Convite de Acesso", `Convite de acesso à igreja enviado para ${email} (Membro: ${memberName}).`);
   };
 
-  const designateLiturgyLeader = (newLeaderId) => {
+  const designateLiturgyLeader = (newLeaderId, targetEventId = null) => {
     if (!isAdmin) return;
+    const targetId = targetEventId || event.id;
     const leader = members.find(m => m.id === newLeaderId);
-    setEvent(prev => ({
-      ...prev,
-      liturgyLeaderId: newLeaderId
+    setEvents(prev => prev.map(ev => {
+      if (ev.id === targetId) {
+        return {
+          ...ev,
+          liturgyLeaderId: newLeaderId
+        };
+      }
+      return ev;
     }));
     addAuditLog(
       "Designação da Liturgia",
-      `Pastor Marcos designou ${leader?.name} como Líder da Liturgia para este evento.`
+      `Pastor Marcos designou ${leader?.name || 'Membro'} como Líder da Liturgia para o evento.`
     );
   };
 
-  // Cálculos de Duração da Programação (PRD 6, Cenário M25 & M26)
+  // Criação de Nova Edição de Culto (Issue #28)
+  const createEventEdition = (eventData) => {
+    try {
+      const newEvent = createEventEditionObject(
+        eventData,
+        church,
+        currentUser,
+        eventData.activities || [],
+        eventData.parallelServices || []
+      );
+      setEvents(prev => [newEvent, ...prev]);
+      setCurrentEventId(newEvent.id);
+      addAuditLog(
+        "Criação de Edição de Culto",
+        `${currentUser.name} criou a edição '${newEvent.title}' (${newEvent.date} às ${newEvent.scheduledStartTime}, duração prevista: ${newEvent.plannedDurationMinutes} min).`
+      );
+      return { success: true, event: newEvent };
+    } catch (err) {
+      return { success: false, error: err.message };
+    }
+  };
+
+  // Selecionar Edição Ativa (Issue #28)
+  const selectEvent = (eventId) => {
+    const target = events.find(e => e.id === eventId);
+    if (target) {
+      setCurrentEventId(eventId);
+    }
+  };
+
+  // Reordenação de Atividades na Programação (Issue #29, CA01)
+  const reorderActivities = (fromIndex, toIndex) => {
+    setEvent(prev => {
+      const nextActivities = reorderEventActivities(prev.activities, fromIndex, toIndex);
+      return {
+        ...prev,
+        activities: nextActivities
+      };
+    });
+    addAuditLog("Reordenação de Atividades", `Sequência de atividades reordenada na edição '${event.title}'.`);
+  };
+
+  const moveActivityUpInEvent = (activityId, targetEventId = null) => {
+    const targetId = targetEventId || currentEventId;
+    setEvents(prev => prev.map(ev => {
+      if (ev.id === targetId) {
+        return {
+          ...ev,
+          activities: moveActivityUp(ev.activities, activityId)
+        };
+      }
+      return ev;
+    }));
+  };
+
+  const moveActivityDownInEvent = (activityId, targetEventId = null) => {
+    const targetId = targetEventId || currentEventId;
+    setEvents(prev => prev.map(ev => {
+      if (ev.id === targetId) {
+        return {
+          ...ev,
+          activities: moveActivityDown(ev.activities, activityId)
+        };
+      }
+      return ev;
+    }));
+  };
+
+  // Configuração da Política de Duração do Evento (Issue #30, CA04)
+  const setEventDurationPolicy = (newPolicy, targetEventId = null) => {
+    if (!isAdmin && !isLiturgyLeader) {
+      return { success: false, error: "Permissão insuficiente para alterar a política de duração." };
+    }
+    try {
+      const targetId = targetEventId || currentEventId;
+      setEvents(prev => prev.map(ev => {
+        if (ev.id === targetId) {
+          return updateEventDurationPolicy(ev, newPolicy, isAdmin || isLiturgyLeader);
+        }
+        return ev;
+      }));
+      addAuditLog("Política de Duração", `Política de duração alterada para '${newPolicy}'.`);
+      return { success: true };
+    } catch (err) {
+      return { success: false, error: err.message };
+    }
+  };
+
+  // Publicar Programação Litúrgica (Issue #30, CA01 a CA04)
+  const publishCurrentProgram = () => {
+    try {
+      const published = publishEventProgram(event, currentUser.id);
+      setEvent(published);
+      addAuditLog(
+        "Publicação da Programação",
+        `Programação litúrgica da edição '${event.title}' publicada com sucesso (Versão ${published.programVersion}).`
+      );
+      return { success: true };
+    } catch (err) {
+      return { success: false, error: err.message };
+    }
+  };
+
+  // Salvar Rascunho da Programação (Issue #30, CA02 e CA03)
+  const saveCurrentProgramDraft = () => {
+    const draft = saveEventProgramDraft(event);
+    setEvent(draft);
+    addAuditLog(
+      "Rascunho da Programação",
+      `Rascunho da programação da edição '${event.title}' salvo com sucesso.`
+    );
+    return { success: true };
+  };
+
+  // Cálculos de Duração da Programação (PRD 6, Cenários M25 & M26, Issues #29 e #30)
   // Soma a sequência principal sem duplicar componentes do louvor ou serviços paralelos
-  const totalPlannedDurationMinutes = event.activities.reduce((sum, act) => sum + (act.plannedDurationMinutes || 0), 0);
-  const durationOverflowMinutes = Math.max(0, totalPlannedDurationMinutes - event.plannedDurationMinutes);
+  const durations = calculateProgramDurations(event);
+  const totalPlannedDurationMinutes = durations.occupiedMinutes;
+  const durationOverflowMinutes = durations.overflowMinutes;
+  const availableDurationMinutes = durations.availableMinutes;
+  const remainingDurationMinutes = durations.remainingMinutes;
 
   return (
     <AppContext.Provider
@@ -979,6 +1134,18 @@ export function AppProvider({ children, initialUserId = "carlos" }) {
         isTeamLeader,
         event,
         setEvent,
+        events,
+        setEvents,
+        currentEventId,
+        setCurrentEventId,
+        selectEvent,
+        createEventEdition,
+        reorderActivities,
+        moveActivityUpInEvent,
+        moveActivityDownInEvent,
+        setEventDurationPolicy,
+        publishCurrentProgram,
+        saveCurrentProgramDraft,
         isOnline,
         setIsOnline,
         isDataStale,
@@ -988,6 +1155,8 @@ export function AppProvider({ children, initialUserId = "carlos" }) {
         setTheme,
         totalPlannedDurationMinutes,
         durationOverflowMinutes,
+        availableDurationMinutes,
+        remainingDurationMinutes,
         breakElapsedSeconds,
 
         // Ações

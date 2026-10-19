@@ -62,6 +62,7 @@ export default function AdminView() {
     sendAccessInvite,
     designateLiturgyLeader,
     event,
+    events = [],
     addAuditLog,
     isOnline,
     isDataStale
@@ -127,7 +128,9 @@ export default function AdminView() {
   const [selectedStandardActForTemplate, setSelectedStandardActForTemplate] = useState('');
 
   // Designação da Liderança da Liturgia (PRD 3.2 & Cenário M05)
-  const [selectedLiturgyLeader, setSelectedLiturgyLeader] = useState(event.liturgyLeaderId);
+  const [selectedEventIdForLiturgy, setSelectedEventIdForLiturgy] = useState(event.id);
+  const targetEventForLiturgy = events.find(e => e.id === selectedEventIdForLiturgy) || event;
+  const [selectedLiturgyLeader, setSelectedLiturgyLeader] = useState(targetEventForLiturgy.liturgyLeaderId);
 
   // Proteção de Acesso (PRD 3.2 & Cenário M40)
   if (!isAdmin) {
@@ -497,8 +500,9 @@ export default function AdminView() {
   };
 
   const handleDesignateLeader = () => {
-    designateLiturgyLeader(selectedLiturgyLeader);
-    alert(`Liderança da Liturgia deste evento atualizada com sucesso para ${members.find(m => m.id === selectedLiturgyLeader)?.name}!`);
+    designateLiturgyLeader(selectedLiturgyLeader, selectedEventIdForLiturgy);
+    const memberName = members.find(m => m.id === selectedLiturgyLeader)?.name || 'Membro';
+    alert(`Liderança da Liturgia do evento '${targetEventForLiturgy.title}' atualizada com sucesso para ${memberName}!`);
   };
 
   const isControlsDisabled = !isOnline || isDataStale;
@@ -532,6 +536,7 @@ export default function AdminView() {
         <button
           className={`admin-tab-btn ${activeAdminTab === 'liturgy' ? 'active' : ''}`}
           onClick={() => setActiveAdminTab('liturgy')}
+          id="tab-admin-liturgy"
         >
           <Shield size={16} /> Designação da Liturgia por Evento (PRD 3.2)
         </button>
@@ -650,7 +655,7 @@ export default function AdminView() {
         </div>
       )}
 
-      {/* ABA 2: DESIGNAÇÃO DA LIDERANÇA DA LITURGIA (PRD 3.2 & Cenário M05) */}
+      {/* ABA 2: DESIGNAÇÃO DA LIDERANÇA DA LITURGIA (PRD 3.2, Cenário M05 & Issue #28 CA03) */}
       {activeAdminTab === 'liturgy' && (
         <div className="card">
           <h2 className="tab-sec-title">
@@ -658,18 +663,41 @@ export default function AdminView() {
           </h2>
           <p className="tab-sec-desc">
             A liderança da liturgia é designada por edição do evento (o culto de domingo pode ter uma pessoa, o de quarta outra).
-            <strong> Somente o Administrador pode designar e trocar essa liderança</strong> (PRD 3.2 & Cenário M05).
+            <strong> Somente o Administrador pode designar e trocar essa liderança</strong> (PRD 3.2, Cenários M05, M40 e Issue #28 CA03).
+            Controlar uma edição de culto não concede controle sobre as demais, e ser administrador não concede condução automática.
           </p>
 
           <div className="current-event-leader-box">
+            <div className="form-group" style={{ marginBottom: '16px' }}>
+              <label className="form-label" style={{ fontWeight: 700 }}>Selecione a Edição do Evento:</label>
+              <select
+                id="select-admin-liturgy-event"
+                className="form-select"
+                value={selectedEventIdForLiturgy}
+                onChange={e => {
+                  setSelectedEventIdForLiturgy(e.target.value);
+                  const ev = events.find(item => item.id === e.target.value);
+                  if (ev) setSelectedLiturgyLeader(ev.liturgyLeaderId);
+                }}
+                disabled={isControlsDisabled}
+              >
+                {events.map(ev => (
+                  <option key={ev.id} value={ev.id}>
+                    {ev.title} ({ev.date} às {ev.scheduledStartTime}) — Líder Atual: {members.find(m => m.id === ev.liturgyLeaderId)?.name || 'Não designado'}
+                  </option>
+                ))}
+              </select>
+            </div>
+
             <div className="current-lead-header">
-              Evento Selecionado: <strong>{event.title}</strong> ({event.date})
+              Evento em Configuração: <strong>{targetEventForLiturgy.title}</strong> ({targetEventForLiturgy.date})
             </div>
 
             <div className="designation-form-row">
               <div className="form-group" style={{ flex: 1, marginBottom: 0 }}>
                 <label className="form-label">Selecione o Líder da Liturgia Designado:</label>
                 <select
+                  id="select-admin-liturgy-leader"
                   className="form-select"
                   value={selectedLiturgyLeader}
                   onChange={e => setSelectedLiturgyLeader(e.target.value)}
@@ -684,6 +712,8 @@ export default function AdminView() {
               </div>
 
               <button
+                type="button"
+                id="btn-save-admin-liturgy-designation"
                 className="btn btn-primary"
                 onClick={handleDesignateLeader}
                 disabled={isControlsDisabled}

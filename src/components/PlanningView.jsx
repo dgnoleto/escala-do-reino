@@ -12,21 +12,38 @@ import {
   Trash2,
   Edit,
   Radio,
-  Info
+  Info,
+  ArrowUp,
+  ArrowDown,
+  Save,
+  Send,
+  Calendar,
+  ShieldCheck
 } from 'lucide-react';
 
 export default function PlanningView() {
   const {
     event,
     setEvent,
+    events = [],
+    selectEvent,
+    createEventEdition,
+    moveActivityUpInEvent,
+    moveActivityDownInEvent,
+    setEventDurationPolicy,
+    publishCurrentProgram,
+    saveCurrentProgramDraft,
     totalPlannedDurationMinutes,
     durationOverflowMinutes,
+    availableDurationMinutes,
+    remainingDurationMinutes,
     currentUser,
     isLiturgyLeader,
     isAdmin,
     isTeamLeader,
     members,
     teams,
+    eventTypes = [],
     standardActivities = [],
     serviceTemplates = [],
     applyServiceTemplateToEvent,
@@ -34,8 +51,27 @@ export default function PlanningView() {
     checkAssignmentConflict,
     addAuditLog,
     isOnline,
-    isDataStale
+    isDataStale,
+    church
   } = useApp();
+
+  // Modal de Criação de Edição de Culto (Issue #28)
+  const [createEventModalOpen, setCreateEventModalOpen] = useState(false);
+  const [newEventTitle, setNewEventTitle] = useState('');
+  const [newEventType, setNewEventType] = useState('Celebração Geral');
+  const [newEventStartDate, setNewEventStartDate] = useState('2026-10-25');
+  const [newEventStartTime, setNewEventStartTime] = useState('19:00');
+  const [newEventEndDate, setNewEventEndDate] = useState('2026-10-25');
+  const [newEventEndTime, setNewEventEndTime] = useState('20:45');
+  const [newEventTemplateId, setNewEventTemplateId] = useState('');
+  const [newEventLiturgyLeader, setNewEventLiturgyLeader] = useState('carlos');
+  const [newEventDurationPolicy, setNewEventDurationPolicy] = useState('warn');
+  const [createEventError, setCreateEventError] = useState('');
+  const [createEventSuccess, setCreateEventSuccess] = useState('');
+
+  // Estados de Publicação e Rascunho (Issue #30)
+  const [publishFeedback, setPublishFeedback] = useState('');
+  const [publishError, setPublishError] = useState('');
 
   // Template de Culto Reutilizável (PRD §5 / M28 - Issue #27)
   const [selectedTemplateId, setSelectedTemplateId] = useState('');
@@ -210,10 +246,153 @@ export default function PlanningView() {
     }
   };
 
+  // Handlers para Edição de Culto e Publicação (Issues #28 e #30)
+  const handleOpenCreateEventModal = () => {
+    setNewEventTitle('');
+    setNewEventType(eventTypes[0]?.name || 'Celebração Geral');
+    setNewEventStartDate('2026-10-25');
+    setNewEventStartTime('19:00');
+    setNewEventEndDate('2026-10-25');
+    setNewEventEndTime('20:45');
+    setNewEventTemplateId('');
+    setNewEventLiturgyLeader(currentUser?.id || 'carlos');
+    setNewEventDurationPolicy('warn');
+    setCreateEventError('');
+    setCreateEventSuccess('');
+    setCreateEventModalOpen(true);
+  };
+
+  const handleCreateEventEditionSubmit = (e) => {
+    e?.preventDefault?.();
+    setCreateEventError('');
+    setCreateEventSuccess('');
+
+    const startIso = `${newEventStartDate}T${newEventStartTime}:00`;
+    const endIso = `${newEventEndDate}T${newEventEndTime}:00`;
+
+    // Carrega modelo se selecionado (sem voluntários - CA03 de #27 e CA04 de #28)
+    let initialActs = [];
+    let initialServices = [];
+    if (newEventTemplateId) {
+      const tpl = serviceTemplates.find(t => t.id === newEventTemplateId);
+      if (tpl) {
+        initialActs = (tpl.activities || []).map((a, i) => ({
+          ...a,
+          id: `act-${Date.now()}-${i}`,
+          responsibleMemberId: null,
+          roster: []
+        }));
+        initialServices = (tpl.parallelServices || []).map((s, i) => ({
+          ...s,
+          id: `serv-${Date.now()}-${i}`,
+          leaderId: null,
+          volunteers: [],
+          status: 'Aguardando culto'
+        }));
+      }
+    }
+
+    const res = createEventEdition({
+      title: newEventTitle,
+      type: newEventType,
+      plannedStartAt: startIso,
+      plannedEndAt: endIso,
+      liturgyLeaderId: newEventLiturgyLeader,
+      durationPolicy: newEventDurationPolicy,
+      activities: initialActs,
+      parallelServices: initialServices
+    });
+
+    if (!res.success) {
+      setCreateEventError(res.error);
+    } else {
+      setCreateEventSuccess(`Edição '${res.event.title}' criada com sucesso!`);
+      setTimeout(() => {
+        setCreateEventModalOpen(false);
+        setCreateEventSuccess('');
+      }, 1500);
+    }
+  };
+
+  const handlePublishProgram = () => {
+    setPublishError('');
+    setPublishFeedback('');
+    const res = publishCurrentProgram();
+    if (!res.success) {
+      setPublishError(res.error);
+    } else {
+      setPublishFeedback(`Programação publicada com sucesso (Versão ${event.programVersion ? event.programVersion + 1 : 2})!`);
+      setTimeout(() => setPublishFeedback(''), 5000);
+    }
+  };
+
+  const handleSaveDraft = () => {
+    setPublishError('');
+    saveCurrentProgramDraft();
+    setPublishFeedback('Rascunho da programação salvo com sucesso.');
+    setTimeout(() => setPublishFeedback(''), 4000);
+  };
+
+  const handleChangeDurationPolicy = (val) => {
+    setPublishError('');
+    const res = setEventDurationPolicy(val);
+    if (!res.success) {
+      setPublishError(res.error);
+    }
+  };
+
   const isControlsDisabled = !isOnline || isDataStale;
 
   return (
     <div className="planning-view-container">
+      {/* SELETOR DE EDIÇÕES DE CULTO E NOVA EDIÇÃO (PRD §5 / Issue #28) */}
+      <div className="card" id="planning-event-selector-bar" style={{ padding: '16px 20px', background: 'var(--bg-inset)', border: '1px solid var(--border-subtle)', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '16px' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '12px', flexWrap: 'wrap' }}>
+          <Calendar size={18} color="var(--primary)" />
+          <div>
+            <div style={{ fontSize: '11px', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--primary)' }}>
+              Edição do Culto Selecionada (Issue #28)
+            </div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginTop: '4px', flexWrap: 'wrap' }}>
+              <select
+                id="select-current-event"
+                className="form-select"
+                value={event.id}
+                onChange={e => selectEvent(e.target.value)}
+                style={{ fontWeight: 600, minWidth: '260px' }}
+                disabled={isControlsDisabled}
+              >
+                {events.map(ev => (
+                  <option key={ev.id} value={ev.id}>
+                    {ev.title} ({ev.date} às {ev.scheduledStartTime})
+                  </option>
+                ))}
+              </select>
+
+              <span className="badge badge-secondary" id="badge-event-timezone" style={{ fontSize: '12px' }}>
+                Fuso: {event.timezone || church?.timezone || 'America/Sao_Paulo'}
+              </span>
+
+              <span className={`badge ${event.programStatus === 'published' ? 'badge-primary' : 'badge-pending'}`} id="badge-program-status">
+                {event.programStatus === 'published' ? `Publicado (v${event.programVersion || 1})` : 'Rascunho'}
+              </span>
+            </div>
+          </div>
+        </div>
+
+        <div>
+          <button
+            type="button"
+            id="btn-open-create-event-modal"
+            className="btn btn-primary"
+            onClick={handleOpenCreateEventModal}
+            disabled={(!isLiturgyLeader && !isAdmin) || isControlsDisabled}
+          >
+            <Plus size={15} style={{ marginRight: '6px' }} /> Nova Edição de Culto
+          </button>
+        </div>
+      </div>
+
       {/* Cabeçalho do Planejamento & Medidor de Duração (PRD 6) */}
       <div className="card planning-header-card">
         <div>
@@ -228,12 +407,12 @@ export default function PlanningView() {
           </p>
         </div>
 
-        {/* ALERTA DE DURAÇÃO EXCEDIDA IGNORÁVEL (PRD 6 & Cenário M26) */}
+        {/* MEDIDOR E POLÍTICAS DE DURAÇÃO (PRD 6, Issues #29 e #30) */}
         <div className="duration-gauge-box">
           <div className="gauge-row">
             <div className="gauge-item">
               <span className="gauge-label">Previsto para o Culto:</span>
-              <span className="gauge-val">{event.plannedDurationMinutes} min</span>
+              <span className="gauge-val">{availableDurationMinutes || event.plannedDurationMinutes} min</span>
             </div>
             <div className="gauge-item">
               <span className="gauge-label">Soma da Sequência:</span>
@@ -244,17 +423,81 @@ export default function PlanningView() {
             <div className="gauge-item">
               <span className="gauge-label">Saldo de Duração:</span>
               <span className={`gauge-val ${durationOverflowMinutes > 0 ? 'text-danger' : 'text-success'}`}>
-                {durationOverflowMinutes > 0 ? `+${durationOverflowMinutes} min (Excesso)` : `${event.plannedDurationMinutes - totalPlannedDurationMinutes} min livres`}
+                {durationOverflowMinutes > 0 ? `+${durationOverflowMinutes} min (Excesso)` : `${remainingDurationMinutes ?? (event.plannedDurationMinutes - totalPlannedDurationMinutes)} min livres`}
               </span>
             </div>
           </div>
 
-          {durationOverflowMinutes > 0 && (
-            <div className="ignorable-overflow-banner">
+          {/* Configuração da Política de Duração (Issue #30 CA02-CA04) */}
+          <div style={{ marginTop: '12px', paddingTop: '10px', borderTop: '1px solid var(--border-subtle)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '10px' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+              <span style={{ fontSize: '12px', fontWeight: 600, color: 'var(--text-secondary)' }}>Política de Duração:</span>
+              <select
+                id="select-duration-policy"
+                className="form-select form-select-sm"
+                value={event.durationPolicy || 'warn'}
+                onChange={e => handleChangeDurationPolicy(e.target.value)}
+                disabled={(!isLiturgyLeader && !isAdmin) || isControlsDisabled}
+                style={{ fontSize: '12px', padding: '4px 8px' }}
+              >
+                <option value="warn">Modo Alerta (warn) — Permite salvar e publicar com excesso</option>
+                <option value="block">Modo Bloqueio (block) — Bloqueia publicação se houver excesso</option>
+              </select>
+            </div>
+
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+              <button
+                type="button"
+                id="btn-save-program-draft"
+                className="btn btn-sm btn-secondary"
+                onClick={handleSaveDraft}
+                disabled={(!isLiturgyLeader && !isAdmin) || isControlsDisabled}
+              >
+                <Save size={13} style={{ marginRight: '4px' }} /> Salvar Rascunho
+              </button>
+
+              <button
+                type="button"
+                id="btn-publish-program"
+                className="btn btn-sm btn-primary"
+                onClick={handlePublishProgram}
+                disabled={(!isLiturgyLeader && !isAdmin) || isControlsDisabled}
+              >
+                <Send size={13} style={{ marginRight: '4px' }} /> Publicar Programação
+              </button>
+            </div>
+          </div>
+
+          {/* Alertas e Mensagens de Publicação */}
+          {publishError && (
+            <div id="msg-publish-error" className="alert alert-danger" style={{ marginTop: '10px', padding: '8px 12px', display: 'flex', alignItems: 'center', gap: '8px', fontSize: '12px', background: 'rgba(239, 68, 68, 0.12)', color: '#ef4444', borderRadius: 'var(--radius-sm)' }}>
+              <AlertTriangle size={15} />
+              <span>{publishError}</span>
+            </div>
+          )}
+
+          {publishFeedback && (
+            <div id="msg-publish-feedback" className="alert alert-success" style={{ marginTop: '10px', padding: '8px 12px', display: 'flex', alignItems: 'center', gap: '8px', fontSize: '12px', background: 'rgba(16, 185, 129, 0.12)', color: '#10b981', borderRadius: 'var(--radius-sm)' }}>
+              <Check size={15} />
+              <span>{publishFeedback}</span>
+            </div>
+          )}
+
+          {durationOverflowMinutes > 0 && !publishError && (
+            <div id="msg-publish-warning" className="ignorable-overflow-banner" style={{ marginTop: '10px' }}>
               <AlertTriangle size={15} color="#fbbf24" />
               <span>
-                <strong>Alerta Ignorável (PRD 6 / M26):</strong> A programação excede o culto em {durationOverflowMinutes} min.
-                Você pode salvar e publicar normalmente sem exigir aprovação ou justificativa.
+                {event.durationPolicy === 'block' ? (
+                  <>
+                    <strong>Bloqueio de Publicação (PRD 6 / M49 & Issue #30 CA03):</strong> A programação excede o culto em {durationOverflowMinutes} min.
+                    No modo de bloqueio, você pode salvar rascunhos, mas a publicação só é permitida após ajustar a sequência principal.
+                  </>
+                ) : (
+                  <>
+                    <strong>Alerta Ignorável (PRD 6 / M26 & Issue #30 CA02):</strong> A programação excede o culto em {durationOverflowMinutes} min.
+                    Você pode salvar e publicar normalmente sem exigir aprovação ou justificativa.
+                  </>
+                )}
               </span>
             </div>
           )}
@@ -396,6 +639,32 @@ export default function PlanningView() {
 
               {/* Botões de Ação da Etapa */}
               <div className="act-manage-buttons">
+                {/* Botões de Reordenação Litúrgica (Issue #29, CA01) */}
+                <div style={{ display: 'flex', gap: '4px' }}>
+                  <button
+                    type="button"
+                    id={`btn-move-up-${act.id}`}
+                    className="btn btn-sm btn-secondary"
+                    onClick={() => moveActivityUpInEvent(act.id)}
+                    disabled={index === 0 || (!isLiturgyLeader && !isAdmin) || isControlsDisabled}
+                    title="Mover para cima (Issue #29 CA01)"
+                    style={{ padding: '4px 8px' }}
+                  >
+                    <ArrowUp size={13} />
+                  </button>
+                  <button
+                    type="button"
+                    id={`btn-move-down-${act.id}`}
+                    className="btn btn-sm btn-secondary"
+                    onClick={() => moveActivityDownInEvent(act.id)}
+                    disabled={index === event.activities.length - 1 || (!isLiturgyLeader && !isAdmin) || isControlsDisabled}
+                    title="Mover para baixo (Issue #29 CA01)"
+                    style={{ padding: '4px 8px' }}
+                  >
+                    <ArrowDown size={13} />
+                  </button>
+                </div>
+
                 <button
                   className="btn btn-sm btn-secondary"
                   onClick={() => openEditActivityModal(act)}
@@ -458,12 +727,30 @@ export default function PlanningView() {
                   <span className="badge badge-secondary" style={{ fontSize: '11px' }}>{serv.teamId}</span>
                 </div>
                 <div style={{ fontSize: '12px', color: 'var(--text-muted)' }}>
-                  Tempo de preparação: <strong>{serv.prepRequiredMinutes || 0} min</strong> antes do culto
+                  Tempo de preparação: <strong>{serv.prepRequiredMinutes || 0} min</strong> antes do culto (Issue #29 CA03)
                 </div>
+                {serv.prepRequiredMinutes > 0 && (
+                  <div style={{ fontSize: '11px', color: 'var(--primary)', fontWeight: 600 }}>
+                    Intervalo ocupado nos conflitos: preparação antecedente integrada à janela do culto.
+                  </div>
+                )}
                 <div style={{ fontSize: '12px', color: 'var(--text-muted)' }}>
                   Voluntários escalados: <strong>{serv.volunteers?.length || 0}</strong> (preenchimento nominal)
                 </div>
-                <div style={{ marginTop: 'auto', paddingTop: '8px', borderTop: '1px solid var(--border-subtle)', display: 'flex', justifyContent: 'flex-end' }}>
+                <div style={{ marginTop: 'auto', paddingTop: '8px', borderTop: '1px solid var(--border-subtle)', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '6px' }}>
+                  <button
+                    type="button"
+                    id={`btn-test-prep-conflict-${serv.teamId || serv.id}`}
+                    className="btn btn-sm btn-secondary"
+                    onClick={() => {
+                      simulateAssignVolunteer('act-2', serv.volunteers?.[0] || 'lucas', 'Louvor - Canto');
+                    }}
+                    style={{ fontSize: '11px' }}
+                    title="Testa conflito de voluntário deste apoio no louvor (CA03/CA04)"
+                  >
+                    Testar Conflito (CA03)
+                  </button>
+
                   <button
                     type="button"
                     id={`btn-remove-parallel-service-${serv.teamId || serv.id}`}
@@ -743,6 +1030,189 @@ export default function PlanningView() {
                 Entendido, Manter Regra Litúrgica
               </button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL DE CRIAÇÃO DE NOVA EDIÇÃO DE CULTO (Issue #28, CA01 a CA04) */}
+      {createEventModalOpen && (
+        <div className="modal-overlay" id="modal-create-event">
+          <div className="modal-content" style={{ maxWidth: '580px' }}>
+            <div className="modal-header">
+              <h3 className="modal-title">
+                <Calendar size={18} style={{ display: 'inline', marginRight: '8px', verticalAlign: 'middle', color: 'var(--primary)' }} />
+                Criar Nova Edição de Culto (Issue #28)
+              </h3>
+              <button className="close-btn" onClick={() => setCreateEventModalOpen(false)}>✕</button>
+            </div>
+
+            {createEventError && (
+              <div className="alert alert-danger" style={{ marginBottom: '14px', padding: '10px 12px', display: 'flex', alignItems: 'center', gap: '8px', fontSize: '13px', background: 'rgba(239, 68, 68, 0.1)', color: '#ef4444', borderRadius: '6px' }}>
+                <AlertTriangle size={16} />
+                <span>{createEventError}</span>
+              </div>
+            )}
+
+            {createEventSuccess && (
+              <div className="alert alert-success" style={{ marginBottom: '14px', padding: '10px 12px', display: 'flex', alignItems: 'center', gap: '8px', fontSize: '13px', background: 'rgba(16, 185, 129, 0.1)', color: '#10b981', borderRadius: '6px' }}>
+                <Check size={16} />
+                <span>{createEventSuccess}</span>
+              </div>
+            )}
+
+            <form onSubmit={handleCreateEventEditionSubmit}>
+              <div className="form-group">
+                <label className="form-label">Título da Edição do Culto:</label>
+                <input
+                  type="text"
+                  id="event-title"
+                  className="form-input"
+                  placeholder="Ex: Culto de Celebração de Domingo Noite"
+                  value={newEventTitle}
+                  onChange={e => setNewEventTitle(e.target.value)}
+                  maxLength={200}
+                  required
+                />
+              </div>
+
+              <div className="grid-2">
+                <div className="form-group">
+                  <label className="form-label">Tipo de Evento:</label>
+                  <select
+                    id="event-type"
+                    className="form-select"
+                    value={newEventType}
+                    onChange={e => setNewEventType(e.target.value)}
+                  >
+                    {eventTypes.map(t => (
+                      <option key={t.id} value={t.name}>{t.name}</option>
+                    ))}
+                    {eventTypes.length === 0 && <option value="Celebração Geral">Celebração Geral</option>}
+                  </select>
+                </div>
+
+                <div className="form-group">
+                  <label className="form-label">Fuso Horário da Igreja:</label>
+                  <input
+                    type="text"
+                    className="form-input"
+                    value={church?.timezone || 'America/Sao_Paulo'}
+                    disabled
+                    readOnly
+                  />
+                </div>
+              </div>
+
+              <div className="grid-2">
+                <div className="form-group">
+                  <label className="form-label">Data e Hora de Início Previsto:</label>
+                  <div style={{ display: 'flex', gap: '8px' }}>
+                    <input
+                      type="date"
+                      id="event-start-date"
+                      className="form-input"
+                      value={newEventStartDate}
+                      onChange={e => setNewEventStartDate(e.target.value)}
+                      required
+                    />
+                    <input
+                      type="time"
+                      id="event-start-time"
+                      className="form-input"
+                      value={newEventStartTime}
+                      onChange={e => setNewEventStartTime(e.target.value)}
+                      required
+                    />
+                  </div>
+                </div>
+
+                <div className="form-group">
+                  <label className="form-label">Data e Hora de Término Previsto:</label>
+                  <div style={{ display: 'flex', gap: '8px' }}>
+                    <input
+                      type="date"
+                      id="event-end-date"
+                      className="form-input"
+                      value={newEventEndDate}
+                      onChange={e => setNewEventEndDate(e.target.value)}
+                      required
+                    />
+                    <input
+                      type="time"
+                      id="event-end-time"
+                      className="form-input"
+                      value={newEventEndTime}
+                      onChange={e => setNewEventEndTime(e.target.value)}
+                      required
+                    />
+                  </div>
+                  <span style={{ fontSize: '11px', color: 'var(--text-muted)' }}>
+                    Aceita virada de meia-noite com datas completas (CA01).
+                  </span>
+                </div>
+              </div>
+
+              <div className="grid-2">
+                <div className="form-group">
+                  <label className="form-label">Modelo Reutilizável Inicial (Opcional):</label>
+                  <select
+                    id="event-template"
+                    className="form-select"
+                    value={newEventTemplateId}
+                    onChange={e => setNewEventTemplateId(e.target.value)}
+                  >
+                    <option value="">-- Em branco (sem modelo) --</option>
+                    {serviceTemplates.filter(t => t.active !== false).map(t => (
+                      <option key={t.id} value={t.id}>{t.name}</option>
+                    ))}
+                  </select>
+                </div>
+
+                <div className="form-group">
+                  <label className="form-label">Líder da Liturgia Designado:</label>
+                  <select
+                    id="event-liturgy-leader"
+                    className="form-select"
+                    value={newEventLiturgyLeader}
+                    onChange={e => setNewEventLiturgyLeader(e.target.value)}
+                    disabled={!isAdmin}
+                  >
+                    {members.map(m => (
+                      <option key={m.id} value={m.id}>
+                        {m.name} ({m.roles.join(', ')})
+                      </option>
+                    ))}
+                  </select>
+                  {!isAdmin && (
+                    <span style={{ fontSize: '11px', color: 'var(--text-muted)' }}>
+                      Somente administradores podem designar ou alterar a liderança (CA03).
+                    </span>
+                  )}
+                </div>
+              </div>
+
+              <div className="form-group">
+                <label className="form-label">Política de Duração do Culto:</label>
+                <select
+                  id="event-duration-policy"
+                  className="form-select"
+                  value={newEventDurationPolicy}
+                  onChange={e => setNewEventDurationPolicy(e.target.value)}
+                >
+                  <option value="warn">Modo Alerta (warn) — Padrão do piloto, permite salvar/publicar com excesso</option>
+                  <option value="block">Modo Bloqueio (block) — Impede publicar a programação se exceder a janela</option>
+                </select>
+              </div>
+
+              <div className="modal-footer">
+                <button type="button" className="btn btn-secondary" onClick={() => setCreateEventModalOpen(false)}>
+                  Cancelar
+                </button>
+                <button type="submit" id="btn-submit-create-event" className="btn btn-primary">
+                  Criar Edição de Culto (CA01-CA04)
+                </button>
+              </div>
+            </form>
           </div>
         </div>
       )}
