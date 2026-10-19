@@ -93,6 +93,8 @@ Admin da igreja não pode definir ou alterar credenciais de outro usuário. Para
 
 Antes do piloto com membros, configurar e testar o envio de confirmação e recuperação por um serviço SMTP. Durante o desenvolvimento, o envio padrão do Supabase fica restrito aos endereços da equipe do projeto e aos limites do serviço. Manter confirmação de e-mail habilitada.
 
+**Complemento autorizado em 18/10/2026 — confirmação e recuperação seguras no ambiente de uso (Issue #24):** a aplicação web trata os redirecionamentos de erro do Supabase Auth para links de confirmação e recuperação expirados ou inválidos (`otp_expired`), higienizando os parâmetros da barra de endereços para não expor tokens ou dados de erro no histórico de navegação e apresentando orientação protetiva imediata para novo envio. O fluxo de primeiro acesso por convite preserva o token de alta entropia retido em `sessionStorage` enquanto a confirmação de e-mail estiver pendente, restaurando automaticamente o resgate do convite na comunidade assim que a conta for confirmada e autenticada. Senhas são definidas pela própria pessoa e mantidas exclusivamente na memória do formulário durante o envio. A confirmação de e-mail permanece estritamente habilitada e obrigatória.
+
 ### 3.2 Papéis e limites
 
 | Papel | Responsabilidade |
@@ -114,7 +116,7 @@ Ser admin não habilita conduzir um evento no qual a pessoa não foi designada l
 
 **Decidido:** cadastrar o fuso horário e o local da igreja pelo Google Maps. Os membros herdam o fuso da igreja consultada, sem preferência individual de alteração no MVP. Uma conta com acesso a igrejas diferentes usa o contexto da igreja consultada. A representação técnica do fuso e da localização está no documento de arquitetura.
 
-**Complemento autorizado em 18/10/2026 — manutenção do cadastro:** o administrador ativo pode reabrir o cadastro da igreja selecionada para corrigir endereço e link do Google Maps e adicionar, substituir ou remover sua logo. Membros e líderes sem administração não acessam esse cadastro; o bloqueio vale na interface e no servidor. A exibição da logo aos membros autorizados não concede acesso ao cadastro. Nome, fuso e política não são alterados neste incremento. Contratos e limites de implementação em [Cadastro administrativo da igreja](CADASTRO-IGREJA.md).
+**Complemento autorizado em 18/10/2026 — manutenção do cadastro:** o administrador ativo pode reabrir o cadastro da igreja selecionada para corrigir o nome da igreja (conforme solicitação e aprovação do responsável na Issue #22), endereço e link do Google Maps, bem como adicionar, substituir ou remover sua logo. A alteração de nome é restrita ao administrador ativo da própria igreja selecionada e preserva o identificador da igreja, membros, vínculos e histórico existentes, sem criar outra igreja ou gerar duplicidades. Membros e líderes sem administração não acessam nem editam esse cadastro; o bloqueio vale na interface e no servidor. A exibição do nome e da logo aos membros autorizados não concede acesso ao cadastro. Fuso horário e política de duração permanecem inalterados. Contratos e limites de implementação em [Cadastro administrativo da igreja](CADASTRO-IGREJA.md).
 
 ## 4. Web e mobile
 
@@ -147,6 +149,10 @@ Uma atividade pode abranger **o evento inteiro ou apenas parte dele**. Isso é i
 
 É possível ajustar a edição específica, por exemplo realizar um culto sem transmissão. A preparação antes do início conta no intervalo de ocupação e nos conflitos quando estiver configurada. Durações padrão são configuráveis; exemplos de 5, 15 ou 20 minutos não são valores universais.
 
+**Complemento autorizado em 18/10/2026 — tipos de evento e atividades com durações padrão (Issue #25):** a aplicação web oferece a administração de tipos de evento e de atividades padrão com durações padrão configuráveis pelo administrador autorizado da igreja. Cada cadastro pertence à igreja selecionada e sua alteração ou inativação não reescreve nem altera retroativamente cultos já planejados ou realizados no passado. A exclusão física de um tipo ou atividade referenciado em eventos ou cronogramas existentes é estritamente bloqueada no banco e na interface, orientando a desativação protetiva para preservar o histórico. Membros sem privilégios administrativos não alteram cadastros e não são criados controles administrativos no aplicativo Android/iOS. Detalhes normativos em [Cadastro de Tipos e Atividades](CADASTRO-TIPOS-ATIVIDADES.md).
+
+**Complemento autorizado em 18/10/2026 — modelos reutilizáveis de culto (Issue #27):** a aplicação web oferece a criação e manutenção de modelos reutilizáveis vinculados ao tipo de evento, com etapas litúrgicas principais e apoios técnicos padrão (portaria/recepção, sonoplastia e transmissão com seus respectivos minutos de preparação prévia). Usar o modelo em um culto cria uma edição ajustável e independente: retirar a transmissão daquela edição específica não altera o modelo nem outros eventos. O modelo não escala, confirma ou reserva voluntários automaticamente, cabendo às lideranças o preenchimento nominal posterior. Alterações ou desativações no modelo preservam integralmente os eventos e o histórico existentes, com bloqueio estrito de exclusão física sob dependências históricas. Detalhes normativos em [Modelos Reutilizáveis de Culto](CADASTRO-MODELOS-CULTO.md).
+
 ### 5.1 Participação específica no MVP
 
 Os líderes definem nominalmente quem exercerá cada responsabilidade. Não há confirmação eletrônica individual; o combinado ocorre fora do aplicativo.
@@ -173,9 +179,12 @@ Somar a sequência principal, sem contar novamente atividades paralelas ou compo
 
 A preparação dos serviços de apoio pode começar antes da janela principal: por exemplo, preparar câmeras 30 minutos antes do culto. Esse tempo participa dos conflitos das pessoas, sem aumentar a soma principal. Não exigir que todos os itens de apoio fiquem dentro do início/fim previstos do culto.
 
-O limite atua no planejamento. A execução pode terminar antes ou ultrapassar o previsto por imprevistos, sem bloqueio ou encerramento automático. **Padrão confirmado em 02/10/2026 para a igreja do piloto:** alertar sobre o excesso e permitir publicar (`warn`). A política é registrada em cada evento. **Pendentes:** autoridade para alterar a política de um evento existente e apresentação das revisões em rascunho.
+O limite atua no planejamento. A execução pode terminar antes ou ultrapassar o previsto por imprevistos, sem bloqueio ou encerramento automático. **Padrão confirmado em 02/10/2026 para a igreja do piloto:** alertar sobre o excesso e permitir publicar (`warn`). A política é registrada em cada evento.
 
-Duração de atividade não é prazo de resposta a convite. Prazos de convite pertencem somente ao documento de evolução futura.
+**Complemento autorizado em 18/10/2026 — edições de culto, liturgia, programação e conferência de duração (Issues #28, #29 e #30):**
+- **Edição de culto e liderança de liturgia (Issue #28):** cadastro com data e janela prevista (início e término) aceitando travessia de meia-noite e herdando o fuso horário da igreja (CA01); designação de liderança da liturgia exclusiva para administradores da igreja (CA02); rejeição estrita de intervalos inválidos (término <= início) ou campos em branco (CA03); criação gera status inicial pronto/draft sem iniciar execução do culto nem escalar voluntários automaticamente (CA04).
+- **Programação principal e apoios paralelos (Issue #29):** ordenação litúrgica contígua com reordenação para cima e para baixo (CA01); serviços paralelos com tempo prévio de preparação (`prepLeadMinutes` / `prepRequiredMinutes`) sem inflar a duração da liturgia principal (CA02); componentes do mesmo bloco compartilham duração sem duplicação (CA03); detecção de sobreposição de escalas considerando a janela de preparação antecedente (CA04).
+- **Conferência de duração e publicação (Issue #30):** cálculo de duração disponível, ocupada, saldo e excedente (CA01); modo alerta (`warn`) avisa sobre excesso mas autoriza publicação sem justificativa (CA02); modo bloqueio (`block`) proíbe terminantemente a publicação se houver excesso, permitindo salvar rascunho (`draft`) com aviso claro (CA03); autoridade para alterar a política conferida a administradores ou ao líder da liturgia designado; persistência da política e versão da programação no evento sem afetar a execução real (CA04), resolvendo o ponto pendente de governança de políticas. Detalhes normativos em [Cadastro e Planejamento de Eventos](CADASTRO-PLANEJAMENTO-EVENTOS.md).
 
 ## 7. Condução, contagem de tempo e interrupções
 
@@ -200,6 +209,14 @@ Corrigir o horário real de início recalcula a contagem aplicável, preservando
 ### 7.3 Cancelar atividade iniciada
 
 O líder da liturgia seleciona **Cancelar atividade**, escolhe obrigatoriamente um motivo previamente cadastrado na web e confirma. Exemplos de motivos: falha técnica, falta de energia ou acidente. A lista é configurável; não exige relato pessoal detalhado, justificativa livre nem cadastro de motivo na tela operacional.
+
+**Decisões consolidadas de produto e critérios de aceitação (Issue #26):**
+- **Configuração administrativa na Web (CA01):** a lista de motivos de cancelamento é gerenciada exclusivamente na interface Web por administradores autorizados da igreja. O sistema pode fornecer sugestões/exemplos iniciais, mas estes não são fixos nem obrigatórios: o administrador pode renomear, desativar ou excluir motivos, bem como cadastrar novos motivos customizados com descrição de 1 a 120 caracteres normalizada em Unicode NFC.
+- **Operação litúrgica estrita (CA02):** a tela de cancelamento no console operacional/móvel (M12) consome exclusivamente os motivos ativos pré-cadastrados da igreja. Não há mecanismo de criação, edição ou gerenciamento administrativo de motivos na tela operacional de culto. Se não houver nenhum motivo ativo cadastrado na igreja, o cancelamento é bloqueado com alerta explicativo orientando o contato com a administração da igreja.
+- **Preservação do histórico e interpretação (CA03):** ao cancelar uma atividade, o sistema registra tanto o snapshot textual do nome do motivo no momento do cancelamento quanto o identificador de referência (`cancellation_reason_id`). A alteração do texto de um motivo ou sua desativação não corrompe nem altera o histórico de cancelamentos anteriores. A exclusão física de um motivo que já foi utilizado em atividades passadas é bloqueada (na interface e no banco de dados via código `23503`), orientando o administrador a desativá-lo para que não seja mais ofertado em novas operações.
+- **Sem justificativa aberta ou relato pessoal (CA04):** a interface de cancelamento não exige nem permite campos de texto livre, relato pessoal ou justificativa descritiva, resguardando a objetividade e a privacidade litúrgica.
+
+Contratos técnicos e detalhes de implementação em [Cadastro e Manutenção de Motivos de Cancelamento](CADASTRO-MOTIVOS-CANCELAMENTO.md).
 
 O cancelamento encerra a contagem e identifica a atividade como cancelada, preservando início, fim real, duração realizada, eventual excesso, motivo, responsável pela atividade e autor do registro. Não retoma a etapa anterior e não inicia a próxima. Editar ou retirar uma atividade futura não altera a contagem da atividade atual.
 

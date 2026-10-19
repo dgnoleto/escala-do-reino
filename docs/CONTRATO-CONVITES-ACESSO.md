@@ -89,12 +89,12 @@ stateDiagram-v2
     Aberto --> Cancelado: Reemissão pelo Admin (revoked_at = clock_timestamp)
     Aberto --> Expirado: clock_timestamp >= expires_at (sem resgate)
     Aberto --> Consumido: Resgate Válido (redeemed_at = clock_timestamp)
-    
+
     state Consumido {
         [*] --> NomeConfirmado: Usuário confirma nome cadastrado -> Acesso Imediato
         [*] --> NomeProposto: Usuário propõe outro nome -> Cria Solicitação Pendente
     }
-    
+
     Expirado --> Cancelado: Reemissão do Admin finaliza linha vencida
     Cancelado --> [*]
     Consumido --> [*]
@@ -125,7 +125,7 @@ stateDiagram-v2
     Pendente --> Rejeitada: Admin rejeita -> Encerra tentativa sem acesso
     Pendente --> Cancelada: Admin reemite convite -> Cancela solicitação antiga
     Pendente --> Expirada: clock_timestamp >= expires_at sem decisão
-    
+
     Aprovada --> [*]
     Rejeitada --> [*]
     Cancelada --> [*]
@@ -847,8 +847,25 @@ Em 09/10/2026, a interface de usuário correspondente ao incremento 011 foi impl
   - Para `issue_invitation`, `result_entity_id` corresponde ao ID do convite gerado e `link_unrecoverable` deve ser booleano.
   - Payloads de outras ações ou command_ids divergentes são rejeitados sem transição de sucesso.
 - **Replay de Emissão vs Recibo:** `issue_church_invitation` retorna `raw_token` nulo em replay; o atributo `link_unrecoverable = true` provém estritamente de `get_invitation_command_receipt`.
-- **Expiração em Decisão:** `decide_access_request` pode retornar `decision = 'expired'`, `access_granted = false` e `error_code = 'REQUEST_EXPIRED'` de forma estruturada.
-- **Concorrência:** Colisão de decisão já finalizada gera SQLSTATE `23505` (*"Solicitação já foi decidida anteriormente."*); corrida pós-lock em convite reemitido gera `P0002` (*"Convite não está mais aberto."*).
-- **Isolamento de Requisições:** Coordenação de requisições por sequência e identidade ativa (`createListRequestCoordinator`), limpando instantaneamente dados da igreja anterior ao alternar o seletor e descartando respostas tardias em trânsito.
 - **Atualização de Acesso sem Efeito Colateral:** `reloadChurchAccess(churchId)` é utilizado para recarregar o acesso sem disparar `recordCreationConfirmation` (que gerava aviso indevido de "igreja criada").
 
+### 11.4 Confirmação, Recuperação de Conta e Tratamento de Redirecionamentos de Erro (Issue #24)
+1. **Tratamento Seguro de Redirecionamentos de Erro (`extractAuthRedirectError` e `clearAuthRedirectErrorFromUrl`):**
+   - Captura e interpreta parâmetros de erro retornados pelo Supabase Auth no hash (`#error=access_denied&error_code=otp_expired...`) ou na query search (`?error=...`).
+   - Apresenta mensagem amigável e protetiva em caso de links expirados ou já utilizados: *"O link de confirmação ou recuperação expirou ou já foi utilizado. Por favor, solicite um novo envio para continuar."*
+   - Sanitiza imediatamente a barra de endereços via `window.history.replaceState`, impedindo que fragments de erro permaneçam no histórico do navegador ou sejam reenviados via Referer.
+   - Preserva o token de convite retido em `sessionStorage` (`escala_invite_token_pending`), permitindo ao usuário solicitar nova confirmação ou recuperação sem perder o convite recebido.
+2. **Primeiro Acesso com Definição Autônoma de Senha (CA02):**
+   - O primeiro acesso via convite (`/#/invite?token=...`) seleciona automaticamente *"É meu primeiro acesso — Criar conta"*.
+   - A pessoa define sua própria senha (mínimo de 6 caracteres com confirmação).
+   - Senhas residem exclusivamente no estado transitório do componente React durante a submissão, sem persistência em storage, logs ou chat.
+   - Quando o Supabase Auth exige confirmação de e-mail (`data.session = null`), a aplicação apresenta tela orientativa com instrução de retorno à aba do convite e botão de verificação de sessão (`checkSession`).
+   - Ao confirmar e autenticar a conta (seja na mesma aba ou via revalidação de foco/visibilidade), o `AuthGate` retoma automaticamente o convite no `InvitationFlowPage`.
+3. **Fluxo de Recuperação de Senha (CA01):**
+   - O formulário *"Esqueci a senha"* solicita o envio de link de recuperação apontado para o origin do ambiente (`redirectTo: window.location.origin`).
+   - O clique no link de recuperação emite o evento `PASSWORD_RECOVERY` no `onAuthStateChange`, ativando o modo *"Definir Nova Senha"* (`update_password`).
+   - A nova senha é atualizada via `supabase.auth.updateUser({ password })`.
+   - O formulário oferece botão *"Voltar ao login"* para garantir saída segura caso a pessoa desista ou deseje utilizar outro método.
+4. **Limites da Evidência e Segurança (CA03 e CA04):**
+   - A confirmação de e-mail permanece estritamente habilitada e obrigatória; não se admite desabilitar a confirmação ou relaxar autorizações para contornar testes.
+   - Distingue-se a entrega de testes locais automatizados com transporte controlado (383 testes passando) dos ensaios de SMTP real e destinatários autorizados no piloto.

@@ -138,12 +138,69 @@ export const INITIAL_TEAMS = [
 ];
 
 export const INITIAL_CANCEL_REASONS = [
-  "Falha técnica de equipamento / som",
-  "Falta de energia elétrica",
-  "Imprevisto de saúde / emergência",
-  "Ajuste litúrgico de última hora pela liderança",
-  "Tempo do culto excedido / encurtamento",
-  "Ausência do participante sem substituto viável"
+  { id: "cr-1", name: "Falha técnica de equipamento / som", active: true },
+  { id: "cr-2", name: "Falta de energia elétrica", active: true },
+  { id: "cr-3", name: "Imprevisto de saúde / emergência", active: true },
+  { id: "cr-4", name: "Ajuste litúrgico de última hora pela liderança", active: true },
+  { id: "cr-5", name: "Tempo do culto excedido / encurtamento", active: true },
+  { id: "cr-6", name: "Ausência do participante sem substituto viável", active: true }
+];
+
+export const INITIAL_EVENT_TYPES = [
+  { id: "et-1", name: "Celebração Geral", description: "Culto congregacional de domingo com celebração e comunhão", active: true },
+  { id: "et-2", name: "Culto de Doutrina e Oração", description: "Reunião de ensino bíblico, intercessão e oração", active: true },
+  { id: "et-3", name: "Ensaio Geral e Alinhamento Técnico", description: "Ensaio prático das equipes de louvor, áudio e transmissão", active: true },
+  { id: "et-4", name: "Culto de Jovens e Adolescentes", description: "Programação dinâmica voltada para a juventude", active: true }
+];
+
+export const INITIAL_STANDARD_ACTIVITIES = [
+  { id: "sa-1", name: "Boas-Vindas e Oração Inicial", defaultDurationMinutes: 5, category: "Liturgia", description: "Acolhimento aos presentes e oração de abertura", active: true },
+  { id: "sa-2", name: "Louvor e Adoração Congregacional", defaultDurationMinutes: 25, category: "Louvor", description: "Bloco unificado de adoração congregacional", active: true },
+  { id: "sa-3", name: "Oportunidade Especial de Louvor", defaultDurationMinutes: 7, category: "Louvor", description: "Solo, dueto ou apresentação especial com playback", active: true },
+  { id: "sa-4", name: "Avisos e Momento Pastoral", defaultDurationMinutes: 8, category: "Liturgia", description: "Comunicados da igreja e boas-vindas a visitantes", active: true },
+  { id: "sa-5", name: "Ministração da Palavra", defaultDurationMinutes: 45, category: "Palavra", description: "Pregação central e exposição bíblica", active: true },
+  { id: "sa-6", name: "Momento de Dízimos e Ofertas", defaultDurationMinutes: 10, category: "Liturgia", description: "Cântico de gratidão e recolhimento de ofertas", active: true },
+  { id: "sa-7", name: "Oração Final e Bênção Apostólica", defaultDurationMinutes: 5, category: "Liturgia", description: "Encerramento litúrgico do culto", active: true }
+];
+export const INITIAL_SERVICE_TEMPLATES = [
+  {
+    id: "st-1",
+    eventTypeId: "et-1",
+    name: "Culto de Celebração de Domingo (Padrão Completo)",
+    description: "Estrutura completa com louvor congregacional, ministração da palavra e apoios de portaria, som e transmissão",
+    active: true,
+    activities: [
+      { id: "sta-1", title: "Boas-Vindas e Oração Inicial", category: "Liturgia", plannedDurationMinutes: 5, displayOrder: 1, notes: "Acolhimento aos presentes e oração de abertura", requiresPlayback: false },
+      { id: "sta-2", title: "Louvor e Adoração Congregacional", category: "Louvor", plannedDurationMinutes: 25, displayOrder: 2, notes: "Bloco unificado de adoração", requiresPlayback: false },
+      { id: "sta-3", title: "Oportunidade Especial de Louvor", category: "Música Especial", plannedDurationMinutes: 7, displayOrder: 3, notes: "Solo ou grupo especial", requiresPlayback: true },
+      { id: "sta-4", title: "Dízimos, Ofertas e Comunicação", category: "Liturgia", plannedDurationMinutes: 8, displayOrder: 4, notes: "Vídeo institucional e oração", requiresPlayback: false },
+      { id: "sta-5", title: "Ministração da Palavra (Sermão)", category: "Mensagem", plannedDurationMinutes: 45, displayOrder: 5, notes: "Pregação central e exposição bíblica", requiresPlayback: false },
+      { id: "sta-6", title: "Apelo, Oração e Ministração Final", category: "Oração", plannedDurationMinutes: 10, displayOrder: 6, notes: "Fundo instrumental suave", requiresPlayback: false },
+      { id: "sta-7", title: "Bênção Apostólica e Encerramento", category: "Liturgia", plannedDurationMinutes: 5, displayOrder: 7, notes: "Despedida e convite para a comunhão", requiresPlayback: false }
+    ],
+    parallelServices: [
+      { id: "stps-1", teamId: "recepcao", serviceName: "Recepção & Portaria", prepRequiredMinutes: 15, isDefaultActive: true, displayOrder: 1 },
+      { id: "stps-2", teamId: "som", serviceName: "Sonoplastia & Retorno", prepRequiredMinutes: 30, isDefaultActive: true, displayOrder: 2 },
+      { id: "stps-3", teamId: "midia", serviceName: "Transmissão ao Vivo & Projeção", prepRequiredMinutes: 20, isDefaultActive: true, displayOrder: 3 }
+    ]
+  },
+  {
+    id: "st-2",
+    eventTypeId: "et-2",
+    name: "Culto de Doutrina e Oração (Sem Transmissão)",
+    description: "Estrutura simplificada voltada ao ensino e intercessão, sem transmissão ao vivo por padrão",
+    active: true,
+    activities: [
+      { id: "sta-201", title: "Abertura e Cânticos de Oração", category: "Louvor", plannedDurationMinutes: 15, displayOrder: 1, notes: "Cânticos congregacionais de reflexão", requiresPlayback: false },
+      { id: "sta-202", title: "Estudo Bíblico e Doutrina", category: "Mensagem", plannedDurationMinutes: 45, displayOrder: 2, notes: "Exposição temática e ensino pastoral", requiresPlayback: false },
+      { id: "sta-203", title: "Momento de Intercessão Comunitária", category: "Oração", plannedDurationMinutes: 20, displayOrder: 3, notes: "Oração por motivos da igreja e enfermos", requiresPlayback: false },
+      { id: "sta-204", title: "Oração Final e Comunhão", category: "Liturgia", plannedDurationMinutes: 10, displayOrder: 4, notes: "Encerramento e avisos finais", requiresPlayback: false }
+    ],
+    parallelServices: [
+      { id: "stps-201", teamId: "recepcao", serviceName: "Recepção & Portaria", prepRequiredMinutes: 10, isDefaultActive: true, displayOrder: 1 },
+      { id: "stps-202", teamId: "som", serviceName: "Sonoplastia & Áudio Ambiente", prepRequiredMinutes: 15, isDefaultActive: true, displayOrder: 2 }
+    ]
+  }
 ];
 
 export const INITIAL_ACCESS_INVITES = [
@@ -153,12 +210,21 @@ export const INITIAL_ACCESS_INVITES = [
 
 export const INITIAL_EVENT = {
   id: "culto-dom-20261004",
+  churchId: "church-piloto-01",
   title: "Culto de Celebração de Domingo",
   type: "Celebração Geral",
   date: "2026-10-04",
   scheduledStartTime: "19:00",
+  plannedStartAt: "2026-10-04T19:00:00-03:00",
+  plannedEndAt: "2026-10-04T20:45:00-03:00",
+  timezone: "America/Sao_Paulo",
   plannedDurationMinutes: 105, // Soma das 7 atividades: 5+25+7+8+45+10+5 = 105 min
   liturgyLeaderId: "carlos", // Designado por evento pelo admin (PRD 3.2)
+  durationPolicy: "warn", // "warn" (alerta ignorável) ou "block" (bloqueio de publicação se exceder)
+  programStatus: "published", // "draft" ou "published" (Issue #30)
+  programVersion: 1,
+  publishedAt: "2026-10-01T10:00:00-03:00",
+  publishedByMemberId: "marcos",
   status: "pronto", // "pronto", "em_andamento", "encerrado"
   realStartTime: null,
   realEndTime: null,

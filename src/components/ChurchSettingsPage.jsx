@@ -18,14 +18,17 @@ function SettingsSkeleton() {
     <div className="church-settings-form" role="status" aria-live="polite">
       <span className="church-settings-sr-only">Carregando dados da igreja…</span>
       <div className="church-settings-identity" aria-hidden="true">
-        {[0, 1].map((i) => (
-          <div key={i} className="church-settings-identity-item">
-            <span className="church-settings-skeleton church-settings-skeleton--dt" />
-            <span className="church-settings-skeleton church-settings-skeleton--dd" />
-          </div>
-        ))}
+        <div className="church-settings-identity-item">
+          <span className="church-settings-skeleton church-settings-skeleton--dt" />
+          <span className="church-settings-skeleton church-settings-skeleton--dd" />
+        </div>
       </div>
       <div className="church-settings-fieldset" aria-hidden="true">
+        <div className="form-group">
+          <span className="church-settings-skeleton church-settings-skeleton--label" />
+          <span className="church-settings-skeleton church-settings-skeleton--input" />
+          <span className="church-settings-skeleton church-settings-skeleton--hint" />
+        </div>
         <div className="form-group">
           <span className="church-settings-skeleton church-settings-skeleton--label" />
           <span className="church-settings-skeleton church-settings-skeleton--textarea" />
@@ -62,7 +65,7 @@ export default function ChurchSettingsPage(props) {
 }
 
 function ChurchSettingsForm({ onBack, auth }) {
-  const { session, sessionId, churchAccess, getAuthSnapshot } = auth;
+  const { session, sessionId, churchAccess, getAuthSnapshot, reloadChurchAccess } = auth;
   const userId = session?.user?.id;
   const churchId = churchAccess?.church_id;
   const churchName = churchAccess?.church_name || '';
@@ -82,6 +85,7 @@ function ChurchSettingsForm({ onBack, auth }) {
   const [loadState, setLoadState] = useState(allowed ? 'loading' : 'idle');
   const [loadError, setLoadError] = useState(null);
   const [refreshing, setRefreshing] = useState(false);
+  const [name, setName] = useState('');
   const [address, setAddress] = useState('');
   const [mapsUrl, setMapsUrl] = useState('');
   const [logoFile, setLogoFile] = useState(null);
@@ -94,6 +98,9 @@ function ChurchSettingsForm({ onBack, auth }) {
   const [error, setError] = useState(null);
   const [forbidden, setForbidden] = useState(false);
   const [success, setSuccess] = useState(false);
+  const [syncWarning, setSyncWarning] = useState(false);
+  const [syncing, setSyncing] = useState(false);
+  const syncPendingRef = useRef(false);
   const [storageError, setStorageError] = useState(false);
   const [needsReload, setNeedsReload] = useState(false);
   const [online, setOnline] = useState(() => typeof navigator === 'undefined' || navigator.onLine !== false);
@@ -117,6 +124,35 @@ function ChurchSettingsForm({ onBack, auth }) {
       setProfile(null);
       setStoredLogo({ status: 'none', url: null });
       setLogoFile(null);
+    }
+  }
+
+  async function syncContext(targetChurchId = churchId) {
+    if (!isCurrent() || typeof reloadChurchAccess !== 'function') return false;
+    setSyncing(true);
+    try {
+      const res = await reloadChurchAccess(targetChurchId, { isBackground: true });
+      if (!isCurrent()) return false;
+      return Boolean(res?.success);
+    } catch (err) {
+      console.warn('[ChurchSettingsPage] Falha ao recarregar contexto:', err);
+      return false;
+    } finally {
+      if (isCurrent()) setSyncing(false);
+    }
+  }
+
+  async function retrySync() {
+    if (busyRef.current || !isCurrent() || !online) return;
+    const ok = await syncContext(churchId);
+    if (!isCurrent()) return;
+    if (ok) {
+      syncPendingRef.current = false;
+      setSyncWarning(false);
+      setSuccess(true);
+    } else {
+      setSuccess(false);
+      setSyncWarning(true);
     }
   }
 
@@ -173,6 +209,7 @@ function ChurchSettingsForm({ onBack, auth }) {
       }
       setProfile(row);
       setNeedsReload(false);
+      setName(row.name || '');
       setAddress(row.address || '');
       setMapsUrl(row.google_maps_url || '');
       setLogoFile(null);
@@ -180,6 +217,19 @@ function ChurchSettingsForm({ onBack, auth }) {
       setLoadState('ready');
       setError(null);
       loadStoredLogo(row.logo_path, seq);
+      if (syncPendingRef.current) {
+        const synced = await syncContext(churchId);
+        if (isCurrentLoad(seq)) {
+          if (synced) {
+            syncPendingRef.current = false;
+            setSyncWarning(false);
+            setSuccess(true);
+          } else {
+            setSuccess(false);
+            setSyncWarning(true);
+          }
+        }
+      }
       return true;
     } catch (err) {
       if (!isCurrentLoad(seq)) return;
@@ -200,11 +250,16 @@ function ChurchSettingsForm({ onBack, auth }) {
       setLoadState('loading');
       setLoadError(null);
       setRefreshing(false);
+      setName('');
       setAddress('');
       setMapsUrl('');
       setLogoFile(null);
       setRemoveLogo(false);
       setStoredLogo({ status: 'none', url: null });
+      setSuccess(false);
+      setSyncWarning(false);
+      setSyncing(false);
+      syncPendingRef.current = false;
       try {
         setPending(readPendingSettings(window.sessionStorage, userId, churchId));
       } catch {
@@ -252,21 +307,22 @@ function ChurchSettingsForm({ onBack, auth }) {
       throw new Error('Unconfirmed command');
     }
     clearCommand(command);
-    const reloaded = await loadProfile();
-    if (isCurrent() && reloaded) setSuccess(true);
+    syncPendingRef.current = true;
+    await loadProfile();
   }
 
   async function save(event) {
     event.preventDefault();
     if (busyRef.current || !isCurrent() || !online || !profile || loadState !== 'ready' || refreshing
       || pending || storageError || needsReload) return;
-    const { errors, data } = validateChurchSettings({ address, googleMapsUrl: mapsUrl });
+    const { errors, data } = validateChurchSettings({ name, address, googleMapsUrl: mapsUrl });
     if (Object.keys(errors).length) { setError(Object.values(errors).join(' ')); return; }
     if (logoFile && validateChurchLogo(logoFile)) { setError(validateChurchLogo(logoFile)); return; }
     busyRef.current = true;
     setBusy(true);
     setError(null);
     setSuccess(false);
+    setSyncWarning(false);
     try {
       // Exigir armazenamento utilizável antes de iniciar envio de arquivo ou comando.
       const storage = window.sessionStorage;
@@ -291,7 +347,7 @@ function ChurchSettingsForm({ onBack, auth }) {
       const commandId = crypto.randomUUID();
       const command = { userId, churchId, commandId, params: {
         p_church_id: churchId, p_command_id: commandId, p_expected_revision: profile.profile_revision,
-        p_address: data.address, p_google_maps_url: data.googleMapsUrl, p_logo_path: logoPath || null,
+        p_name: data.name, p_address: data.address, p_google_maps_url: data.googleMapsUrl, p_logo_path: logoPath || null,
       } };
       storage.setItem(key, JSON.stringify(command));
       setPending(command);
@@ -411,7 +467,26 @@ function ChurchSettingsForm({ onBack, auth }) {
           </div>
         )}
 
-        {success && (
+        {syncWarning && (
+          <div className="church-settings-alert church-settings-alert--uncertain" role="status">
+            <AlertCircle size={16} />
+            <div className="church-settings-alert-content church-settings-alert-content--row">
+              <span>Alterações salvas no servidor, mas a sincronização da navegação falhou.</span>
+              <button
+                type="button"
+                id="btn-church-settings-sync"
+                className="btn btn-secondary btn-sm"
+                onClick={retrySync}
+                disabled={busy || syncing || !online}
+              >
+                <RefreshCw size={13} className={syncing ? 'church-settings-spin' : ''} />
+                <span>Sincronizar navegação</span>
+              </button>
+            </div>
+          </div>
+        )}
+
+        {success && !syncWarning && (
           <div className="church-settings-alert church-settings-alert--success" role="status">
             <CheckCircle2 size={16} />
             <span>Alterações salvas com sucesso.</span>
@@ -426,7 +501,7 @@ function ChurchSettingsForm({ onBack, auth }) {
           <div className="church-settings-card-header">
             <div>
               <h2 id="church-settings-section-title" className="church-settings-section-title">Cadastro da igreja</h2>
-              <p className="church-settings-section-subtitle">Atualize o endereço, a localização e a logo da sua igreja.</p>
+              <p className="church-settings-section-subtitle">Atualize o nome, o endereço, a localização e a logo da sua igreja.</p>
             </div>
             {canReload && (
               <button
@@ -476,10 +551,6 @@ function ChurchSettingsForm({ onBack, auth }) {
             <form className="church-settings-form" onSubmit={save}>
               <dl className="church-settings-identity">
                 <div className="church-settings-identity-item">
-                  <dt>Igreja</dt>
-                  <dd>{profile.name}</dd>
-                </div>
-                <div className="church-settings-identity-item">
                   <dt>Fuso horário</dt>
                   <dd>{profile.timezone}</dd>
                 </div>
@@ -494,6 +565,24 @@ function ChurchSettingsForm({ onBack, auth }) {
 
               <fieldset className="church-settings-fieldset" disabled={formLocked}>
                 <legend className="church-settings-sr-only">Dados editáveis da igreja</legend>
+
+                <div className="form-group">
+                  <label htmlFor="church-settings-name" className="form-label">Nome da igreja</label>
+                  <input
+                    id="church-settings-name"
+                    className="form-input"
+                    type="text"
+                    value={name}
+                    maxLength={160}
+                    required
+                    placeholder="Nome da igreja"
+                    onChange={(e) => { setName(e.target.value); setSuccess(false); }}
+                  />
+                  <div className="church-settings-hint">
+                    <span>Obrigatório</span>
+                    <span>{name.length}/160 caracteres</span>
+                  </div>
+                </div>
 
                 <div className="form-group">
                   <label htmlFor="church-settings-address" className="form-label">Endereço da igreja</label>

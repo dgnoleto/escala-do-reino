@@ -17,6 +17,7 @@ import {
   Info,
   Check
 } from 'lucide-react';
+import { getActiveReasons } from '../utils/cancellationReasonService';
 
 export default function LiveConsole() {
   const {
@@ -39,8 +40,11 @@ export default function LiveConsole() {
   } = useApp();
 
   // Modais de Operação
+  const activeCancelReasons = getActiveReasons(cancelReasons);
   const [cancelModalOpen, setCancelModalOpen] = useState(false);
-  const [selectedCancelReason, setSelectedCancelReason] = useState(cancelReasons[0] || '');
+  const [selectedCancelReason, setSelectedCancelReason] = useState(() => {
+    return activeCancelReasons[0]?.id || activeCancelReasons[0]?.name || '';
+  });
   const [timeCorrectionModalOpen, setTimeCorrectionModalOpen] = useState(false);
   const [targetActivityToCorrect, setTargetActivityToCorrect] = useState(null);
   const [correctedStartTime, setCorrectedStartTime] = useState('');
@@ -90,9 +94,22 @@ export default function LiveConsole() {
     }
   };
 
+  const openCancelModal = () => {
+    if (activeCancelReasons.length > 0) {
+      const exists = activeCancelReasons.some(r => r.id === selectedCancelReason || r.name === selectedCancelReason);
+      if (!exists) {
+        setSelectedCancelReason(activeCancelReasons[0].id);
+      }
+    } else {
+      setSelectedCancelReason('');
+    }
+    setCancelModalOpen(true);
+  };
+
   const handleCancelCurrentActivity = () => {
-    if (!selectedCancelReason) return;
-    cancelActivity(selectedCancelReason);
+    if (!selectedCancelReason || activeCancelReasons.length === 0) return;
+    const targetObj = activeCancelReasons.find(r => r.id === selectedCancelReason || r.name === selectedCancelReason);
+    cancelActivity(targetObj || selectedCancelReason);
     setCancelModalOpen(false);
   };
 
@@ -336,8 +353,9 @@ export default function LiveConsole() {
                     </button>
 
                     <button
+                      id="btn-open-cancel-modal"
                       className="btn btn-danger"
-                      onClick={() => setCancelModalOpen(true)}
+                      onClick={openCancelModal}
                       disabled={!isLiturgyLeader || isControlsDisabled}
                       title="Cancela com motivo obrigatório previamente cadastrado"
                     >
@@ -495,24 +513,60 @@ export default function LiveConsole() {
               não avança para a próxima etapa e exige a seleção obrigatória de um motivo previamente cadastrado na web.
             </p>
 
-            <div className="form-group">
-              <label className="form-label">Selecione o Motivo do Cancelamento:</label>
-              <select
-                className="form-select"
-                value={selectedCancelReason}
-                onChange={e => setSelectedCancelReason(e.target.value)}
+            {activeCancelReasons.length === 0 ? (
+              <div
+                className="alert alert-warning"
+                id="empty-cancel-reasons-alert"
+                style={{
+                  marginBottom: '1rem',
+                  padding: '0.75rem 1rem',
+                  background: 'rgba(245, 158, 11, 0.1)',
+                  border: '1px solid #f59e0b',
+                  color: '#d97706',
+                  borderRadius: '6px',
+                  fontSize: '13px'
+                }}
               >
-                {cancelReasons.map((reason, idx) => (
-                  <option key={idx} value={reason}>{reason}</option>
-                ))}
-              </select>
-            </div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px', fontWeight: 600 }}>
+                  <AlertTriangle size={18} />
+                  <span>Nenhum motivo de cancelamento ativo cadastrado.</span>
+                </div>
+                <p style={{ margin: '6px 0 0 0', fontSize: '12px', color: 'var(--text-secondary)' }}>
+                  Conforme o PRD §7.3 e Cenário M12, cancelar uma atividade exige um motivo previamente mantido pelo administrador na Web. Cadastre motivos no painel administrativo antes de cancelar.
+                </p>
+              </div>
+            ) : (
+              <div className="form-group">
+                <label className="form-label" htmlFor="cancel-reason-select">Selecione o Motivo do Cancelamento:</label>
+                <select
+                  id="cancel-reason-select"
+                  className="form-select"
+                  value={selectedCancelReason}
+                  onChange={e => setSelectedCancelReason(e.target.value)}
+                >
+                  {activeCancelReasons.map((reason, idx) => {
+                    const val = typeof reason === 'object' ? reason.id : reason;
+                    const label = typeof reason === 'object' ? reason.name : reason;
+                    return (
+                      <option key={val || idx} value={val}>
+                        {label}
+                      </option>
+                    );
+                  })}
+                </select>
+              </div>
+            )}
 
             <div className="modal-footer">
               <button className="btn btn-secondary" onClick={() => setCancelModalOpen(false)}>
                 Voltar
               </button>
-              <button className="btn btn-danger" onClick={handleCancelCurrentActivity}>
+              <button
+                id="btn-confirm-cancel-activity"
+                className="btn btn-danger"
+                onClick={handleCancelCurrentActivity}
+                disabled={activeCancelReasons.length === 0 || !selectedCancelReason || isControlsDisabled}
+              >
                 Confirmar Cancelamento Obrigatório
               </button>
             </div>

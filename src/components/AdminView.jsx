@@ -11,8 +11,25 @@ import {
   Send,
   Plus,
   Trash2,
-  Edit2
+  Edit2,
+  Check,
+  X,
+  Power,
+  Calendar,
+  Clock,
+  Layers
 } from 'lucide-react';
+import { isReasonUsedInActivities } from '../utils/cancellationReasonService';
+import {
+  isEventTypeUsed,
+  isStandardActivityUsed,
+  canDeleteEventType,
+  canDeleteStandardActivity
+} from '../utils/eventTypeActivityService';
+import {
+  isTemplateUsedInEvents,
+  canDeleteServiceTemplate
+} from '../utils/serviceTemplateService';
 
 export default function AdminView() {
   const {
@@ -20,13 +37,32 @@ export default function AdminView() {
     members,
     teams,
     cancelReasons,
+    eventTypes,
+    standardActivities,
+    serviceTemplates = [],
     accessInvites,
     currentUser,
     isAdmin,
     addCancelReason,
+    updateCancelReason,
+    toggleCancelReasonStatus,
+    deleteCancelReason,
+    addEventType,
+    updateEventType,
+    toggleEventTypeStatus,
+    deleteEventType,
+    addStandardActivity,
+    updateStandardActivity,
+    toggleStandardActivityStatus,
+    deleteStandardActivity,
+    addServiceTemplate,
+    updateServiceTemplate,
+    toggleServiceTemplateStatus,
+    deleteServiceTemplate,
     sendAccessInvite,
     designateLiturgyLeader,
     event,
+    events = [],
     addAuditLog,
     isOnline,
     isDataStale
@@ -41,9 +77,60 @@ export default function AdminView() {
 
   // Formulário de Motivo de Cancelamento (PRD 7.3 & Cenário M12)
   const [newReasonText, setNewReasonText] = useState('');
+  const [reasonError, setReasonError] = useState('');
+  const [reasonSuccess, setReasonSuccess] = useState('');
+  const [editingReasonId, setEditingReasonId] = useState(null);
+  const [editingReasonText, setEditingReasonText] = useState('');
+  const [editingError, setEditingError] = useState('');
+
+  // Formulário de Tipos de Evento (PRD §5 - Issue #25)
+  const [newTypeName, setNewTypeName] = useState('');
+  const [newTypeDesc, setNewTypeDesc] = useState('');
+  const [typeError, setTypeError] = useState('');
+  const [typeSuccess, setTypeSuccess] = useState('');
+  const [editingTypeId, setEditingTypeId] = useState(null);
+  const [editingTypeName, setEditingTypeName] = useState('');
+  const [editingTypeDesc, setEditingTypeDesc] = useState('');
+  const [editingTypeError, setEditingTypeError] = useState('');
+
+  // Formulário de Atividades Padrão com Duração (PRD §5 - Issue #25)
+  const [newActName, setNewActName] = useState('');
+  const [newActDuration, setNewActDuration] = useState(10);
+  const [newActCategory, setNewActCategory] = useState('Liturgia');
+  const [newActDesc, setNewActDesc] = useState('');
+  const [actError, setActError] = useState('');
+  const [actSuccess, setActSuccess] = useState('');
+  const [editingActId, setEditingActId] = useState(null);
+  const [editingActName, setEditingActName] = useState('');
+  const [editingActDuration, setEditingActDuration] = useState(10);
+  const [editingActCategory, setEditingActCategory] = useState('Liturgia');
+  const [editingActDesc, setEditingActDesc] = useState('');
+  const [editingActError, setEditingActError] = useState('');
+
+  // Formulário de Modelos Reutilizáveis de Culto (PRD §5 - Issue #27)
+  const [templateName, setTemplateName] = useState('');
+  const [templateDesc, setTemplateDesc] = useState('');
+  const [templateEventTypeId, setTemplateEventTypeId] = useState('');
+  const [templateActivities, setTemplateActivities] = useState([
+    { title: 'Boas-Vindas e Oração Inicial', category: 'Liturgia', plannedDurationMinutes: 5, notes: '' },
+    { title: 'Louvor e Adoração Congregacional', category: 'Louvor', plannedDurationMinutes: 25, notes: '' },
+    { title: 'Ministração da Palavra', category: 'Palavra', plannedDurationMinutes: 45, notes: '' },
+    { title: 'Bênção e Encerramento', category: 'Liturgia', plannedDurationMinutes: 5, notes: '' }
+  ]);
+  const [templateParallelServices, setTemplateParallelServices] = useState([
+    { teamId: 'recepcao', serviceName: 'Recepção & Portaria', prepRequiredMinutes: 15, isDefaultActive: true },
+    { teamId: 'som', serviceName: 'Sonoplastia & Retorno', prepRequiredMinutes: 30, isDefaultActive: true },
+    { teamId: 'midia', serviceName: 'Transmissão ao Vivo & Mídia', prepRequiredMinutes: 20, isDefaultActive: true }
+  ]);
+  const [templateError, setTemplateError] = useState('');
+  const [templateSuccess, setTemplateSuccess] = useState('');
+  const [editingTemplateId, setEditingTemplateId] = useState(null);
+  const [selectedStandardActForTemplate, setSelectedStandardActForTemplate] = useState('');
 
   // Designação da Liderança da Liturgia (PRD 3.2 & Cenário M05)
-  const [selectedLiturgyLeader, setSelectedLiturgyLeader] = useState(event.liturgyLeaderId);
+  const [selectedEventIdForLiturgy, setSelectedEventIdForLiturgy] = useState(event.id);
+  const targetEventForLiturgy = events.find(e => e.id === selectedEventIdForLiturgy) || event;
+  const [selectedLiturgyLeader, setSelectedLiturgyLeader] = useState(targetEventForLiturgy.liturgyLeaderId);
 
   // Proteção de Acesso (PRD 3.2 & Cenário M40)
   if (!isAdmin) {
@@ -74,17 +161,348 @@ export default function AdminView() {
     setTimeout(() => setInviteSuccess(false), 3000);
   };
 
-  const handleAddReason = (e) => {
+  const handleAddReason = async (e) => {
     e.preventDefault();
-    if (!newReasonText.trim()) return;
+    setReasonError('');
+    setReasonSuccess('');
+    const res = await addCancelReason(newReasonText);
+    if (!res.success) {
+      setReasonError(res.error);
+    } else {
+      setNewReasonText('');
+      setReasonSuccess('Motivo cadastrado com sucesso!');
+      setTimeout(() => setReasonSuccess(''), 3000);
+    }
+  };
 
-    addCancelReason(newReasonText.trim());
-    setNewReasonText('');
+  const handleStartEditReason = (reason) => {
+    setEditingReasonId(reason.id);
+    setEditingReasonText(reason.name);
+    setEditingError('');
+    setReasonError('');
+  };
+
+  const handleSaveEditReason = async (id) => {
+    setEditingError('');
+    const res = await updateCancelReason(id, editingReasonText);
+    if (!res.success) {
+      setEditingError(res.error);
+    } else {
+      setEditingReasonId(null);
+      setEditingReasonText('');
+      setReasonSuccess('Motivo alterado com sucesso!');
+      setTimeout(() => setReasonSuccess(''), 3000);
+    }
+  };
+
+  const handleCancelEditReason = () => {
+    setEditingReasonId(null);
+    setEditingReasonText('');
+    setEditingError('');
+  };
+
+  const handleToggleReasonStatus = async (id) => {
+    setReasonError('');
+    setReasonSuccess('');
+    const res = await toggleCancelReasonStatus(id);
+    if (!res.success) {
+      setReasonError(res.error);
+    } else {
+      setReasonSuccess(res.active ? 'Motivo reativado com sucesso!' : 'Motivo desativado.');
+      setTimeout(() => setReasonSuccess(''), 3000);
+    }
+  };
+
+  const handleDeleteReason = async (id) => {
+    setReasonError('');
+    setReasonSuccess('');
+    const res = await deleteCancelReason(id);
+    if (!res.success) {
+      setReasonError(res.error);
+    } else {
+      setReasonSuccess('Motivo excluído com sucesso.');
+      setTimeout(() => setReasonSuccess(''), 3000);
+    }
+  };
+
+  // Handlers para Tipos de Evento (Issue #25)
+  const handleAddType = async (e) => {
+    e.preventDefault();
+    setTypeError('');
+    setTypeSuccess('');
+    const res = await addEventType(newTypeName, newTypeDesc);
+    if (!res.success) {
+      setTypeError(res.error);
+    } else {
+      setNewTypeName('');
+      setNewTypeDesc('');
+      setTypeSuccess('Tipo de evento cadastrado com sucesso!');
+      setTimeout(() => setTypeSuccess(''), 3000);
+    }
+  };
+
+  const handleStartEditType = (type) => {
+    setEditingTypeId(type.id);
+    setEditingTypeName(type.name);
+    setEditingTypeDesc(type.description || '');
+    setEditingTypeError('');
+    setTypeError('');
+  };
+
+  const handleSaveEditType = async (id) => {
+    setEditingTypeError('');
+    const res = await updateEventType(id, editingTypeName, editingTypeDesc);
+    if (!res.success) {
+      setEditingTypeError(res.error);
+    } else {
+      setEditingTypeId(null);
+      setEditingTypeName('');
+      setEditingTypeDesc('');
+      setTypeSuccess('Tipo de evento atualizado com sucesso!');
+      setTimeout(() => setTypeSuccess(''), 3000);
+    }
+  };
+
+  const handleCancelEditType = () => {
+    setEditingTypeId(null);
+    setEditingTypeName('');
+    setEditingTypeDesc('');
+    setEditingTypeError('');
+  };
+
+  const handleToggleTypeStatus = async (id) => {
+    setTypeError('');
+    setTypeSuccess('');
+    const res = await toggleEventTypeStatus(id);
+    if (!res.success) {
+      setTypeError(res.error);
+    } else {
+      setTypeSuccess(res.active ? 'Tipo de evento reativado com sucesso!' : 'Tipo de evento desativado.');
+      setTimeout(() => setTypeSuccess(''), 3000);
+    }
+  };
+
+  const handleDeleteType = async (id) => {
+    setTypeError('');
+    setTypeSuccess('');
+    const res = await deleteEventType(id);
+    if (!res.success) {
+      setTypeError(res.error);
+    } else {
+      setTypeSuccess('Tipo de evento excluído com sucesso.');
+      setTimeout(() => setTypeSuccess(''), 3000);
+    }
+  };
+
+  // Handlers para Atividades Padrão (Issue #25)
+  const handleAddActivity = async (e) => {
+    e.preventDefault();
+    setActError('');
+    setActSuccess('');
+    const res = await addStandardActivity(newActName, newActDuration, newActCategory, newActDesc);
+    if (!res.success) {
+      setActError(res.error);
+    } else {
+      setNewActName('');
+      setNewActDuration(10);
+      setNewActCategory('Liturgia');
+      setNewActDesc('');
+      setActSuccess('Atividade padrão cadastrada com sucesso!');
+      setTimeout(() => setActSuccess(''), 3000);
+    }
+  };
+
+  const handleStartEditActivity = (act) => {
+    setEditingActId(act.id);
+    setEditingActName(act.name);
+    setEditingActDuration(act.defaultDurationMinutes);
+    setEditingActCategory(act.category || 'Liturgia');
+    setEditingActDesc(act.description || '');
+    setEditingActError('');
+    setActError('');
+  };
+
+  const handleSaveEditActivity = async (id) => {
+    setEditingActError('');
+    const res = await updateStandardActivity(id, editingActName, editingActDuration, editingActCategory, editingActDesc);
+    if (!res.success) {
+      setEditingActError(res.error);
+    } else {
+      setEditingActId(null);
+      setEditingActName('');
+      setEditingActDuration(10);
+      setEditingActDesc('');
+      setActSuccess('Atividade padrão atualizada com sucesso!');
+      setTimeout(() => setActSuccess(''), 3000);
+    }
+  };
+
+  const handleCancelEditActivity = () => {
+    setEditingActId(null);
+    setEditingActName('');
+    setEditingActDuration(10);
+    setEditingActCategory('Liturgia');
+    setEditingActDesc('');
+    setEditingActError('');
+  };
+
+  const handleToggleActivityStatus = async (id) => {
+    setActError('');
+    setActSuccess('');
+    const res = await toggleStandardActivityStatus(id);
+    if (!res.success) {
+      setActError(res.error);
+    } else {
+      setActSuccess(res.active ? 'Atividade reativada com sucesso!' : 'Atividade desativada.');
+      setTimeout(() => setActSuccess(''), 3000);
+    }
+  };
+
+  const handleDeleteActivity = async (id) => {
+    setActError('');
+    setActSuccess('');
+    const res = await deleteStandardActivity(id);
+    if (!res.success) {
+      setActError(res.error);
+    } else {
+      setActSuccess('Atividade padrão excluída com sucesso.');
+      setTimeout(() => setActSuccess(''), 3000);
+    }
+  };
+
+  // Handlers para Modelos de Culto (Issue #27)
+  const handleSaveTemplate = async (e) => {
+    e.preventDefault();
+    setTemplateError('');
+    setTemplateSuccess('');
+
+    const payload = {
+      name: templateName,
+      description: templateDesc,
+      eventTypeId: templateEventTypeId || null,
+      activities: templateActivities,
+      parallelServices: templateParallelServices
+    };
+
+    if (editingTemplateId) {
+      const res = await updateServiceTemplate(editingTemplateId, payload);
+      if (!res.success) {
+        setTemplateError(res.error);
+      } else {
+        setEditingTemplateId(null);
+        setTemplateName('');
+        setTemplateDesc('');
+        setTemplateEventTypeId('');
+        setTemplateSuccess('Modelo de culto atualizado com sucesso!');
+        setTimeout(() => setTemplateSuccess(''), 3000);
+      }
+    } else {
+      const res = await addServiceTemplate(payload);
+      if (!res.success) {
+        setTemplateError(res.error);
+      } else {
+        setTemplateName('');
+        setTemplateDesc('');
+        setTemplateEventTypeId('');
+        setTemplateSuccess('Modelo de culto cadastrado com sucesso!');
+        setTimeout(() => setTemplateSuccess(''), 3000);
+      }
+    }
+  };
+
+  const handleStartEditTemplate = (tpl) => {
+    setEditingTemplateId(tpl.id);
+    setTemplateName(tpl.name);
+    setTemplateDesc(tpl.description || '');
+    setTemplateEventTypeId(tpl.eventTypeId || '');
+    setTemplateActivities(tpl.activities && tpl.activities.length > 0 ? [...tpl.activities] : []);
+    setTemplateParallelServices(tpl.parallelServices && tpl.parallelServices.length > 0 ? [...tpl.parallelServices] : []);
+    setTemplateError('');
+    setTemplateSuccess('');
+  };
+
+  const handleCancelEditTemplate = () => {
+    setEditingTemplateId(null);
+    setTemplateName('');
+    setTemplateDesc('');
+    setTemplateEventTypeId('');
+    setTemplateError('');
+  };
+
+  const handleToggleTemplateStatus = async (id) => {
+    setTemplateError('');
+    setTemplateSuccess('');
+    const res = await toggleServiceTemplateStatus(id);
+    if (!res.success) {
+      setTemplateError(res.error);
+    } else {
+      setTemplateSuccess(res.active ? 'Modelo de culto reativado com sucesso!' : 'Modelo de culto desativado.');
+      setTimeout(() => setTemplateSuccess(''), 3000);
+    }
+  };
+
+  const handleDeleteTemplate = async (id) => {
+    setTemplateError('');
+    setTemplateSuccess('');
+    const res = await deleteServiceTemplate(id);
+    if (!res.success) {
+      setTemplateError(res.error);
+    } else {
+      setTemplateSuccess('Modelo de culto excluído com sucesso.');
+      setTimeout(() => setTemplateSuccess(''), 3000);
+    }
+  };
+
+  const handleAddActivityToTemplate = () => {
+    if (selectedStandardActForTemplate) {
+      const std = standardActivities.find(a => a.id === selectedStandardActForTemplate);
+      if (std) {
+        setTemplateActivities(prev => [
+          ...prev,
+          {
+            standardActivityId: std.id,
+            title: std.name,
+            category: std.category || 'Liturgia',
+            plannedDurationMinutes: std.defaultDurationMinutes || 10,
+            notes: std.description || ''
+          }
+        ]);
+        setSelectedStandardActForTemplate('');
+        return;
+      }
+    }
+    setTemplateActivities(prev => [
+      ...prev,
+      {
+        title: `Nova Etapa Litúrgica (${prev.length + 1})`,
+        category: 'Liturgia',
+        plannedDurationMinutes: 10,
+        notes: ''
+      }
+    ]);
+  };
+
+  const handleRemoveActivityFromTemplate = (idx) => {
+    setTemplateActivities(prev => prev.filter((_, i) => i !== idx));
+  };
+
+  const handleToggleParallelServiceInTemplate = (idx) => {
+    setTemplateParallelServices(prev =>
+      prev.map((s, i) => i === idx ? { ...s, isDefaultActive: !s.isDefaultActive } : s)
+    );
+  };
+
+  const handlePrepMinutesChange = (idx, val) => {
+    const parsed = parseInt(val, 10);
+    setTemplateParallelServices(prev =>
+      prev.map((s, i) => i === idx ? { ...s, prepRequiredMinutes: isNaN(parsed) ? 0 : Math.max(0, Math.min(180, parsed)) } : s)
+    );
   };
 
   const handleDesignateLeader = () => {
-    designateLiturgyLeader(selectedLiturgyLeader);
-    alert(`Liderança da Liturgia deste evento atualizada com sucesso para ${members.find(m => m.id === selectedLiturgyLeader)?.name}!`);
+    designateLiturgyLeader(selectedLiturgyLeader, selectedEventIdForLiturgy);
+    const memberName = members.find(m => m.id === selectedLiturgyLeader)?.name || 'Membro';
+    alert(`Liderança da Liturgia do evento '${targetEventForLiturgy.title}' atualizada com sucesso para ${memberName}!`);
   };
 
   const isControlsDisabled = !isOnline || isDataStale;
@@ -100,8 +518,8 @@ export default function AdminView() {
           </div>
           <h1 className="admin-title">Governança, Cadastros & Designações</h1>
           <p className="admin-subtitle">
-            Gerenciamento global restrito a administradores (PRD 3.2 e 4). Cadastre motivos de cancelamento,
-            envie convites de acesso à igreja vinculados a membros e designe a liderança da liturgia por evento.
+            Gerenciamento global restrito a administradores (PRD 3.2, 4 e 5). Cadastre tipos de evento, atividades com
+            durações padrão, motivos de cancelamento, convites de acesso e designe a liderança da liturgia por evento.
           </p>
         </div>
       </div>
@@ -118,8 +536,33 @@ export default function AdminView() {
         <button
           className={`admin-tab-btn ${activeAdminTab === 'liturgy' ? 'active' : ''}`}
           onClick={() => setActiveAdminTab('liturgy')}
+          id="tab-admin-liturgy"
         >
           <Shield size={16} /> Designação da Liturgia por Evento (PRD 3.2)
+        </button>
+
+        <button
+          className={`admin-tab-btn ${activeAdminTab === 'event_types' ? 'active' : ''}`}
+          onClick={() => setActiveAdminTab('event_types')}
+          id="tab-admin-event-types"
+        >
+          <Calendar size={16} /> Tipos de Evento (PRD §5)
+        </button>
+
+        <button
+          className={`admin-tab-btn ${activeAdminTab === 'activities' ? 'active' : ''}`}
+          onClick={() => setActiveAdminTab('activities')}
+          id="tab-admin-activities"
+        >
+          <Clock size={16} /> Atividades & Durações (PRD §5)
+        </button>
+
+        <button
+          className={`admin-tab-btn ${activeAdminTab === 'templates' ? 'active' : ''}`}
+          onClick={() => setActiveAdminTab('templates')}
+          id="tab-admin-templates"
+        >
+          <Layers size={16} /> Modelos de Culto (PRD §5 / #27)
         </button>
 
         <button
@@ -212,7 +655,7 @@ export default function AdminView() {
         </div>
       )}
 
-      {/* ABA 2: DESIGNAÇÃO DA LIDERANÇA DA LITURGIA (PRD 3.2 & Cenário M05) */}
+      {/* ABA 2: DESIGNAÇÃO DA LIDERANÇA DA LITURGIA (PRD 3.2, Cenário M05 & Issue #28 CA03) */}
       {activeAdminTab === 'liturgy' && (
         <div className="card">
           <h2 className="tab-sec-title">
@@ -220,18 +663,41 @@ export default function AdminView() {
           </h2>
           <p className="tab-sec-desc">
             A liderança da liturgia é designada por edição do evento (o culto de domingo pode ter uma pessoa, o de quarta outra).
-            <strong> Somente o Administrador pode designar e trocar essa liderança</strong> (PRD 3.2 & Cenário M05).
+            <strong> Somente o Administrador pode designar e trocar essa liderança</strong> (PRD 3.2, Cenários M05, M40 e Issue #28 CA03).
+            Controlar uma edição de culto não concede controle sobre as demais, e ser administrador não concede condução automática.
           </p>
 
           <div className="current-event-leader-box">
+            <div className="form-group" style={{ marginBottom: '16px' }}>
+              <label className="form-label" style={{ fontWeight: 700 }}>Selecione a Edição do Evento:</label>
+              <select
+                id="select-admin-liturgy-event"
+                className="form-select"
+                value={selectedEventIdForLiturgy}
+                onChange={e => {
+                  setSelectedEventIdForLiturgy(e.target.value);
+                  const ev = events.find(item => item.id === e.target.value);
+                  if (ev) setSelectedLiturgyLeader(ev.liturgyLeaderId);
+                }}
+                disabled={isControlsDisabled}
+              >
+                {events.map(ev => (
+                  <option key={ev.id} value={ev.id}>
+                    {ev.title} ({ev.date} às {ev.scheduledStartTime}) — Líder Atual: {members.find(m => m.id === ev.liturgyLeaderId)?.name || 'Não designado'}
+                  </option>
+                ))}
+              </select>
+            </div>
+
             <div className="current-lead-header">
-              Evento Selecionado: <strong>{event.title}</strong> ({event.date})
+              Evento em Configuração: <strong>{targetEventForLiturgy.title}</strong> ({targetEventForLiturgy.date})
             </div>
 
             <div className="designation-form-row">
               <div className="form-group" style={{ flex: 1, marginBottom: 0 }}>
                 <label className="form-label">Selecione o Líder da Liturgia Designado:</label>
                 <select
+                  id="select-admin-liturgy-leader"
                   className="form-select"
                   value={selectedLiturgyLeader}
                   onChange={e => setSelectedLiturgyLeader(e.target.value)}
@@ -246,6 +712,8 @@ export default function AdminView() {
               </div>
 
               <button
+                type="button"
+                id="btn-save-admin-liturgy-designation"
                 className="btn btn-primary"
                 onClick={handleDesignateLeader}
                 disabled={isControlsDisabled}
@@ -267,18 +735,42 @@ export default function AdminView() {
             </h2>
             <p className="tab-sec-desc">
               Conforme o <strong>PRD 7.3 e Cenário M12</strong>, durante a execução do culto o cancelamento de uma
-              atividade exige motivo pré-cadastrado na Web. O mobile não permite cadastrar motivos na hora da emergência.
+              atividade exige motivo pré-cadastrado na Web pelo administrador. O mobile ou tela operacional não permite cadastrar motivos na hora da emergência.
             </p>
+
+            {reasonError && (
+              <div className="alert alert-danger" style={{ marginBottom: '14px', padding: '10px 12px', display: 'flex', alignItems: 'center', gap: '8px', fontSize: '13px', background: 'rgba(239, 68, 68, 0.1)', color: '#ef4444', borderRadius: '6px' }}>
+                <AlertCircle size={16} />
+                <span>{reasonError}</span>
+              </div>
+            )}
+
+            {reasonSuccess && (
+              <div className="alert alert-success" style={{ marginBottom: '14px', padding: '10px 12px', display: 'flex', alignItems: 'center', gap: '8px', fontSize: '13px', background: 'rgba(16, 185, 129, 0.1)', color: '#10b981', borderRadius: '6px' }}>
+                <CheckCircle2 size={16} />
+                <span>{reasonSuccess}</span>
+              </div>
+            )}
 
             <form onSubmit={handleAddReason}>
               <div className="form-group">
-                <label className="form-label">Descrição do Motivo Pré-Aprovado:</label>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px' }}>
+                  <label className="form-label" style={{ margin: 0 }}>Descrição do Motivo Pré-Aprovado:</label>
+                  <span style={{ fontSize: '11px', color: newReasonText.length > 120 ? '#ef4444' : 'var(--text-muted)' }}>
+                    {newReasonText.length}/120
+                  </span>
+                </div>
                 <input
                   type="text"
+                  id="new-cancel-reason-input"
                   className="form-input"
                   placeholder="Ex: Falha no gerador de energia..."
                   value={newReasonText}
-                  onChange={e => setNewReasonText(e.target.value)}
+                  maxLength={120}
+                  onChange={e => {
+                    setNewReasonText(e.target.value);
+                    if (reasonError) setReasonError('');
+                  }}
                   disabled={isControlsDisabled}
                   required
                 />
@@ -286,8 +778,9 @@ export default function AdminView() {
 
               <button
                 type="submit"
+                id="btn-add-cancel-reason"
                 className="btn btn-primary"
-                disabled={isControlsDisabled}
+                disabled={isControlsDisabled || !newReasonText.trim()}
               >
                 <Plus size={15} /> Cadastrar Novo Motivo
               </button>
@@ -295,15 +788,1089 @@ export default function AdminView() {
           </div>
 
           <div className="card">
-            <h2 className="tab-sec-title">Motivos Ativos para a Liturgia ({cancelReasons.length})</h2>
-            <div className="reasons-list">
-              {cancelReasons.map((reason, idx) => (
-                <div key={idx} className="reason-item-row">
-                  <span>{reason}</span>
-                  <span className="badge badge-primary">Ativo</span>
-                </div>
-              ))}
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
+              <h2 className="tab-sec-title" style={{ margin: 0 }}>
+                Motivos de Cancelamento ({cancelReasons.length})
+              </h2>
+              <span className="badge badge-primary">
+                {cancelReasons.filter(r => r.active !== false).length} Ativos
+              </span>
             </div>
+
+            {cancelReasons.length === 0 ? (
+              <div style={{ textAlign: 'center', padding: '30px 10px', color: 'var(--text-muted)' }}>
+                <Tag size={32} style={{ opacity: 0.4, marginBottom: '8px' }} />
+                <p>Nenhum motivo cadastrado para esta igreja.</p>
+              </div>
+            ) : (
+              <div className="reasons-list">
+                {cancelReasons.map((reason, idx) => {
+                  const isEditing = editingReasonId === reason.id;
+                  const isUsed = isReasonUsedInActivities(reason, event.activities);
+                  const isActive = reason.active !== false;
+
+                  return (
+                    <div
+                      key={reason.id || idx}
+                      id={`reason-item-${idx}`}
+                      className="reason-item-row"
+                      style={{
+                        opacity: isActive ? 1 : 0.65,
+                        borderColor: isEditing ? 'var(--primary)' : undefined,
+                        flexDirection: 'column',
+                        alignItems: 'stretch',
+                        gap: '8px'
+                      }}
+                    >
+                      {isEditing ? (
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                          <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+                            <input
+                              type="text"
+                              id={`edit-reason-input-${idx}`}
+                              className="form-input"
+                              value={editingReasonText}
+                              maxLength={120}
+                              onChange={e => setEditingReasonText(e.target.value)}
+                              style={{ flex: 1, fontSize: '13px', padding: '6px 10px' }}
+                              autoFocus
+                            />
+                            <button
+                              type="button"
+                              id={`btn-save-reason-${idx}`}
+                              className="btn btn-primary"
+                              onClick={() => handleSaveEditReason(reason.id)}
+                              style={{ padding: '6px 10px', fontSize: '12px' }}
+                              title="Salvar alteração"
+                            >
+                              <Check size={14} /> Salvar
+                            </button>
+                            <button
+                              type="button"
+                              id={`btn-cancel-edit-reason-${idx}`}
+                              className="btn btn-secondary"
+                              onClick={handleCancelEditReason}
+                              style={{ padding: '6px 10px', fontSize: '12px' }}
+                              title="Cancelar edição"
+                            >
+                              <X size={14} />
+                            </button>
+                          </div>
+                          {editingError && (
+                            <span style={{ fontSize: '12px', color: '#ef4444' }}>{editingError}</span>
+                          )}
+                        </div>
+                      ) : (
+                        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '8px' }}>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flex: 1, minWidth: 0 }}>
+                            <span
+                              style={{
+                                fontWeight: 500,
+                                textDecoration: isActive ? 'none' : 'line-through',
+                                color: isActive ? 'var(--text-primary)' : 'var(--text-muted)'
+                              }}
+                            >
+                              {reason.name}
+                            </span>
+                            <div style={{ display: 'flex', gap: '4px', flexWrap: 'wrap' }}>
+                              <span className={`badge ${isActive ? 'badge-primary' : 'badge-pending'}`}>
+                                {isActive ? 'Ativo' : 'Inativo'}
+                              </span>
+                              {isUsed && (
+                                <span className="badge badge-live" title="Utilizado em registros de atividades do histórico">
+                                  Em Histórico
+                                </span>
+                              )}
+                            </div>
+                          </div>
+
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                            <button
+                              type="button"
+                              id={`btn-edit-reason-${idx}`}
+                              className="btn btn-secondary"
+                              onClick={() => handleStartEditReason(reason)}
+                              style={{ padding: '4px 8px', fontSize: '11px' }}
+                              title="Alterar descrição do motivo"
+                              disabled={isControlsDisabled}
+                            >
+                              <Edit2 size={12} />
+                            </button>
+
+                            <button
+                              type="button"
+                              id={`btn-toggle-reason-${idx}`}
+                              className="btn btn-secondary"
+                              onClick={() => handleToggleReasonStatus(reason.id)}
+                              style={{
+                                padding: '4px 8px',
+                                fontSize: '11px',
+                                color: isActive ? '#f59e0b' : '#10b981'
+                              }}
+                              title={isActive ? 'Desativar motivo (preserva histórico)' : 'Reativar motivo para seleção'}
+                              disabled={isControlsDisabled}
+                            >
+                              <Power size={12} style={{ marginRight: '4px' }} />
+                              {isActive ? 'Desativar' : 'Ativar'}
+                            </button>
+
+                            <button
+                              type="button"
+                              id={`btn-delete-reason-${idx}`}
+                              className="btn btn-secondary"
+                              onClick={() => handleDeleteReason(reason.id)}
+                              style={{
+                                padding: '4px 8px',
+                                fontSize: '11px',
+                                color: isUsed ? 'var(--text-muted)' : '#ef4444',
+                                opacity: isUsed ? 0.5 : 1
+                              }}
+                              title={
+                                isUsed
+                                  ? 'Motivo utilizado em histórico não pode ser excluído; desative-o em vez de excluir'
+                                  : 'Excluir motivo não utilizado'
+                              }
+                              disabled={isControlsDisabled}
+                            >
+                              <Trash2 size={12} />
+                            </button>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* ABA: TIPOS DE EVENTO (PRD §5 - Issue #25) */}
+      {activeAdminTab === 'event_types' && (
+        <div className="grid-2">
+          <div className="card">
+            <h2 className="tab-sec-title">
+              <Calendar size={18} color="var(--primary)" /> Cadastrar Tipo de Evento
+            </h2>
+            <p className="tab-sec-desc">
+              Tipos definem as categorias de culto e reuniões da igreja (ex: Celebração Geral, Culto de Oração, Ensaio).
+              Conforme o <strong>PRD §4 e §5</strong>, o cadastro é exclusivo na Web por administradores.
+            </p>
+
+            {typeError && (
+              <div className="error-banner" style={{ marginBottom: '16px' }}>
+                <AlertCircle size={16} />
+                <span>{typeError}</span>
+              </div>
+            )}
+
+            {typeSuccess && (
+              <div className="success-banner" style={{ marginBottom: '16px' }}>
+                <CheckCircle2 size={16} />
+                <span>{typeSuccess}</span>
+              </div>
+            )}
+
+            <form onSubmit={handleAddType}>
+              <div className="form-group">
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px' }}>
+                  <label className="form-label" style={{ margin: 0 }}>Nome do Tipo de Evento:</label>
+                  <span style={{ fontSize: '11px', color: newTypeName.length > 100 ? '#ef4444' : 'var(--text-muted)' }}>
+                    {newTypeName.length}/100
+                  </span>
+                </div>
+                <input
+                  type="text"
+                  id="new-event-type-name-input"
+                  className="form-input"
+                  placeholder="Ex: Culto de Celebração de Domingo"
+                  value={newTypeName}
+                  maxLength={100}
+                  onChange={e => {
+                    setNewTypeName(e.target.value);
+                    if (typeError) setTypeError('');
+                  }}
+                  disabled={isControlsDisabled}
+                  required
+                />
+              </div>
+
+              <div className="form-group">
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px' }}>
+                  <label className="form-label" style={{ margin: 0 }}>Descrição ou Objetivo (opcional):</label>
+                  <span style={{ fontSize: '11px', color: newTypeDesc.length > 255 ? '#ef4444' : 'var(--text-muted)' }}>
+                    {newTypeDesc.length}/255
+                  </span>
+                </div>
+                <input
+                  type="text"
+                  id="new-event-type-desc-input"
+                  className="form-input"
+                  placeholder="Ex: Culto principal congregacional com louvor e palavra"
+                  value={newTypeDesc}
+                  maxLength={255}
+                  onChange={e => {
+                    setNewTypeDesc(e.target.value);
+                    if (typeError) setTypeError('');
+                  }}
+                  disabled={isControlsDisabled}
+                />
+              </div>
+
+              <button
+                type="submit"
+                id="btn-add-event-type"
+                className="btn btn-primary"
+                disabled={isControlsDisabled || !newTypeName.trim()}
+              >
+                <Plus size={15} /> Cadastrar Tipo de Evento
+              </button>
+            </form>
+          </div>
+
+          <div className="card">
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
+              <h2 className="tab-sec-title" style={{ margin: 0 }}>
+                Tipos de Evento ({eventTypes.length})
+              </h2>
+              <span className="badge badge-primary">
+                {eventTypes.filter(t => t.active !== false).length} Ativos
+              </span>
+            </div>
+
+            {eventTypes.length === 0 ? (
+              <div style={{ textAlign: 'center', padding: '30px 10px', color: 'var(--text-muted)' }}>
+                <Calendar size={32} style={{ opacity: 0.4, marginBottom: '8px' }} />
+                <p>Nenhum tipo de evento cadastrado nesta igreja.</p>
+              </div>
+            ) : (
+              <div className="reasons-list">
+                {eventTypes.map((type, idx) => {
+                  const isEditing = editingTypeId === type.id;
+                  const isUsed = isEventTypeUsed(type, [event]);
+                  const isActive = type.active !== false;
+
+                  return (
+                    <div
+                      key={type.id || idx}
+                      id={`event-type-item-${idx}`}
+                      className="reason-item-row"
+                      style={{
+                        opacity: isActive ? 1 : 0.65,
+                        borderColor: isEditing ? 'var(--primary)' : undefined,
+                        flexDirection: 'column',
+                        alignItems: 'stretch',
+                        gap: '8px'
+                      }}
+                    >
+                      {isEditing ? (
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                          <input
+                            type="text"
+                            id={`edit-event-type-name-${idx}`}
+                            className="form-input"
+                            value={editingTypeName}
+                            maxLength={100}
+                            onChange={e => setEditingTypeName(e.target.value)}
+                            style={{ fontSize: '13px', padding: '6px 10px' }}
+                            placeholder="Nome do tipo"
+                            autoFocus
+                          />
+                          <input
+                            type="text"
+                            id={`edit-event-type-desc-${idx}`}
+                            className="form-input"
+                            value={editingTypeDesc}
+                            maxLength={255}
+                            onChange={e => setEditingTypeDesc(e.target.value)}
+                            style={{ fontSize: '12px', padding: '6px 10px' }}
+                            placeholder="Descrição opcional"
+                          />
+                          {editingTypeError && (
+                            <span style={{ fontSize: '11px', color: '#ef4444' }}>{editingTypeError}</span>
+                          )}
+                          <div style={{ display: 'flex', gap: '8px', justifyContent: 'flex-end' }}>
+                            <button
+                              type="button"
+                              id={`btn-save-event-type-${idx}`}
+                              className="btn btn-primary"
+                              onClick={() => handleSaveEditType(type.id)}
+                              style={{ padding: '6px 10px', fontSize: '12px' }}
+                            >
+                              <Check size={14} /> Salvar
+                            </button>
+                            <button
+                              type="button"
+                              id={`btn-cancel-edit-event-type-${idx}`}
+                              className="btn btn-secondary"
+                              onClick={handleCancelEditType}
+                              style={{ padding: '6px 10px', fontSize: '12px' }}
+                            >
+                              <X size={14} /> Cancelar
+                            </button>
+                          </div>
+                        </div>
+                      ) : (
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '12px' }}>
+                          <div style={{ flex: 1, minWidth: 0 }}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+                              <strong style={{ fontSize: '14px', textDecoration: isActive ? 'none' : 'line-through' }}>
+                                {type.name}
+                              </strong>
+                              {!isActive && (
+                                <span className="badge badge-pending" style={{ fontSize: '10px', padding: '2px 6px' }}>
+                                  Inativo
+                                </span>
+                              )}
+                              {isUsed && (
+                                <span className="badge" style={{ fontSize: '10px', padding: '2px 6px', background: 'rgba(99, 102, 241, 0.15)', color: '#818cf8' }}>
+                                  Em uso
+                                </span>
+                              )}
+                            </div>
+                            {type.description && (
+                              <p style={{ margin: '4px 0 0 0', fontSize: '12px', color: 'var(--text-muted)' }}>
+                                {type.description}
+                              </p>
+                            )}
+                          </div>
+
+                          <div style={{ display: 'flex', gap: '6px', alignItems: 'center' }}>
+                            <button
+                              type="button"
+                              id={`btn-edit-event-type-${idx}`}
+                              className="btn btn-secondary"
+                              onClick={() => handleStartEditType(type)}
+                              style={{ padding: '4px 8px', fontSize: '11px' }}
+                              title="Editar tipo"
+                              disabled={isControlsDisabled}
+                            >
+                              <Edit2 size={12} />
+                            </button>
+
+                            <button
+                              type="button"
+                              id={`btn-toggle-event-type-${idx}`}
+                              className="btn btn-secondary"
+                              onClick={() => handleToggleTypeStatus(type.id)}
+                              style={{
+                                padding: '4px 8px',
+                                fontSize: '11px',
+                                color: isActive ? '#f59e0b' : '#10b981'
+                              }}
+                              title={isActive ? 'Desativar tipo de evento' : 'Reativar tipo de evento'}
+                              disabled={isControlsDisabled}
+                            >
+                              <Power size={12} style={{ marginRight: '4px' }} />
+                              {isActive ? 'Desativar' : 'Ativar'}
+                            </button>
+
+                            <button
+                              type="button"
+                              id={`btn-delete-event-type-${idx}`}
+                              className="btn btn-secondary"
+                              onClick={() => handleDeleteType(type.id)}
+                              style={{
+                                padding: '4px 8px',
+                                fontSize: '11px',
+                                color: isUsed ? 'var(--text-muted)' : '#ef4444',
+                                opacity: isUsed ? 0.5 : 1
+                              }}
+                              title={
+                                isUsed
+                                  ? 'Tipo de evento utilizado em histórico não pode ser excluído; desative-o em vez de excluir'
+                                  : 'Excluir tipo de evento'
+                              }
+                              disabled={isControlsDisabled}
+                            >
+                              <Trash2 size={12} />
+                            </button>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* ABA: ATIVIDADES PADRÃO & DURAÇÕES (PRD §5 & CA02 - Issue #25) */}
+      {activeAdminTab === 'activities' && (
+        <div className="grid-2">
+          <div className="card">
+            <h2 className="tab-sec-title">
+              <Clock size={18} color="var(--primary)" /> Cadastrar Atividade Padrão
+            </h2>
+            <p className="tab-sec-desc">
+              Atividades reutilizáveis para a ordem do culto. Conforme o <strong>PRD §5 (CA02)</strong>,
+              as durações padrão são livremente configuráveis (exemplos de 5, 15 ou 20 min não são universais).
+            </p>
+
+            {actError && (
+              <div className="error-banner" style={{ marginBottom: '16px' }}>
+                <AlertCircle size={16} />
+                <span>{actError}</span>
+              </div>
+            )}
+
+            {actSuccess && (
+              <div className="success-banner" style={{ marginBottom: '16px' }}>
+                <CheckCircle2 size={16} />
+                <span>{actSuccess}</span>
+              </div>
+            )}
+
+            <form onSubmit={handleAddActivity}>
+              <div className="form-group">
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px' }}>
+                  <label className="form-label" style={{ margin: 0 }}>Nome da Atividade:</label>
+                  <span style={{ fontSize: '11px', color: newActName.length > 100 ? '#ef4444' : 'var(--text-muted)' }}>
+                    {newActName.length}/100
+                  </span>
+                </div>
+                <input
+                  type="text"
+                  id="new-activity-name-input"
+                  className="form-input"
+                  placeholder="Ex: Louvor e Adoração Congregacional"
+                  value={newActName}
+                  maxLength={100}
+                  onChange={e => {
+                    setNewActName(e.target.value);
+                    if (actError) setActError('');
+                  }}
+                  disabled={isControlsDisabled}
+                  required
+                />
+              </div>
+
+              <div className="grid-2" style={{ gap: '12px' }}>
+                <div className="form-group">
+                  <label className="form-label">Duração Padrão (minutos):</label>
+                  <input
+                    type="number"
+                    id="new-activity-duration-input"
+                    className="form-input"
+                    min={1}
+                    max={720}
+                    value={newActDuration}
+                    onChange={e => {
+                      setNewActDuration(parseInt(e.target.value) || '');
+                      if (actError) setActError('');
+                    }}
+                    disabled={isControlsDisabled}
+                    required
+                  />
+                  <small style={{ fontSize: '11px', color: 'var(--text-muted)', display: 'block', marginTop: '4px' }}>
+                    CA02: Configurável livremente (1 a 720 min)
+                  </small>
+                </div>
+
+                <div className="form-group">
+                  <label className="form-label">Categoria Litúrgica:</label>
+                  <select
+                    id="new-activity-category-select"
+                    className="form-input"
+                    value={newActCategory}
+                    onChange={e => setNewActCategory(e.target.value)}
+                    disabled={isControlsDisabled}
+                  >
+                    <option value="Liturgia">Liturgia & Direção</option>
+                    <option value="Louvor">Louvor & Adoração</option>
+                    <option value="Palavra">Ministração da Palavra</option>
+                    <option value="Pastoral">Momento Pastoral & Avisos</option>
+                    <option value="Apoio">Serviço de Apoio Técnico</option>
+                    <option value="Comunhão">Comunhão & Encerramento</option>
+                  </select>
+                </div>
+              </div>
+
+              <div className="form-group">
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px' }}>
+                  <label className="form-label" style={{ margin: 0 }}>Descrição ou Observação Padrão (opcional):</label>
+                  <span style={{ fontSize: '11px', color: newActDesc.length > 255 ? '#ef4444' : 'var(--text-muted)' }}>
+                    {newActDesc.length}/255
+                  </span>
+                </div>
+                <input
+                  type="text"
+                  id="new-activity-desc-input"
+                  className="form-input"
+                  placeholder="Ex: Bloco de músicas com participação da equipe"
+                  value={newActDesc}
+                  maxLength={255}
+                  onChange={e => {
+                    setNewActDesc(e.target.value);
+                    if (actError) setActError('');
+                  }}
+                  disabled={isControlsDisabled}
+                />
+              </div>
+
+              <button
+                type="submit"
+                id="btn-add-activity"
+                className="btn btn-primary"
+                disabled={isControlsDisabled || !newActName.trim() || !newActDuration}
+              >
+                <Plus size={15} /> Cadastrar Atividade Padrão
+              </button>
+            </form>
+          </div>
+
+          <div className="card">
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
+              <h2 className="tab-sec-title" style={{ margin: 0 }}>
+                Atividades Cadastradas ({standardActivities.length})
+              </h2>
+              <span className="badge badge-primary">
+                {standardActivities.filter(a => a.active !== false).length} Ativas
+              </span>
+            </div>
+
+            {standardActivities.length === 0 ? (
+              <div style={{ textAlign: 'center', padding: '30px 10px', color: 'var(--text-muted)' }}>
+                <Clock size={32} style={{ opacity: 0.4, marginBottom: '8px' }} />
+                <p>Nenhuma atividade padrão cadastrada nesta igreja.</p>
+              </div>
+            ) : (
+              <div className="reasons-list">
+                {standardActivities.map((act, idx) => {
+                  const isEditing = editingActId === act.id;
+                  const isUsed = isStandardActivityUsed(act, event.activities);
+                  const isActive = act.active !== false;
+
+                  return (
+                    <div
+                      key={act.id || idx}
+                      id={`activity-item-${idx}`}
+                      className="reason-item-row"
+                      style={{
+                        opacity: isActive ? 1 : 0.65,
+                        borderColor: isEditing ? 'var(--primary)' : undefined,
+                        flexDirection: 'column',
+                        alignItems: 'stretch',
+                        gap: '8px'
+                      }}
+                    >
+                      {isEditing ? (
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                          <div style={{ display: 'flex', gap: '8px' }}>
+                            <input
+                              type="text"
+                              id={`edit-activity-name-${idx}`}
+                              className="form-input"
+                              value={editingActName}
+                              maxLength={100}
+                              onChange={e => setEditingActName(e.target.value)}
+                              style={{ flex: 2, fontSize: '13px', padding: '6px 10px' }}
+                              placeholder="Nome da atividade"
+                              autoFocus
+                            />
+                            <input
+                              type="number"
+                              id={`edit-activity-duration-${idx}`}
+                              className="form-input"
+                              min={1}
+                              max={720}
+                              value={editingActDuration}
+                              onChange={e => setEditingActDuration(parseInt(e.target.value) || '')}
+                              style={{ flex: 1, fontSize: '13px', padding: '6px 10px' }}
+                              placeholder="Duração (min)"
+                            />
+                          </div>
+
+                          <div style={{ display: 'flex', gap: '8px' }}>
+                            <select
+                              id={`edit-activity-category-${idx}`}
+                              className="form-input"
+                              value={editingActCategory}
+                              onChange={e => setEditingActCategory(e.target.value)}
+                              style={{ flex: 1, fontSize: '12px', padding: '6px 10px' }}
+                            >
+                              <option value="Liturgia">Liturgia</option>
+                              <option value="Louvor">Louvor</option>
+                              <option value="Palavra">Palavra</option>
+                              <option value="Pastoral">Pastoral</option>
+                              <option value="Apoio">Apoio</option>
+                              <option value="Comunhão">Comunhão</option>
+                            </select>
+                            <input
+                              type="text"
+                              id={`edit-activity-desc-${idx}`}
+                              className="form-input"
+                              value={editingActDesc}
+                              maxLength={255}
+                              onChange={e => setEditingActDesc(e.target.value)}
+                              style={{ flex: 2, fontSize: '12px', padding: '6px 10px' }}
+                              placeholder="Observação padrão"
+                            />
+                          </div>
+
+                          {editingActError && (
+                            <span style={{ fontSize: '11px', color: '#ef4444' }}>{editingActError}</span>
+                          )}
+
+                          <div style={{ display: 'flex', gap: '8px', justifyContent: 'flex-end' }}>
+                            <button
+                              type="button"
+                              id={`btn-save-activity-${idx}`}
+                              className="btn btn-primary"
+                              onClick={() => handleSaveEditActivity(act.id)}
+                              style={{ padding: '6px 10px', fontSize: '12px' }}
+                            >
+                              <Check size={14} /> Salvar
+                            </button>
+                            <button
+                              type="button"
+                              id={`btn-cancel-edit-activity-${idx}`}
+                              className="btn btn-secondary"
+                              onClick={handleCancelEditActivity}
+                              style={{ padding: '6px 10px', fontSize: '12px' }}
+                            >
+                              <X size={14} /> Cancelar
+                            </button>
+                          </div>
+                        </div>
+                      ) : (
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '12px' }}>
+                          <div style={{ flex: 1, minWidth: 0 }}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+                              <strong style={{ fontSize: '14px', textDecoration: isActive ? 'none' : 'line-through' }}>
+                                {act.name}
+                              </strong>
+                              <span className="badge" style={{ fontSize: '11px', padding: '2px 8px', background: 'rgba(59, 130, 246, 0.15)', color: '#60a5fa' }}>
+                                <Clock size={10} style={{ marginRight: '3px' }} />
+                                {act.defaultDurationMinutes} min
+                              </span>
+                              <span className="badge badge-secondary" style={{ fontSize: '10px', padding: '2px 6px' }}>
+                                {act.category || 'Liturgia'}
+                              </span>
+                              {!isActive && (
+                                <span className="badge badge-pending" style={{ fontSize: '10px', padding: '2px 6px' }}>
+                                  Inativa
+                                </span>
+                              )}
+                              {isUsed && (
+                                <span className="badge" style={{ fontSize: '10px', padding: '2px 6px', background: 'rgba(99, 102, 241, 0.15)', color: '#818cf8' }}>
+                                  No Culto
+                                </span>
+                              )}
+                            </div>
+                            {act.description && (
+                              <p style={{ margin: '4px 0 0 0', fontSize: '12px', color: 'var(--text-muted)' }}>
+                                {act.description}
+                              </p>
+                            )}
+                          </div>
+
+                          <div style={{ display: 'flex', gap: '6px', alignItems: 'center' }}>
+                            <button
+                              type="button"
+                              id={`btn-edit-activity-${idx}`}
+                              className="btn btn-secondary"
+                              onClick={() => handleStartEditActivity(act)}
+                              style={{ padding: '4px 8px', fontSize: '11px' }}
+                              title="Editar atividade"
+                              disabled={isControlsDisabled}
+                            >
+                              <Edit2 size={12} />
+                            </button>
+
+                            <button
+                              type="button"
+                              id={`btn-toggle-activity-${idx}`}
+                              className="btn btn-secondary"
+                              onClick={() => handleToggleActivityStatus(act.id)}
+                              style={{
+                                padding: '4px 8px',
+                                fontSize: '11px',
+                                color: isActive ? '#f59e0b' : '#10b981'
+                              }}
+                              title={isActive ? 'Desativar atividade padrão' : 'Reativar atividade padrão'}
+                              disabled={isControlsDisabled}
+                            >
+                              <Power size={12} style={{ marginRight: '4px' }} />
+                              {isActive ? 'Desativar' : 'Ativar'}
+                            </button>
+
+                            <button
+                              type="button"
+                              id={`btn-delete-activity-${idx}`}
+                              className="btn btn-secondary"
+                              onClick={() => handleDeleteActivity(act.id)}
+                              style={{
+                                padding: '4px 8px',
+                                fontSize: '11px',
+                                color: isUsed ? 'var(--text-muted)' : '#ef4444',
+                                opacity: isUsed ? 0.5 : 1
+                              }}
+                              title={
+                                isUsed
+                                  ? 'Atividade utilizada no culto não pode ser excluída fisicamente; desative-a em vez de excluir'
+                                  : 'Excluir atividade'
+                              }
+                              disabled={isControlsDisabled}
+                            >
+                              <Trash2 size={12} />
+                            </button>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* ABA: MODELOS DE CULTO COM ATIVIDADES E APOIOS PADRÃO (PRD §5 & M28 - Issue #27) */}
+      {activeAdminTab === 'templates' && (
+        <div className="grid-2">
+          {/* Formulário de Criação / Edição de Modelo */}
+          <div className="card">
+            <h2 className="tab-sec-title">
+              <Layers size={18} color="var(--primary)" /> {editingTemplateId ? 'Editar Modelo de Culto' : 'Novo Modelo Reutilizável de Culto'}
+            </h2>
+            <p className="tab-sec-desc">
+              Estruture modelos vinculados ao tipo de evento com a sequência litúrgica e os apoios padrão (como portaria e transmissão).
+              Conforme o <strong>PRD §5 e CA03</strong>, o modelo organiza as etapas sem escalar ou reservar pessoas automaticamente.
+            </p>
+
+            {templateSuccess && (
+              <div className="success-banner">
+                <CheckCircle2 size={16} /> {templateSuccess}
+              </div>
+            )}
+
+            {templateError && (
+              <div className="error-banner">
+                <AlertCircle size={16} /> {templateError}
+              </div>
+            )}
+
+            <form onSubmit={handleSaveTemplate}>
+              <div className="form-group">
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <label className="form-label" htmlFor="template-name-input">
+                    Nome do Modelo:
+                  </label>
+                  <span style={{ fontSize: '11px', color: 'var(--text-muted)' }}>
+                    {templateName.length}/100
+                  </span>
+                </div>
+                <input
+                  id="template-name-input"
+                  type="text"
+                  className="form-input"
+                  placeholder="Ex: Culto Dominical com Apoio Completo"
+                  maxLength={100}
+                  value={templateName}
+                  onChange={e => setTemplateName(e.target.value)}
+                  disabled={isControlsDisabled}
+                  required
+                />
+              </div>
+
+              <div className="form-group">
+                <label className="form-label" htmlFor="template-event-type-select">
+                  Tipo de Evento Vinculado:
+                </label>
+                <select
+                  id="template-event-type-select"
+                  className="form-select"
+                  value={templateEventTypeId}
+                  onChange={e => setTemplateEventTypeId(e.target.value)}
+                  disabled={isControlsDisabled}
+                >
+                  <option value="">-- Selecione o Tipo de Evento (Opcional) --</option>
+                  {eventTypes.filter(t => t.active !== false).map(t => (
+                    <option key={t.id} value={t.id}>{t.name}</option>
+                  ))}
+                </select>
+              </div>
+
+              <div className="form-group">
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <label className="form-label" htmlFor="template-desc-input">
+                    Descrição do Modelo (Opcional):
+                  </label>
+                  <span style={{ fontSize: '11px', color: 'var(--text-muted)' }}>
+                    {templateDesc.length}/255
+                  </span>
+                </div>
+                <textarea
+                  id="template-desc-input"
+                  className="form-input"
+                  rows={2}
+                  placeholder="Finalidade e orientações litúrgicas deste modelo"
+                  maxLength={255}
+                  value={templateDesc}
+                  onChange={e => setTemplateDesc(e.target.value)}
+                  disabled={isControlsDisabled}
+                />
+              </div>
+
+              {/* Construtor de Atividades Principais do Modelo */}
+              <div className="form-group" style={{ background: 'var(--bg-inset)', padding: '14px', borderRadius: 'var(--radius-md)', border: '1px solid var(--border-subtle)' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
+                  <label className="form-label" style={{ fontWeight: 700, margin: 0 }}>
+                    <Clock size={14} style={{ display: 'inline', marginRight: '4px', verticalAlign: 'middle' }} />
+                    Etapas Litúrgicas do Modelo ({templateActivities.length})
+                  </label>
+                  <span style={{ fontSize: '12px', color: 'var(--text-muted)', fontWeight: 600 }}>
+                    Total: {templateActivities.reduce((s, a) => s + (parseInt(a.plannedDurationMinutes) || 0), 0)} min
+                  </span>
+                </div>
+
+                <div style={{ display: 'flex', gap: '8px', marginBottom: '10px' }}>
+                  <select
+                    className="form-select"
+                    value={selectedStandardActForTemplate}
+                    onChange={e => setSelectedStandardActForTemplate(e.target.value)}
+                    style={{ flex: 1, fontSize: '12px' }}
+                  >
+                    <option value="">-- Escolher de Atividades Padrão --</option>
+                    {standardActivities.filter(a => a.active !== false).map(a => (
+                      <option key={a.id} value={a.id}>{a.name} ({a.defaultDurationMinutes} min)</option>
+                    ))}
+                  </select>
+                  <button
+                    type="button"
+                    className="btn btn-sm btn-secondary"
+                    onClick={handleAddActivityToTemplate}
+                    style={{ whiteSpace: 'nowrap' }}
+                  >
+                    <Plus size={14} /> Adicionar Etapa
+                  </button>
+                </div>
+
+                {templateActivities.length === 0 ? (
+                  <p style={{ fontSize: '12px', color: 'var(--text-muted)', fontStyle: 'italic', margin: 0 }}>
+                    Nenhuma atividade na sequência principal deste modelo.
+                  </p>
+                ) : (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                    {templateActivities.map((act, idx) => (
+                      <div
+                        key={idx}
+                        style={{
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'space-between',
+                          padding: '6px 10px',
+                          background: 'var(--bg-surface)',
+                          border: '1px solid var(--border-subtle)',
+                          borderRadius: 'var(--radius-sm)',
+                          fontSize: '12px'
+                        }}
+                      >
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flex: 1 }}>
+                          <span style={{ fontWeight: 800, color: 'var(--primary)' }}>{idx + 1}.</span>
+                          <span style={{ fontWeight: 600 }}>{act.title}</span>
+                          <span className="badge badge-primary" style={{ fontSize: '10px', padding: '2px 6px' }}>{act.category || 'Liturgia'}</span>
+                        </div>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                          <span style={{ color: 'var(--text-secondary)', fontWeight: 600 }}>{act.plannedDurationMinutes} min</span>
+                          <button
+                            type="button"
+                            onClick={() => handleRemoveActivityFromTemplate(idx)}
+                            style={{ background: 'transparent', border: 'none', color: '#ef4444', cursor: 'pointer', padding: '2px' }}
+                            title="Remover etapa"
+                          >
+                            <Trash2 size={13} />
+                          </button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              {/* Construtor de Serviços Paralelos / Apoios Padrão */}
+              <div className="form-group" style={{ background: 'var(--bg-inset)', padding: '14px', borderRadius: 'var(--radius-md)', border: '1px solid var(--border-subtle)' }}>
+                <label className="form-label" style={{ fontWeight: 700, marginBottom: '8px', display: 'block' }}>
+                  <Shield size={14} style={{ display: 'inline', marginRight: '4px', verticalAlign: 'middle' }} />
+                  Serviços Paralelos & Apoios Técnicos Padrão (CA01 / M28)
+                </label>
+                <p style={{ fontSize: '11px', color: 'var(--text-muted)', marginBottom: '10px' }}>
+                  Marque os apoios que acompanham o evento por padrão (com tempo de preparação prévio). Retirar transmissão da edição depois não altera o modelo (CA02).
+                </p>
+
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                  {templateParallelServices.map((serv, idx) => (
+                    <div
+                      key={idx}
+                      style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'space-between',
+                        padding: '8px 10px',
+                        background: 'var(--bg-surface)',
+                        border: '1px solid var(--border-subtle)',
+                        borderRadius: 'var(--radius-sm)',
+                        fontSize: '12px'
+                      }}
+                    >
+                      <label style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer', flex: 1, margin: 0 }}>
+                        <input
+                          type="checkbox"
+                          checked={serv.isDefaultActive}
+                          onChange={() => handleToggleParallelServiceInTemplate(idx)}
+                        />
+                        <span style={{ fontWeight: 600, color: serv.isDefaultActive ? 'var(--text-primary)' : 'var(--text-muted)' }}>
+                          {serv.serviceName}
+                        </span>
+                        <span className="badge badge-secondary" style={{ fontSize: '10px' }}>{serv.teamId}</span>
+                      </label>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                        <span style={{ fontSize: '11px', color: 'var(--text-muted)' }}>Prep:</span>
+                        <input
+                          type="number"
+                          className="form-input"
+                          style={{ width: '60px', padding: '2px 6px', fontSize: '11px' }}
+                          min="0"
+                          max="180"
+                          value={serv.prepRequiredMinutes}
+                          onChange={e => handlePrepMinutesChange(idx, e.target.value)}
+                        />
+                        <span style={{ fontSize: '11px', color: 'var(--text-muted)' }}>min</span>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              {/* Aviso Normativo CA03 */}
+              <div style={{ padding: '10px 12px', background: 'rgba(99, 102, 241, 0.08)', border: '1px solid rgba(99, 102, 241, 0.25)', borderRadius: 'var(--radius-sm)', marginBottom: '16px', fontSize: '11px', color: 'var(--text-secondary)' }}>
+                <strong>Regra Litúrgica (CA03 & PRD §5 / M28):</strong> O modelo define a estrutura e apoios, mas <em>não escala nem confirma pessoas automaticamente</em>. As lideranças definem suas equipes nominalmente após a criação do culto.
+              </div>
+
+              <div style={{ display: 'flex', gap: '10px' }}>
+                <button
+                  type="submit"
+                  id="btn-save-template"
+                  className="btn btn-primary"
+                  style={{ flex: 1 }}
+                  disabled={isControlsDisabled}
+                >
+                  <Check size={16} /> {editingTemplateId ? 'Salvar Alterações do Modelo' : 'Cadastrar Modelo de Culto'}
+                </button>
+                {editingTemplateId && (
+                  <button
+                    type="button"
+                    className="btn btn-secondary"
+                    onClick={handleCancelEditTemplate}
+                    disabled={isControlsDisabled}
+                  >
+                    <X size={16} /> Cancelar
+                  </button>
+                )}
+              </div>
+            </form>
+          </div>
+
+          {/* Listagem de Modelos Cadastrados */}
+          <div className="card">
+            <h2 className="tab-sec-title">
+              <Layers size={18} color="var(--primary)" /> Modelos de Culto Cadastrados ({serviceTemplates.length})
+            </h2>
+            <p className="tab-sec-desc">
+              Modelos reutilizáveis configurados para a igreja. Alterar ou desativar um modelo preserva integralmente os eventos passados e futuros já planejados (CA04).
+            </p>
+
+            {serviceTemplates.length === 0 ? (
+              <div style={{ textAlign: 'center', padding: '32px 16px', color: 'var(--text-muted)' }}>
+                <Layers size={36} style={{ margin: '0 auto 12px', opacity: 0.4 }} />
+                <p>Nenhum modelo de culto cadastrado.</p>
+              </div>
+            ) : (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                {serviceTemplates.map((tpl, idx) => {
+                  const evType = eventTypes.find(t => t.id === tpl.eventTypeId);
+                  const totalDur = (tpl.activities || []).reduce((s, a) => s + (parseInt(a.plannedDurationMinutes) || 0), 0);
+                  const isUsed = isTemplateUsedInEvents(tpl.id, [event]);
+                  const activeServices = (tpl.parallelServices || []).filter(s => s.isDefaultActive !== false);
+
+                  return (
+                    <div
+                      key={tpl.id}
+                      style={{
+                        padding: '16px',
+                        background: 'var(--bg-surface)',
+                        border: '1px solid var(--border-subtle)',
+                        borderRadius: 'var(--radius-md)',
+                        opacity: tpl.active ? 1 : 0.6
+                      }}
+                    >
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '8px' }}>
+                        <div>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '4px' }}>
+                            <h3 style={{ fontSize: '15px', fontWeight: 700, margin: 0 }}>{tpl.name}</h3>
+                            <span className={`badge ${tpl.active ? 'badge-primary' : 'badge-secondary'}`}>
+                              {tpl.active ? 'Ativo' : 'Desativado'}
+                            </span>
+                            {evType && (
+                              <span className="badge badge-secondary" style={{ fontSize: '11px' }}>
+                                {evType.name}
+                              </span>
+                            )}
+                          </div>
+                          {tpl.description && (
+                            <p style={{ fontSize: '12px', color: 'var(--text-secondary)', margin: '0 0 6px 0' }}>
+                              {tpl.description}
+                            </p>
+                          )}
+                          <div style={{ display: 'flex', gap: '12px', fontSize: '11px', color: 'var(--text-muted)' }}>
+                            <span><strong>{tpl.activities?.length || 0}</strong> atividades ({totalDur} min)</span>
+                            <span>•</span>
+                            <span><strong>{activeServices.length}</strong> apoios padrão ({activeServices.map(s => s.serviceName).join(', ') || 'Nenhum'})</span>
+                          </div>
+                        </div>
+
+                        <div style={{ display: 'flex', gap: '6px' }}>
+                          <button
+                            type="button"
+                            className="btn btn-secondary btn-sm"
+                            onClick={() => handleStartEditTemplate(tpl)}
+                            title="Editar modelo"
+                            disabled={isControlsDisabled}
+                          >
+                            <Edit2 size={12} />
+                          </button>
+                          <button
+                            type="button"
+                            className="btn btn-secondary btn-sm"
+                            onClick={() => handleToggleTemplateStatus(tpl.id)}
+                            title={tpl.active ? 'Desativar modelo' : 'Reativar modelo'}
+                            disabled={isControlsDisabled}
+                          >
+                            <Power size={12} />
+                          </button>
+                          <button
+                            type="button"
+                            id={`btn-delete-template-${idx}`}
+                            className="btn btn-secondary btn-sm"
+                            onClick={() => handleDeleteTemplate(tpl.id)}
+                            style={{ color: isUsed ? 'var(--text-muted)' : '#ef4444', opacity: isUsed ? 0.5 : 1 }}
+                            title={isUsed ? 'Modelo em uso no histórico não pode ser excluído fisicamente; desative-o' : 'Excluir modelo'}
+                            disabled={isControlsDisabled}
+                          >
+                            <Trash2 size={12} />
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
           </div>
         </div>
       )}
