@@ -31,6 +31,23 @@ import {
   canDeleteServiceTemplate
 } from '../utils/serviceTemplateService';
 
+const VALID_ADMIN_TABS = ['event_types', 'templates', 'activities', 'reasons', 'invites', 'liturgy', 'members'];
+
+const resolveInitialTab = (tab) => {
+  if (!tab || tab === 'cadastros' || !VALID_ADMIN_TABS.includes(tab)) return 'event_types';
+  return tab;
+};
+
+// Presets recomendados de serviços paralelos da igreja (Issue #27)
+const PARALLEL_SERVICE_PRESETS = [
+  { teamId: 'limpeza', serviceName: 'Limpeza do Templo', prepRequiredMinutes: 60 },
+  { teamId: 'apoio', serviceName: 'Organização das Cadeiras & Templo', prepRequiredMinutes: 60 },
+  { teamId: 'recepcao', serviceName: 'Recepção & Boas-Vindas', prepRequiredMinutes: 20 },
+  { teamId: 'portaria', serviceName: 'Portaria & Estacionamento', prepRequiredMinutes: 30 },
+  { teamId: 'som', serviceName: 'Sonoplastia & Retorno', prepRequiredMinutes: 30 },
+  { teamId: 'midia', serviceName: 'Transmissão ao Vivo & Mídia', prepRequiredMinutes: 20 }
+];
+
 export default function AdminView({ onBack, initialTab = 'event_types' } = {}) {
   const {
     church,
@@ -71,7 +88,13 @@ export default function AdminView({ onBack, initialTab = 'event_types' } = {}) {
     reloadRemoteData
   } = useApp();
 
-  const [activeAdminTab, setActiveAdminTab] = useState(initialTab);
+  const [activeAdminTab, setActiveAdminTab] = useState(() => resolveInitialTab(initialTab));
+
+  React.useEffect(() => {
+    if (initialTab) {
+      setActiveAdminTab(resolveInitialTab(initialTab));
+    }
+  }, [initialTab]);
 
   // Formulário de Convite de Acesso (PRD 3.1 & Cenário M40)
   const [inviteEmail, setInviteEmail] = useState('');
@@ -121,7 +144,10 @@ export default function AdminView({ onBack, initialTab = 'event_types' } = {}) {
     { title: 'Bênção e Encerramento', category: 'Liturgia', plannedDurationMinutes: 5, notes: '' }
   ]);
   const [templateParallelServices, setTemplateParallelServices] = useState([
-    { teamId: 'recepcao', serviceName: 'Recepção & Portaria', prepRequiredMinutes: 15, isDefaultActive: true },
+    { teamId: 'limpeza', serviceName: 'Limpeza do Templo', prepRequiredMinutes: 60, isDefaultActive: true },
+    { teamId: 'apoio', serviceName: 'Organização das Cadeiras & Templo', prepRequiredMinutes: 60, isDefaultActive: true },
+    { teamId: 'recepcao', serviceName: 'Recepção & Boas-Vindas', prepRequiredMinutes: 20, isDefaultActive: true },
+    { teamId: 'portaria', serviceName: 'Portaria & Estacionamento', prepRequiredMinutes: 30, isDefaultActive: true },
     { teamId: 'som', serviceName: 'Sonoplastia & Retorno', prepRequiredMinutes: 30, isDefaultActive: true },
     { teamId: 'midia', serviceName: 'Transmissão ao Vivo & Mídia', prepRequiredMinutes: 20, isDefaultActive: true }
   ]);
@@ -129,6 +155,12 @@ export default function AdminView({ onBack, initialTab = 'event_types' } = {}) {
   const [templateSuccess, setTemplateSuccess] = useState('');
   const [editingTemplateId, setEditingTemplateId] = useState(null);
   const [selectedStandardActForTemplate, setSelectedStandardActForTemplate] = useState('');
+
+  // Estados de Reordenação e Serviços Paralelos (Issue #27)
+  const [draggedActivityIdx, setDraggedActivityIdx] = useState(null);
+  const [customServiceName, setCustomServiceName] = useState('');
+  const [customServiceTeamId, setCustomServiceTeamId] = useState('apoio');
+  const [customServicePrepMinutes, setCustomServicePrepMinutes] = useState(30);
 
   // Designação da Liderança da Liturgia (PRD 3.2 & Cenário M05)
   const [selectedEventIdForLiturgy, setSelectedEventIdForLiturgy] = useState(() => (event?.id || events?.[0]?.id || ''));
@@ -503,6 +535,56 @@ export default function AdminView({ onBack, initialTab = 'event_types' } = {}) {
     setTemplateActivities(prev => prev.filter((_, i) => i !== idx));
   };
 
+  // Reordenação de Atividades no Modelo (Issue #27)
+  const handleMoveActivityUp = (idx) => {
+    if (idx <= 0) return;
+    setTemplateActivities(prev => {
+      const copy = [...prev];
+      const temp = copy[idx - 1];
+      copy[idx - 1] = copy[idx];
+      copy[idx] = temp;
+      return copy;
+    });
+  };
+
+  const handleMoveActivityDown = (idx) => {
+    setTemplateActivities(prev => {
+      if (idx >= prev.length - 1) return prev;
+      const copy = [...prev];
+      const temp = copy[idx + 1];
+      copy[idx + 1] = copy[idx];
+      copy[idx] = temp;
+      return copy;
+    });
+  };
+
+  const handleActivityDragStart = (e, idx) => {
+    setDraggedActivityIdx(idx);
+    e.dataTransfer.effectAllowed = 'move';
+    e.dataTransfer.setData('text/plain', String(idx));
+  };
+
+  const handleActivityDragOver = (e) => {
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'move';
+  };
+
+  const handleActivityDrop = (e, dropIdx) => {
+    e.preventDefault();
+    const fromIdx = draggedActivityIdx !== null ? draggedActivityIdx : parseInt(e.dataTransfer.getData('text/plain'), 10);
+    if (isNaN(fromIdx) || fromIdx === dropIdx || fromIdx < 0 || fromIdx >= templateActivities.length) {
+      setDraggedActivityIdx(null);
+      return;
+    }
+    setTemplateActivities(prev => {
+      const copy = [...prev];
+      const [moved] = copy.splice(fromIdx, 1);
+      copy.splice(dropIdx, 0, moved);
+      return copy;
+    });
+    setDraggedActivityIdx(null);
+  };
+
   const handleToggleParallelServiceInTemplate = (idx) => {
     setTemplateParallelServices(prev =>
       prev.map((s, i) => i === idx ? { ...s, isDefaultActive: !s.isDefaultActive } : s)
@@ -514,6 +596,46 @@ export default function AdminView({ onBack, initialTab = 'event_types' } = {}) {
     setTemplateParallelServices(prev =>
       prev.map((s, i) => i === idx ? { ...s, prepRequiredMinutes: isNaN(parsed) ? 0 : Math.max(0, Math.min(180, parsed)) } : s)
     );
+  };
+
+  // Handlers para Serviços Paralelos do Modelo (Issue #27)
+  const handleAddPresetParallelService = (preset) => {
+    setTemplateParallelServices(prev => {
+      const existsIdx = prev.findIndex(s => s.serviceName.toLowerCase() === preset.serviceName.toLowerCase() || s.teamId === preset.teamId);
+      if (existsIdx >= 0) {
+        return prev.map((s, i) => i === existsIdx ? { ...s, isDefaultActive: true, prepRequiredMinutes: preset.prepRequiredMinutes } : s);
+      }
+      return [...prev, { ...preset, isDefaultActive: true }];
+    });
+  };
+
+  const handleAddCustomParallelService = (e) => {
+    if (e && e.preventDefault) e.preventDefault();
+    if (!customServiceName.trim()) return;
+    setTemplateParallelServices(prev => [
+      ...prev,
+      {
+        teamId: customServiceTeamId || 'apoio',
+        serviceName: customServiceName.trim(),
+        prepRequiredMinutes: Math.max(0, Math.min(180, parseInt(customServicePrepMinutes, 10) || 0)),
+        isDefaultActive: true
+      }
+    ]);
+    setCustomServiceName('');
+    setCustomServicePrepMinutes(30);
+  };
+
+  const handleRemoveParallelService = (idx) => {
+    setTemplateParallelServices(prev => prev.filter((_, i) => i !== idx));
+  };
+
+  const calculateAntecedentTime = (prepMinutes, baseTime = '19:00') => {
+    const [h, m] = baseTime.split(':').map(Number);
+    const baseTotalMinutes = h * 60 + m;
+    const startMinutes = (baseTotalMinutes - (prepMinutes || 0) + 1440) % 1440;
+    const startH = Math.floor(startMinutes / 60);
+    const startM = startMinutes % 60;
+    return `${String(startH).padStart(2, '0')}:${String(startM).padStart(2, '0')}`;
   };
 
   const handleDesignateLeader = () => {
@@ -595,32 +717,20 @@ export default function AdminView({ onBack, initialTab = 'event_types' } = {}) {
             <span className="badge badge-primary">Painel de Administração Web (Exclusivo Admin)</span>
             <span className="badge badge-pending">Igreja: {church.name}</span>
           </div>
-          <h1 className="admin-title">Governança, Cadastros & Designações</h1>
+          <h1 className="admin-title">Administração da Igreja</h1>
           <p className="admin-subtitle">
-            Gerenciamento global restrito a administradores (PRD 3.2, 4 e 5). Cadastre tipos de evento, atividades com
-            durações padrão, motivos de cancelamento, convites de acesso e designe a liderança da liturgia por evento.
+            Gerenciamento global restrito a administradores (PRD 3.2, 4 e 5). Configure tipos de evento, modelos de culto,
+            atividades com durações padrão, motivos de cancelamento, convites de acesso e designe a liderança da liturgia por evento.
           </p>
         </div>
       </div>
 
-      {/* Sub-Navegação Administrativa */}
-      <div className="admin-nav-tabs">
+      {/* Sub-Navegação Administrativa Responsiva */}
+      <div className="admin-nav-tabs" role="tablist" aria-label="Abas da Administração da Igreja">
         <button
-          className={`admin-tab-btn ${activeAdminTab === 'invites' ? 'active' : ''}`}
-          onClick={() => setActiveAdminTab('invites')}
-        >
-          <UserPlus size={16} /> Convites de Acesso à Igreja (PRD 3.1)
-        </button>
-
-        <button
-          className={`admin-tab-btn ${activeAdminTab === 'liturgy' ? 'active' : ''}`}
-          onClick={() => setActiveAdminTab('liturgy')}
-          id="tab-admin-liturgy"
-        >
-          <Shield size={16} /> Designação da Liturgia por Evento (PRD 3.2)
-        </button>
-
-        <button
+          type="button"
+          role="tab"
+          aria-selected={activeAdminTab === 'event_types'}
           className={`admin-tab-btn ${activeAdminTab === 'event_types' ? 'active' : ''}`}
           onClick={() => setActiveAdminTab('event_types')}
           id="tab-admin-event-types"
@@ -629,14 +739,9 @@ export default function AdminView({ onBack, initialTab = 'event_types' } = {}) {
         </button>
 
         <button
-          className={`admin-tab-btn ${activeAdminTab === 'activities' ? 'active' : ''}`}
-          onClick={() => setActiveAdminTab('activities')}
-          id="tab-admin-activities"
-        >
-          <Clock size={16} /> Atividades & Durações (PRD §5)
-        </button>
-
-        <button
+          type="button"
+          role="tab"
+          aria-selected={activeAdminTab === 'templates'}
           className={`admin-tab-btn ${activeAdminTab === 'templates' ? 'active' : ''}`}
           onClick={() => setActiveAdminTab('templates')}
           id="tab-admin-templates"
@@ -645,15 +750,56 @@ export default function AdminView({ onBack, initialTab = 'event_types' } = {}) {
         </button>
 
         <button
+          type="button"
+          role="tab"
+          aria-selected={activeAdminTab === 'activities'}
+          className={`admin-tab-btn ${activeAdminTab === 'activities' ? 'active' : ''}`}
+          onClick={() => setActiveAdminTab('activities')}
+          id="tab-admin-activities"
+        >
+          <Clock size={16} /> Atividades & Durações (PRD §5)
+        </button>
+
+        <button
+          type="button"
+          role="tab"
+          aria-selected={activeAdminTab === 'reasons'}
           className={`admin-tab-btn ${activeAdminTab === 'reasons' ? 'active' : ''}`}
           onClick={() => setActiveAdminTab('reasons')}
+          id="tab-admin-reasons"
         >
           <Tag size={16} /> Motivos de Cancelamento Web (PRD 7.3)
         </button>
 
         <button
+          type="button"
+          role="tab"
+          aria-selected={activeAdminTab === 'invites'}
+          className={`admin-tab-btn ${activeAdminTab === 'invites' ? 'active' : ''}`}
+          onClick={() => setActiveAdminTab('invites')}
+          id="tab-admin-invites"
+        >
+          <UserPlus size={16} /> Convites de Acesso à Igreja (PRD 3.1)
+        </button>
+
+        <button
+          type="button"
+          role="tab"
+          aria-selected={activeAdminTab === 'liturgy'}
+          className={`admin-tab-btn ${activeAdminTab === 'liturgy' ? 'active' : ''}`}
+          onClick={() => setActiveAdminTab('liturgy')}
+          id="tab-admin-liturgy"
+        >
+          <Shield size={16} /> Designação da Liturgia por Evento (PRD 3.2)
+        </button>
+
+        <button
+          type="button"
+          role="tab"
+          aria-selected={activeAdminTab === 'members'}
           className={`admin-tab-btn ${activeAdminTab === 'members' ? 'active' : ''}`}
           onClick={() => setActiveAdminTab('members')}
+          id="tab-admin-members"
         >
           <Users size={16} /> Membros e Aptidões (PRD 3)
         </button>
@@ -1713,24 +1859,29 @@ export default function AdminView({ onBack, initialTab = 'event_types' } = {}) {
                 />
               </div>
 
-              {/* Construtor de Atividades Principais do Modelo */}
-              <div className="form-group" style={{ background: 'var(--bg-inset)', padding: '14px', borderRadius: 'var(--radius-md)', border: '1px solid var(--border-subtle)' }}>
+              {/* Construtor de Atividades Principais do Modelo com Reordenação (Issue #27) */}
+              <div className="form-group" style={{ background: 'var(--bg-inset)', padding: '16px', borderRadius: 'var(--radius-md)', border: '1px solid var(--border-subtle)' }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
                   <label className="form-label" style={{ fontWeight: 700, margin: 0 }}>
                     <Clock size={14} style={{ display: 'inline', marginRight: '4px', verticalAlign: 'middle' }} />
                     Etapas Litúrgicas do Modelo ({templateActivities.length})
                   </label>
                   <span style={{ fontSize: '12px', color: 'var(--text-muted)', fontWeight: 600 }}>
-                    Total: {templateActivities.reduce((s, a) => s + (parseInt(a.plannedDurationMinutes) || 0), 0)} min
+                    Duração Litúrgica Total: {templateActivities.reduce((s, a) => s + (parseInt(a.plannedDurationMinutes) || 0), 0)} min
                   </span>
                 </div>
+                <p style={{ fontSize: '11px', color: 'var(--text-muted)', marginBottom: '10px' }}>
+                  Reorganize a sequência litúrgica arrastando e soltando ou usando os botões ▲ e ▼. A numeração é recalculada automaticamente e modificações não alteram eventos já criados (CA04).
+                </p>
 
-                <div style={{ display: 'flex', gap: '8px', marginBottom: '10px' }}>
+                <div style={{ display: 'flex', gap: '8px', marginBottom: '12px' }}>
                   <select
+                    id="template-select-standard-act"
                     className="form-select"
                     value={selectedStandardActForTemplate}
                     onChange={e => setSelectedStandardActForTemplate(e.target.value)}
                     style={{ flex: 1, fontSize: '12px' }}
+                    disabled={isControlsDisabled}
                   >
                     <option value="">-- Escolher de Atividades Padrão --</option>
                     {standardActivities.filter(a => a.active !== false).map(a => (
@@ -1739,8 +1890,10 @@ export default function AdminView({ onBack, initialTab = 'event_types' } = {}) {
                   </select>
                   <button
                     type="button"
+                    id="btn-add-activity-to-template"
                     className="btn btn-sm btn-secondary"
                     onClick={handleAddActivityToTemplate}
+                    disabled={isControlsDisabled}
                     style={{ whiteSpace: 'nowrap' }}
                   >
                     <Plus size={14} /> Adicionar Etapa
@@ -1756,29 +1909,82 @@ export default function AdminView({ onBack, initialTab = 'event_types' } = {}) {
                     {templateActivities.map((act, idx) => (
                       <div
                         key={idx}
+                        id={`template-activity-row-${idx}`}
+                        draggable={!isControlsDisabled}
+                        onDragStart={(e) => handleActivityDragStart(e, idx)}
+                        onDragOver={handleActivityDragOver}
+                        onDrop={(e) => handleActivityDrop(e, idx)}
                         style={{
                           display: 'flex',
                           alignItems: 'center',
                           justifyContent: 'space-between',
-                          padding: '6px 10px',
-                          background: 'var(--bg-surface)',
+                          padding: '8px 10px',
+                          background: draggedActivityIdx === idx ? 'var(--bg-card-hover)' : 'var(--bg-surface)',
                           border: '1px solid var(--border-subtle)',
                           borderRadius: 'var(--radius-sm)',
-                          fontSize: '12px'
+                          fontSize: '12px',
+                          cursor: isControlsDisabled ? 'default' : 'grab',
+                          transition: 'background 0.15s ease'
                         }}
                       >
-                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flex: 1 }}>
-                          <span style={{ fontWeight: 800, color: 'var(--primary)' }}>{idx + 1}.</span>
-                          <span style={{ fontWeight: 600 }}>{act.title}</span>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flex: 1, minWidth: 0 }}>
+                          {/* Controles Acessíveis de Subir e Descer */}
+                          <div style={{ display: 'flex', flexDirection: 'column', gap: '1px' }}>
+                            <button
+                              type="button"
+                              id={`btn-move-up-template-activity-${idx}`}
+                              onClick={() => handleMoveActivityUp(idx)}
+                              disabled={isControlsDisabled || idx === 0}
+                              title="Mover atividade para cima"
+                              aria-label={`Mover ${act.title} para cima`}
+                              style={{
+                                border: 'none',
+                                background: 'transparent',
+                                cursor: idx === 0 ? 'not-allowed' : 'pointer',
+                                padding: '1px 3px',
+                                color: idx === 0 ? 'var(--text-muted)' : 'var(--text-secondary)',
+                                fontSize: '10px',
+                                lineHeight: 1
+                              }}
+                            >
+                              ▲
+                            </button>
+                            <button
+                              type="button"
+                              id={`btn-move-down-template-activity-${idx}`}
+                              onClick={() => handleMoveActivityDown(idx)}
+                              disabled={isControlsDisabled || idx === templateActivities.length - 1}
+                              title="Mover atividade para baixo"
+                              aria-label={`Mover ${act.title} para baixo`}
+                              style={{
+                                border: 'none',
+                                background: 'transparent',
+                                cursor: idx === templateActivities.length - 1 ? 'not-allowed' : 'pointer',
+                                padding: '1px 3px',
+                                color: idx === templateActivities.length - 1 ? 'var(--text-muted)' : 'var(--text-secondary)',
+                                fontSize: '10px',
+                                lineHeight: 1
+                              }}
+                            >
+                              ▼
+                            </button>
+                          </div>
+
+                          <span style={{ fontWeight: 800, color: 'var(--primary)', minWidth: '22px' }}>{idx + 1}.</span>
+                          <span style={{ fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{act.title}</span>
                           <span className="badge badge-primary" style={{ fontSize: '10px', padding: '2px 6px' }}>{act.category || 'Liturgia'}</span>
                         </div>
+
                         <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                           <span style={{ color: 'var(--text-secondary)', fontWeight: 600 }}>{act.plannedDurationMinutes} min</span>
                           <button
                             type="button"
+                            id={`btn-remove-template-act-${idx}`}
                             onClick={() => handleRemoveActivityFromTemplate(idx)}
+                            disabled={isControlsDisabled}
                             style={{ background: 'transparent', border: 'none', color: '#ef4444', cursor: 'pointer', padding: '2px' }}
                             title="Remover etapa"
+                            aria-label={`Remover ${act.title}`}
                           >
                             <Trash2 size={13} />
                           </button>
@@ -1789,57 +1995,194 @@ export default function AdminView({ onBack, initialTab = 'event_types' } = {}) {
                 )}
               </div>
 
-              {/* Construtor de Serviços Paralelos / Apoios Padrão */}
-              <div className="form-group" style={{ background: 'var(--bg-inset)', padding: '14px', borderRadius: 'var(--radius-md)', border: '1px solid var(--border-subtle)' }}>
-                <label className="form-label" style={{ fontWeight: 700, marginBottom: '8px', display: 'block' }}>
-                  <Shield size={14} style={{ display: 'inline', marginRight: '4px', verticalAlign: 'middle' }} />
-                  Serviços Paralelos & Apoios Técnicos Padrão (CA01 / M28)
-                </label>
-                <p style={{ fontSize: '11px', color: 'var(--text-muted)', marginBottom: '10px' }}>
-                  Marque os apoios que acompanham o evento por padrão (com tempo de preparação prévio). Retirar transmissão da edição depois não altera o modelo (CA02).
+              {/* Construtor Completo de Serviços Paralelos / Apoios Técnicos com Preparação Prévia (Issue #27) */}
+              <div className="form-group" style={{ background: 'var(--bg-inset)', padding: '16px', borderRadius: 'var(--radius-md)', border: '1px solid var(--border-subtle)' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px' }}>
+                  <label className="form-label" style={{ fontWeight: 700, margin: 0 }}>
+                    <Shield size={14} style={{ display: 'inline', marginRight: '4px', verticalAlign: 'middle' }} />
+                    Serviços Paralelos & Apoios Técnicos (Issue #27)
+                  </label>
+                  <span className="badge badge-secondary" style={{ fontSize: '11px' }}>
+                    {templateParallelServices.filter(s => s.isDefaultActive).length} Apoios Ativos
+                  </span>
+                </div>
+                <p style={{ fontSize: '11px', color: 'var(--text-muted)', marginBottom: '12px', lineHeight: 1.4 }}>
+                  Serviços paralelos (como Limpeza, Som, Portaria e Transmissão) podem iniciar antes do horário do culto.
+                  <strong> Eles não somam sua duração ao tempo litúrgico</strong> e <strong>não escalam pessoas automaticamente</strong>.
                 </p>
 
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                  {templateParallelServices.map((serv, idx) => (
-                    <div
-                      key={idx}
-                      style={{
-                        display: 'flex',
-                        alignItems: 'center',
-                        justifyContent: 'space-between',
-                        padding: '8px 10px',
-                        background: 'var(--bg-surface)',
-                        border: '1px solid var(--border-subtle)',
-                        borderRadius: 'var(--radius-sm)',
-                        fontSize: '12px'
-                      }}
-                    >
-                      <label style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer', flex: 1, margin: 0 }}>
-                        <input
-                          type="checkbox"
-                          checked={serv.isDefaultActive}
-                          onChange={() => handleToggleParallelServiceInTemplate(idx)}
-                        />
-                        <span style={{ fontWeight: 600, color: serv.isDefaultActive ? 'var(--text-primary)' : 'var(--text-muted)' }}>
-                          {serv.serviceName}
-                        </span>
-                        <span className="badge badge-secondary" style={{ fontSize: '10px' }}>{serv.teamId}</span>
-                      </label>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                        <span style={{ fontSize: '11px', color: 'var(--text-muted)' }}>Prep:</span>
-                        <input
-                          type="number"
-                          className="form-input"
-                          style={{ width: '60px', padding: '2px 6px', fontSize: '11px' }}
-                          min="0"
-                          max="180"
-                          value={serv.prepRequiredMinutes}
-                          onChange={e => handlePrepMinutesChange(idx, e.target.value)}
-                        />
-                        <span style={{ fontSize: '11px', color: 'var(--text-muted)' }}>min</span>
+                {/* Presets rápidos de serviços da igreja */}
+                <div style={{ marginBottom: '12px' }}>
+                  <span style={{ fontSize: '11px', fontWeight: 600, color: 'var(--text-secondary)', display: 'block', marginBottom: '6px' }}>
+                    Adicionar Serviços Recomendados:
+                  </span>
+                  <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
+                    {PARALLEL_SERVICE_PRESETS.map((p, pIdx) => {
+                      const alreadyInList = templateParallelServices.some(s => s.serviceName.toLowerCase() === p.serviceName.toLowerCase() || s.teamId === p.teamId);
+                      return (
+                        <button
+                          key={pIdx}
+                          type="button"
+                          className="btn btn-sm btn-secondary"
+                          id={`btn-preset-service-${p.teamId}`}
+                          onClick={() => handleAddPresetParallelService(p)}
+                          disabled={isControlsDisabled}
+                          style={{
+                            fontSize: '11px',
+                            padding: '3px 8px',
+                            background: alreadyInList ? 'rgba(99, 102, 241, 0.15)' : undefined,
+                            borderColor: alreadyInList ? 'var(--primary)' : undefined
+                          }}
+                        >
+                          + {p.serviceName} ({p.prepRequiredMinutes}m prep)
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                {/* Lista de serviços paralelos cadastrados no modelo */}
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', marginBottom: '14px' }}>
+                  {templateParallelServices.length === 0 ? (
+                    <p style={{ fontSize: '12px', color: 'var(--text-muted)', fontStyle: 'italic', margin: 0 }}>
+                      Nenhum serviço paralelo configurado para este modelo.
+                    </p>
+                  ) : (
+                    templateParallelServices.map((serv, idx) => (
+                      <div
+                        key={idx}
+                        id={`template-parallel-service-row-${idx}`}
+                        style={{
+                          display: 'flex',
+                          flexDirection: 'column',
+                          gap: '6px',
+                          padding: '10px 12px',
+                          background: 'var(--bg-surface)',
+                          border: '1px solid var(--border-subtle)',
+                          borderRadius: 'var(--radius-sm)',
+                          fontSize: '12px',
+                          opacity: serv.isDefaultActive ? 1 : 0.65
+                        }}
+                      >
+                        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                          <label style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer', flex: 1, margin: 0 }}>
+                            <input
+                              type="checkbox"
+                              id={`parallel-service-active-${idx}`}
+                              checked={serv.isDefaultActive}
+                              onChange={() => handleToggleParallelServiceInTemplate(idx)}
+                              disabled={isControlsDisabled}
+                            />
+                            <span style={{ fontWeight: 700, color: serv.isDefaultActive ? 'var(--text-primary)' : 'var(--text-muted)' }}>
+                              {serv.serviceName}
+                            </span>
+                            <span className="badge badge-secondary" style={{ fontSize: '10px' }}>{serv.teamId}</span>
+                          </label>
+
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+                              <span style={{ fontSize: '11px', color: 'var(--text-muted)', fontWeight: 600 }}>Preparação:</span>
+                              <input
+                                type="number"
+                                id={`parallel-service-prep-${idx}`}
+                                className="form-input"
+                                style={{ width: '56px', padding: '2px 6px', fontSize: '11px', textAlign: 'center' }}
+                                min="0"
+                                max="180"
+                                value={serv.prepRequiredMinutes}
+                                onChange={e => handlePrepMinutesChange(idx, e.target.value)}
+                                disabled={isControlsDisabled}
+                              />
+                              <span style={{ fontSize: '11px', color: 'var(--text-muted)' }}>min</span>
+                            </div>
+
+                            <button
+                              type="button"
+                              id={`btn-remove-parallel-service-${idx}`}
+                              onClick={() => handleRemoveParallelService(idx)}
+                              disabled={isControlsDisabled}
+                              style={{ background: 'transparent', border: 'none', color: '#ef4444', cursor: 'pointer', padding: '2px' }}
+                              title="Remover serviço paralelo"
+                              aria-label={`Remover ${serv.serviceName}`}
+                            >
+                              <Trash2 size={13} />
+                            </button>
+                          </div>
+                        </div>
+
+                        {/* Indicador de Antecedência de Horário */}
+                        <div style={{ fontSize: '11px', color: 'var(--text-secondary)', paddingLeft: '22px' }}>
+                          {serv.prepRequiredMinutes > 0 ? (
+                            <span>
+                              ⏳ Inicia <strong>{serv.prepRequiredMinutes} min antes</strong> do culto (ex: se o culto for às 19h00, a preparação inicia às <strong>{calculateAntecedentTime(serv.prepRequiredMinutes, '19:00')}</strong>).
+                            </span>
+                          ) : (
+                            <span>⏱ Inicia concomitantemente com a abertura do culto.</span>
+                          )}
+                        </div>
                       </div>
+                    ))
+                  )}
+                </div>
+
+                {/* Adicionar serviço paralelo personalizado */}
+                <div style={{ borderTop: '1px solid var(--border-subtle)', paddingTop: '10px' }}>
+                  <span style={{ fontSize: '11px', fontWeight: 600, color: 'var(--text-secondary)', display: 'block', marginBottom: '6px' }}>
+                    Cadastrar Outro Apoio ou Serviço Paralelo:
+                  </span>
+                  <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap', alignItems: 'center' }}>
+                    <input
+                      type="text"
+                      id="custom-parallel-service-name-input"
+                      className="form-input"
+                      style={{ flex: 2, minWidth: '140px', fontSize: '11px', padding: '6px 8px' }}
+                      placeholder="Nome do serviço (ex: Berçário)"
+                      value={customServiceName}
+                      onChange={e => setCustomServiceName(e.target.value)}
+                      disabled={isControlsDisabled}
+                    />
+                    <select
+                      id="custom-parallel-service-team-select"
+                      className="form-select"
+                      style={{ flex: 1, minWidth: '100px', fontSize: '11px', padding: '6px 8px' }}
+                      value={customServiceTeamId}
+                      onChange={e => setCustomServiceTeamId(e.target.value)}
+                      disabled={isControlsDisabled}
+                    >
+                      <option value="apoio">Apoio Geral</option>
+                      <option value="limpeza">Limpeza</option>
+                      <option value="recepcao">Recepção</option>
+                      <option value="portaria">Portaria</option>
+                      <option value="som">Sonoplastia</option>
+                      <option value="midia">Transmissão</option>
+                      <option value="infantil">Ministério Infantil</option>
+                    </select>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+                      <input
+                        type="number"
+                        id="custom-parallel-service-prep-input"
+                        className="form-input"
+                        style={{ width: '56px', fontSize: '11px', padding: '6px 4px', textAlign: 'center' }}
+                        min="0"
+                        max="180"
+                        value={customServicePrepMinutes}
+                        onChange={e => setCustomServicePrepMinutes(e.target.value)}
+                        disabled={isControlsDisabled}
+                        title="Minutos de preparação antes do culto"
+                      />
+                      <span style={{ fontSize: '10px', color: 'var(--text-muted)' }}>min</span>
                     </div>
-                  ))}
+                    <button
+                      type="button"
+                      id="btn-add-custom-parallel-service"
+                      className="btn btn-sm btn-secondary"
+                      onClick={handleAddCustomParallelService}
+                      disabled={isControlsDisabled || !customServiceName.trim()}
+                      style={{ whiteSpace: 'nowrap', fontSize: '11px' }}
+                    >
+                      <Plus size={13} /> Adicionar Apoio
+                    </button>
+                  </div>
                 </div>
               </div>
 
@@ -2058,7 +2401,7 @@ export default function AdminView({ onBack, initialTab = 'event_types' } = {}) {
         .admin-nav-tabs {
           display: flex;
           gap: 8px;
-          overflow-x: auto;
+          flex-wrap: wrap;
           padding-bottom: 4px;
         }
 

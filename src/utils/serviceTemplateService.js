@@ -350,6 +350,9 @@ export function serviceTemplateErrorMessage(error) {
   if (code === '23514' || code === '22023') {
     return 'Dados do modelo de culto inválidos. Verifique os campos e durações preenchidos.';
   }
+  if (code === '22P02' || lower.includes('invalid input syntax for type uuid')) {
+    return 'Identificador inválido fornecido para a operação. Atualize a página e tente novamente.';
+  }
   return error.message || 'Falha na operação de modelos de culto.';
 }
 
@@ -395,10 +398,23 @@ export async function fetchServiceTemplatesRemote(supabaseClient, churchId, incl
     if (error) {
       return { success: false, data: [], error: serviceTemplateErrorMessage(error), rawError: error };
     }
-    const list = Array.isArray(data)
-      ? data.map((item, idx) => toServiceTemplateObject(item, idx)).filter(Boolean)
-      : [];
-    return { success: true, data: list, error: null };
+    if (!Array.isArray(data)) {
+      return { success: true, data: [], error: null };
+    }
+    const list = await Promise.all(
+      data.map(async (item, idx) => {
+        try {
+          const detail = await getServiceTemplateRemote(supabaseClient, { templateId: item.id });
+          if (detail.success && detail.template) {
+            return detail.template;
+          }
+        } catch {
+          // fallback para objeto resumido
+        }
+        return toServiceTemplateObject(item, idx);
+      })
+    );
+    return { success: true, data: list.filter(Boolean), error: null };
   } catch (err) {
     return { success: false, data: [], error: serviceTemplateErrorMessage(err), rawError: err };
   }
@@ -484,7 +500,10 @@ export async function createServiceTemplateRemote(
       return { success: false, error: serviceTemplateErrorMessage(error), rawError: error };
     }
     const receipt = Array.isArray(data) ? data[0] : data;
-    const createdId = receipt?.result_entity_id || receipt?.result_payload?.template_id || `st-${Date.now()}`;
+    const createdId = receipt?.template_id || receipt?.id || receipt?.result_entity_id || receipt?.result_payload?.template_id;
+    if (!createdId) {
+      return { success: false, error: 'Identificador do modelo de culto não retornado pelo servidor.', rawError: data };
+    }
     const templateObj = {
       id: createdId,
       name: validation.cleanName,

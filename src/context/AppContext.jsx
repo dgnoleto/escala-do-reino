@@ -1080,8 +1080,12 @@ export function AppProvider({
           if (!res.success) {
             return { success: false, error: res.error };
           }
+          const createdId = res.data?.id;
+          if (!createdId) {
+            return { success: false, error: "O banco de dados não retornou o identificador persistido do tipo de evento criado." };
+          }
           const newType = {
-            id: res.data?.id || `et-${Date.now()}`,
+            id: createdId,
             name: validation.cleanName,
             description: validation.cleanDesc,
             active: true,
@@ -1254,8 +1258,12 @@ export function AppProvider({
           if (!res.success) {
             return { success: false, error: res.error };
           }
+          const createdId = res.data?.id;
+          if (!createdId) {
+            return { success: false, error: "O banco de dados não retornou o identificador persistido da atividade padrão criada." };
+          }
           const newActivity = {
-            id: res.data?.id || `sa-${Date.now()}`,
+            id: createdId,
             name: validation.cleanName,
             defaultDurationMinutes: validation.cleanDuration,
             category: validation.cleanCat,
@@ -1296,14 +1304,22 @@ export function AppProvider({
 
   const updateStandardActivity = (id, newName, newDurationMinutes, newCategory = 'Liturgia', newDescription = '') => {
     if (!isAdmin) return { success: false, error: "Apenas administradores podem alterar atividades padrão." };
+    const authCheck = ensureAuthorizedContext();
+    if (!authCheck.allowed) return { success: false, error: authCheck.error };
+
+    if (!authCheck.inMemory && typeof id === 'string' && id.startsWith('sa-')) {
+      return {
+        success: false,
+        error: 'Identificador de atividade padrão inválido ou não sincronizado com o banco de dados. Recarregue os dados da igreja antes de editar.'
+      };
+    }
+
     const target = standardActivities.find(a => a.id === id);
     if (!target) return { success: false, error: "Atividade padrão não encontrada." };
     const validation = validateStandardActivity(newName, newDurationMinutes, newCategory, newDescription, standardActivities, id);
     if (!validation.valid) {
       return { success: false, error: validation.error };
     }
-    const authCheck = ensureAuthorizedContext();
-    if (!authCheck.allowed) return { success: false, error: authCheck.error };
 
     const previousName = target.name;
     const previousDuration = target.defaultDurationMinutes;
@@ -1363,10 +1379,18 @@ export function AppProvider({
 
   const toggleStandardActivityStatus = (id) => {
     if (!isAdmin) return { success: false, error: "Apenas administradores podem alterar o status de atividades padrão." };
-    const target = standardActivities.find(a => a.id === id);
-    if (!target) return { success: false, error: "Atividade padrão não encontrada." };
     const authCheck = ensureAuthorizedContext();
     if (!authCheck.allowed) return { success: false, error: authCheck.error };
+
+    if (!authCheck.inMemory && typeof id === 'string' && id.startsWith('sa-')) {
+      return {
+        success: false,
+        error: 'Identificador de atividade padrão inválido ou não sincronizado com o banco de dados. Recarregue os dados da igreja antes de alterar o status.'
+      };
+    }
+
+    const target = standardActivities.find(a => a.id === id);
+    if (!target) return { success: false, error: "Atividade padrão não encontrada." };
 
     const nextActive = !target.active;
 
@@ -1403,14 +1427,22 @@ export function AppProvider({
 
   const deleteStandardActivity = (id) => {
     if (!isAdmin) return { success: false, error: "Apenas administradores podem excluir atividades padrão." };
+    const authCheck = ensureAuthorizedContext();
+    if (!authCheck.allowed) return { success: false, error: authCheck.error };
+
+    if (!authCheck.inMemory && typeof id === 'string' && id.startsWith('sa-')) {
+      return {
+        success: false,
+        error: 'Identificador de atividade padrão inválido ou não sincronizado com o banco de dados. Recarregue os dados da igreja antes de excluir.'
+      };
+    }
+
     const target = standardActivities.find(a => a.id === id);
     if (!target) return { success: false, error: "Atividade padrão não encontrada." };
     const deleteCheck = canDeleteStandardActivity(target, event.activities);
     if (!deleteCheck.canDelete) {
       return { success: false, error: deleteCheck.message };
     }
-    const authCheck = ensureAuthorizedContext();
-    if (!authCheck.allowed) return { success: false, error: authCheck.error };
 
     if (!authCheck.inMemory) {
       return (async () => {
@@ -1463,8 +1495,12 @@ export function AppProvider({
           if (!res.success) {
             return { success: false, error: res.error };
           }
+          const createdId = res.data?.id;
+          if (!createdId) {
+            return { success: false, error: "O banco de dados não retornou o identificador persistido do modelo de culto criado." };
+          }
           const newTemplate = {
-            id: res.data?.id || `st-${Date.now()}`,
+            id: createdId,
             eventTypeId: data.eventTypeId || null,
             name: validation.cleanName,
             description: validation.cleanDesc,
