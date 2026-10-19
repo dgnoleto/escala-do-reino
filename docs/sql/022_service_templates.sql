@@ -150,6 +150,17 @@ begin
     if v_used then return true; end if;
   end if;
 
+  if to_regclass('app_private.audit_entries') is not null then
+    select exists (
+      select 1 from app_private.audit_entries a
+      where a.church_id = p_church_id
+        and a.target_type = 'service_template'
+        and a.target_id = p_template_id
+        and a.action in ('instantiate_service_template', 'apply_service_template_to_event')
+    ) into v_used;
+    if v_used then return true; end if;
+  end if;
+
   return false;
 end;
 $function$;
@@ -416,11 +427,14 @@ begin
   end if;
 
   -- Auditoria
-  insert into app_private.audit_entries (church_id, actor_id, action, details)
+  insert into app_private.audit_entries (church_id, action, actor_user_id, actor_source, target_type, target_id, details)
   values (
     p_church_id,
-    v_uid,
     'create_service_template',
+    v_uid,
+    'application',
+    'service_template',
+    v_template_id,
     jsonb_build_object(
       'template_id', v_template_id,
       'name', v_clean_name,
@@ -580,11 +594,14 @@ begin
   end if;
 
   -- Auditoria
-  insert into app_private.audit_entries (church_id, actor_id, action, details)
+  insert into app_private.audit_entries (church_id, action, actor_user_id, actor_source, target_type, target_id, details)
   values (
     v_st.church_id,
-    v_uid,
     'update_service_template',
+    v_uid,
+    'application',
+    'service_template',
+    p_template_id,
     jsonb_build_object(
       'template_id', p_template_id,
       'previous_name', v_st.name,
@@ -652,11 +669,14 @@ begin
   set active = p_active, updated_at = clock_timestamp()
   where id = p_template_id;
 
-  insert into app_private.audit_entries (church_id, actor_id, action, details)
+  insert into app_private.audit_entries (church_id, action, actor_user_id, actor_source, target_type, target_id, details)
   values (
     v_st.church_id,
-    v_uid,
     case when p_active then 'reactivate_service_template' else 'deactivate_service_template' end,
+    v_uid,
+    'application',
+    'service_template',
+    p_template_id,
     jsonb_build_object('template_id', p_template_id, 'name', v_st.name, 'active', p_active)
   );
 
@@ -720,11 +740,14 @@ begin
 
   delete from app_private.service_templates where id = p_template_id;
 
-  insert into app_private.audit_entries (church_id, actor_id, action, details)
+  insert into app_private.audit_entries (church_id, action, actor_user_id, actor_source, target_type, target_id, details)
   values (
     v_st.church_id,
-    v_uid,
     'delete_service_template',
+    v_uid,
+    'application',
+    'service_template',
+    p_template_id,
     jsonb_build_object('template_id', p_template_id, 'name', v_st.name)
   );
 
@@ -814,5 +837,37 @@ begin
   );
 end;
 $function$;
+
+-- 13. Permissões de Execução e Ownership
+revoke all on function public.list_service_templates(uuid, boolean, uuid) from public, anon;
+grant execute on function public.list_service_templates(uuid, boolean, uuid) to authenticated;
+
+revoke all on function public.get_service_template(uuid) from public, anon;
+grant execute on function public.get_service_template(uuid) to authenticated;
+
+revoke all on function public.create_service_template(uuid, uuid, uuid, text, text, jsonb, jsonb) from public, anon;
+grant execute on function public.create_service_template(uuid, uuid, uuid, text, text, jsonb, jsonb) to authenticated;
+
+revoke all on function public.update_service_template(uuid, uuid, uuid, text, text, jsonb, jsonb) from public, anon;
+grant execute on function public.update_service_template(uuid, uuid, uuid, text, text, jsonb, jsonb) to authenticated;
+
+revoke all on function public.toggle_service_template_status(uuid, uuid, boolean) from public, anon;
+grant execute on function public.toggle_service_template_status(uuid, uuid, boolean) to authenticated;
+
+revoke all on function public.delete_service_template(uuid, uuid) from public, anon;
+grant execute on function public.delete_service_template(uuid, uuid) to authenticated;
+
+revoke all on function public.instantiate_service_template(uuid, uuid, uuid) from public, anon;
+grant execute on function public.instantiate_service_template(uuid, uuid, uuid) to authenticated;
+
+alter function public.list_service_templates(uuid, boolean, uuid) owner to postgres;
+alter function public.get_service_template(uuid) owner to postgres;
+alter function public.create_service_template(uuid, uuid, uuid, text, text, jsonb, jsonb) owner to postgres;
+alter function public.update_service_template(uuid, uuid, uuid, text, text, jsonb, jsonb) owner to postgres;
+alter function public.toggle_service_template_status(uuid, uuid, boolean) owner to postgres;
+alter function public.delete_service_template(uuid, uuid) owner to postgres;
+alter function public.instantiate_service_template(uuid, uuid, uuid) owner to postgres;
+
+notify pgrst, 'reload schema';
 
 commit;

@@ -430,3 +430,310 @@ export function updateEventDurationPolicy(event, newPolicy, isCallerAuthorized =
     lastSyncTimestamp: new Date().toISOString()
   };
 }
+
+/**
+ * Mensagem padronizada de erro para planejamento de eventos.
+ */
+export function eventPlanningErrorMessage(error) {
+  if (!error) return 'Ocorreu um erro ao processar o planejamento do evento.';
+  const rawMsg = typeof error === 'string' ? error : String(error?.message || '');
+  const lower = rawMsg.toLowerCase();
+  const code = String(error?.code || '');
+
+  if (
+    lower.includes('failed to fetch') ||
+    lower.includes('network') ||
+    lower.includes('networkerror') ||
+    lower.includes('load failed') ||
+    lower.includes('abort') ||
+    lower.includes('conexão') ||
+    lower.includes('offline')
+  ) {
+    return 'Falha de conexão com o servidor. Verifique sua rede e tente novamente.';
+  }
+
+  if (code === 'PGRST202' || lower.includes('could not find the function') || lower.includes('schema cache')) {
+    return 'Serviço de planejamento temporariamente indisponível no servidor. Verifique se as migrações foram aplicadas.';
+  }
+
+  if (code === '42501' || code === '28000') {
+    return 'Permissão insuficiente. Apenas administradores ou líderes da liturgia autorizados podem executar esta ação.';
+  }
+  if (code === '22000') {
+    return error.message || 'Dados inválidos. Verifique as datas, horários e a política de duração do evento.';
+  }
+  if (code === '22004') {
+    return 'Parâmetros obrigatórios ausentes para a operação de evento.';
+  }
+  if (code === '23503') {
+    return 'Referência a membro ou igreja inexistente ou inativa.';
+  }
+  if (code === 'P0002') {
+    return 'Evento litúrgico não encontrado.';
+  }
+  return error.message || 'Falha na operação de planejamento litúrgico.';
+}
+
+/**
+ * Utilitário para executar RPCs compatível com versões recentes do cliente Supabase.
+ */
+async function invokeSupabaseRpc(supabaseClient, rpcName, params = {}) {
+  if (!supabaseClient) {
+    throw new Error('Cliente Supabase não fornecido.');
+  }
+  const builder = typeof supabaseClient.schema === 'function'
+    ? supabaseClient.schema('public').rpc(rpcName, params)
+    : supabaseClient.rpc(rpcName, params);
+  return await builder;
+}
+
+/**
+ * Gera identificador UUIDv4 para idempotência de comandos.
+ */
+export function generateCommandUuid() {
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+    return crypto.randomUUID();
+  }
+  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
+    const r = Math.random() * 16 | 0;
+    const v = c === 'x' ? r : (r & 0x3 | 0x8);
+    return v.toString(16);
+  });
+}
+
+/**
+ * Cria edição concreta de culto no Supabase.
+ */
+export async function createChurchEventEditionRemote(
+  supabaseClient,
+  churchIdOrOpts,
+  maybeEventData = {}
+) {
+  let churchId, commandId, title, eventType, plannedStartAt, plannedEndAt, liturgyLeaderMemberId, durationPolicy;
+  if (typeof churchIdOrOpts === 'object' && churchIdOrOpts !== null) {
+    ({
+      churchId,
+      commandId,
+      title,
+      eventType = 'Culto',
+      plannedStartAt,
+      plannedEndAt,
+      liturgyLeaderMemberId = null,
+      durationPolicy = 'warn',
+    } = churchIdOrOpts);
+  } else {
+    churchId = churchIdOrOpts;
+    const d = maybeEventData || {};
+    title = d.title;
+    eventType = d.eventType || d.event_type || 'Culto';
+    plannedStartAt = d.plannedStartAt || d.planned_start_at || (d.event_date && d.start_time ? `${d.event_date}T${d.start_time}:00` : null);
+    plannedEndAt = d.plannedEndAt || d.planned_end_at || (d.event_date && d.target_end_time ? `${d.event_date}T${d.target_end_time}:00` : null) || (plannedStartAt ? new Date(new Date(plannedStartAt).getTime() + (d.planned_duration_minutes || 105) * 60000).toISOString() : null);
+    liturgyLeaderMemberId = d.liturgyLeaderMemberId || d.liturgy_leader_id || d.liturgyLeaderId || null;
+    durationPolicy = d.durationPolicy || d.duration_policy || 'warn';
+    commandId = d.commandId;
+  }
+
+  if (!churchId) {
+    return { success: false, error: 'Identificador da igreja não informado.' };
+  }
+  const durationCheck = calculateAvailableDurationMinutes(plannedStartAt, plannedEndAt);
+  if (!durationCheck.valid) {
+    return { success: false, error: durationCheck.error };
+  }
+  const cleanTitle = normalizeNfcText(title);
+  if (!cleanTitle || cleanTitle.length < MIN_TITLE_LENGTH || cleanTitle.length > MAX_TITLE_LENGTH) {
+    return { success: false, error: `Título deve ter entre ${MIN_TITLE_LENGTH} e ${MAX_TITLE_LENGTH} caracteres.` };
+  }
+  const cleanPolicy = durationPolicy ? String(durationPolicy).toLowerCase().trim() : 'warn';
+  if (!DURATION_POLICIES.includes(cleanPolicy)) {
+    return { success: false, error: "Política de duração inválida. Opções aceitas: 'warn' ou 'block'." };
+  }
+  const cmdId = commandId || generateCommandUuid();
+  try {
+    const { data, error } = await invokeSupabaseRpc(supabaseClient, 'create_church_event_edition', {
+      p_church_id: churchId,
+      p_command_id: cmdId,
+      p_title: cleanTitle,
+      p_event_type: eventType,
+      p_planned_start_at: plannedStartAt,
+      p_planned_end_at: plannedEndAt,
+      p_liturgy_leader_member_id: liturgyLeaderMemberId || null,
+      p_duration_policy: cleanPolicy,
+    });
+    if (error) {
+      return { success: false, error: eventPlanningErrorMessage(error), rawError: error };
+    }
+    const receipt = Array.isArray(data) ? data[0] : data;
+    const eventId = receipt?.result_entity_id || receipt?.result_payload?.event_id || `ev-${Date.now()}`;
+    return {
+      success: true,
+      eventId,
+      data: { id: eventId, ...(receipt?.result_payload || {}) },
+      payload: receipt?.result_payload,
+      receipt,
+      error: null,
+    };
+  } catch (err) {
+    return { success: false, error: eventPlanningErrorMessage(err), rawError: err };
+  }
+}
+
+/**
+ * Reordena atividades litúrgicas no Supabase.
+ */
+export async function reorderEventItemsRemote(
+  supabaseClient,
+  churchIdOrOpts,
+  maybeEventId = null,
+  maybeItemOrders = []
+) {
+  let churchId, commandId, eventId, orderedItemIds;
+  if (typeof churchIdOrOpts === 'object' && churchIdOrOpts !== null) {
+    ({ churchId, commandId, eventId, orderedItemIds = [] } = churchIdOrOpts);
+  } else {
+    churchId = churchIdOrOpts;
+    eventId = maybeEventId;
+    orderedItemIds = Array.isArray(maybeItemOrders)
+      ? maybeItemOrders.map(item => (typeof item === 'object' ? item.item_id || item.id : item)).filter(Boolean)
+      : [];
+  }
+
+  if (!churchId || !eventId || !Array.isArray(orderedItemIds) || orderedItemIds.length === 0) {
+    return { success: false, error: 'Parâmetros obrigatórios ausentes.' };
+  }
+  const cmdId = commandId || generateCommandUuid();
+  try {
+    const { data, error } = await invokeSupabaseRpc(supabaseClient, 'reorder_event_items', {
+      p_church_id: churchId,
+      p_command_id: cmdId,
+      p_event_id: eventId,
+      p_ordered_item_ids: orderedItemIds,
+    });
+    if (error) {
+      return { success: false, error: eventPlanningErrorMessage(error), rawError: error };
+    }
+    const receipt = Array.isArray(data) ? data[0] : data;
+    return { success: true, receipt, error: null };
+  } catch (err) {
+    return { success: false, error: eventPlanningErrorMessage(err), rawError: err };
+  }
+}
+
+/**
+ * Configura política de duração do evento no Supabase.
+ */
+export async function setEventDurationPolicyRemote(
+  supabaseClient,
+  churchIdOrOpts,
+  maybeEventId = null,
+  maybePolicy = null,
+  maybeTargetEndTime = null
+) {
+  let churchId, commandId, eventId, durationPolicy;
+  if (typeof churchIdOrOpts === 'object' && churchIdOrOpts !== null) {
+    ({ churchId, commandId, eventId, durationPolicy } = churchIdOrOpts);
+  } else {
+    churchId = churchIdOrOpts;
+    eventId = maybeEventId;
+    durationPolicy = maybePolicy;
+  }
+
+  if (!churchId || !eventId || !durationPolicy) {
+    return { success: false, error: 'Parâmetros obrigatórios ausentes.' };
+  }
+  if (!DURATION_POLICIES.includes(durationPolicy)) {
+    return { success: false, error: "Política inválida. Opções aceitas: 'warn' ou 'block'." };
+  }
+  const cmdId = commandId || generateCommandUuid();
+  try {
+    const { data, error } = await invokeSupabaseRpc(supabaseClient, 'set_event_duration_policy', {
+      p_church_id: churchId,
+      p_command_id: cmdId,
+      p_event_id: eventId,
+      p_duration_policy: durationPolicy,
+    });
+    if (error) {
+      return { success: false, error: eventPlanningErrorMessage(error), rawError: error };
+    }
+    const receipt = Array.isArray(data) ? data[0] : data;
+    return { success: true, durationPolicy, receipt, error: null };
+  } catch (err) {
+    return { success: false, error: eventPlanningErrorMessage(err), rawError: err };
+  }
+}
+
+/**
+ * Publica a programação litúrgica no Supabase.
+ */
+export async function publishEventProgramRemote(
+  supabaseClient,
+  churchIdOrOpts,
+  maybeEventId = null,
+  maybeVersion = null,
+  maybeItems = []
+) {
+  let churchId, commandId, eventId, expectedVersion;
+  if (typeof churchIdOrOpts === 'object' && churchIdOrOpts !== null) {
+    ({ churchId, commandId, eventId, expectedVersion } = churchIdOrOpts);
+  } else {
+    churchId = churchIdOrOpts;
+    eventId = maybeEventId;
+    expectedVersion = maybeVersion;
+  }
+
+  if (!churchId || !eventId) {
+    return { success: false, error: 'Parâmetros obrigatórios ausentes.' };
+  }
+  const cmdId = commandId || generateCommandUuid();
+  try {
+    const { data, error } = await invokeSupabaseRpc(supabaseClient, 'publish_event_program', {
+      p_church_id: churchId,
+      p_command_id: cmdId,
+      p_event_id: eventId,
+    });
+    if (error) {
+      return { success: false, error: eventPlanningErrorMessage(error), rawError: error };
+    }
+    const receipt = Array.isArray(data) ? data[0] : data;
+    return { success: true, payload: receipt?.result_payload, receipt, error: null };
+  } catch (err) {
+    return { success: false, error: eventPlanningErrorMessage(err), rawError: err };
+  }
+}
+
+/**
+ * Salva rascunho da programação no Supabase.
+ */
+export async function saveEventProgramDraftRemote(
+  supabaseClient,
+  churchIdOrOpts,
+  maybeEventId = null,
+  maybeItems = []
+) {
+  let churchId, commandId, eventId;
+  if (typeof churchIdOrOpts === 'object' && churchIdOrOpts !== null) {
+    ({ churchId, commandId, eventId } = churchIdOrOpts);
+  } else {
+    churchId = churchIdOrOpts;
+    eventId = maybeEventId;
+  }
+
+  if (!churchId || !eventId) {
+    return { success: false, error: 'Parâmetros obrigatórios ausentes.' };
+  }
+  const cmdId = commandId || generateCommandUuid();
+  try {
+    const { data, error } = await invokeSupabaseRpc(supabaseClient, 'save_event_program_draft', {
+      p_church_id: churchId,
+      p_command_id: cmdId,
+      p_event_id: eventId,
+    });
+    if (error) {
+      return { success: false, error: eventPlanningErrorMessage(error), rawError: error };
+    }
+    const receipt = Array.isArray(data) ? data[0] : data;
+    return { success: true, payload: receipt?.result_payload, receipt, error: null };
+  } catch (err) {
+    return { success: false, error: eventPlanningErrorMessage(err), rawError: err };
+  }
+}

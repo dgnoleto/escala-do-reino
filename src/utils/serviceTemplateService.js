@@ -312,3 +312,358 @@ export function canDeleteServiceTemplate(template, events = []) {
   }
   return { canDelete: true, reason: null };
 }
+
+/**
+ * Mensagem padronizada de erro para modelos de culto.
+ */
+export function serviceTemplateErrorMessage(error) {
+  if (!error) return 'Ocorreu um erro ao processar o modelo de culto.';
+  const rawMsg = typeof error === 'string' ? error : String(error?.message || '');
+  const lower = rawMsg.toLowerCase();
+  const code = String(error?.code || '');
+
+  if (
+    lower.includes('failed to fetch') ||
+    lower.includes('network') ||
+    lower.includes('networkerror') ||
+    lower.includes('load failed') ||
+    lower.includes('abort') ||
+    lower.includes('conexão') ||
+    lower.includes('offline')
+  ) {
+    return 'Falha de conexão com o servidor. Verifique sua rede e tente novamente.';
+  }
+
+  if (code === 'PGRST202' || lower.includes('could not find the function') || lower.includes('schema cache')) {
+    return 'Serviço de modelos temporariamente indisponível no servidor. Verifique se as migrações foram aplicadas.';
+  }
+
+  if (code === '42501' || code === '28000') {
+    return 'Permissão insuficiente. Apenas administradores autorizados podem gerenciar modelos de culto.';
+  }
+  if (code === '23505' || code === 'duplicate') {
+    return 'Já existe um modelo de culto cadastrado com este nome nesta igreja.';
+  }
+  if (code === '23503' || error.code === 'template_in_use') {
+    return 'Este modelo já foi utilizado em eventos históricos e não pode ser excluído. Desative-o em vez de excluir.';
+  }
+  if (code === '23514' || code === '22023') {
+    return 'Dados do modelo de culto inválidos. Verifique os campos e durações preenchidos.';
+  }
+  return error.message || 'Falha na operação de modelos de culto.';
+}
+
+/**
+ * Utilitário para executar RPCs compatível com versões recentes do cliente Supabase.
+ */
+async function invokeSupabaseRpc(supabaseClient, rpcName, params = {}) {
+  if (!supabaseClient) {
+    throw new Error('Cliente Supabase não fornecido.');
+  }
+  const builder = typeof supabaseClient.schema === 'function'
+    ? supabaseClient.schema('public').rpc(rpcName, params)
+    : supabaseClient.rpc(rpcName, params);
+  return await builder;
+}
+
+/**
+ * Gera identificador UUIDv4 para idempotência de comandos.
+ */
+export function generateCommandUuid() {
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+    return crypto.randomUUID();
+  }
+  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
+    const r = Math.random() * 16 | 0;
+    const v = c === 'x' ? r : (r & 0x3 | 0x8);
+    return v.toString(16);
+  });
+}
+
+/**
+ * Consulta modelos de culto da igreja no Supabase.
+ */
+export async function fetchServiceTemplatesRemote(supabaseClient, churchId, includeInactive = true) {
+  if (!churchId) {
+    return { success: false, data: [], error: 'Identificador da igreja não informado.' };
+  }
+  try {
+    const { data, error } = await invokeSupabaseRpc(supabaseClient, 'list_service_templates', {
+      p_church_id: churchId,
+      p_include_inactive: includeInactive,
+    });
+    if (error) {
+      return { success: false, data: [], error: serviceTemplateErrorMessage(error), rawError: error };
+    }
+    const list = Array.isArray(data)
+      ? data.map((item, idx) => toServiceTemplateObject(item, idx)).filter(Boolean)
+      : [];
+    return { success: true, data: list, error: null };
+  } catch (err) {
+    return { success: false, data: [], error: serviceTemplateErrorMessage(err), rawError: err };
+  }
+}
+
+/**
+ * Busca modelo de culto por ID no Supabase.
+ */
+export async function getServiceTemplateRemote(supabaseClient, { churchId, templateId }) {
+  if (!churchId || !templateId) {
+    return { success: false, template: null, error: 'Parâmetros obrigatórios ausentes.' };
+  }
+  try {
+    const { data, error } = await invokeSupabaseRpc(supabaseClient, 'get_service_template', {
+      p_church_id: churchId,
+      p_template_id: templateId,
+    });
+    if (error) {
+      return { success: false, template: null, error: serviceTemplateErrorMessage(error), rawError: error };
+    }
+    const row = Array.isArray(data) ? data[0] : data;
+    if (!row) {
+      return { success: false, template: null, error: 'Modelo de culto não encontrado.' };
+    }
+    return { success: true, template: toServiceTemplateObject(row), error: null };
+  } catch (err) {
+    return { success: false, template: null, error: serviceTemplateErrorMessage(err), rawError: err };
+  }
+}
+
+/**
+ * Cadastra modelo de culto no Supabase.
+ */
+export async function createServiceTemplateRemote(
+  supabaseClient,
+  churchIdOrOpts,
+  maybeData = {}
+) {
+  let churchId, commandId, name, description, eventTypeId, activities, parallelServices;
+  if (typeof churchIdOrOpts === 'object' && churchIdOrOpts !== null) {
+    ({
+      churchId,
+      commandId,
+      name,
+      description = '',
+      eventTypeId = null,
+      activities = [],
+      parallelServices = [],
+    } = churchIdOrOpts);
+  } else {
+    churchId = churchIdOrOpts;
+    ({
+      name,
+      description = '',
+      eventTypeId = null,
+      activities = [],
+      parallelServices = [],
+      commandId,
+    } = maybeData || {});
+  }
+
+  if (!churchId) {
+    return { success: false, error: 'Identificador da igreja não informado.' };
+  }
+  const validation = validateServiceTemplate({ name, description, activities, parallelServices });
+  if (!validation.valid) {
+    return { success: false, error: validation.error };
+  }
+  const cmdId = commandId || generateCommandUuid();
+  const cleanActs = (activities || []).map((a, i) => toTemplateActivity(a, i)).filter(Boolean);
+  const cleanServices = (parallelServices || []).map((s, i) => toTemplateParallelService(s, i)).filter(Boolean);
+
+  try {
+    const { data, error } = await invokeSupabaseRpc(supabaseClient, 'create_service_template', {
+      p_church_id: churchId,
+      p_command_id: cmdId,
+      p_name: validation.cleanName,
+      p_description: validation.cleanDesc || null,
+      p_event_type_id: eventTypeId || null,
+      p_activities: cleanActs,
+      p_parallel_services: cleanServices,
+    });
+    if (error) {
+      return { success: false, error: serviceTemplateErrorMessage(error), rawError: error };
+    }
+    const receipt = Array.isArray(data) ? data[0] : data;
+    const createdId = receipt?.result_entity_id || receipt?.result_payload?.template_id || `st-${Date.now()}`;
+    const templateObj = {
+      id: createdId,
+      name: validation.cleanName,
+      description: validation.cleanDesc || '',
+      eventTypeId,
+      active: true,
+      activities: cleanActs,
+      parallelServices: cleanServices,
+      createdAt: receipt?.created_at || new Date().toISOString(),
+      updatedAt: receipt?.created_at || new Date().toISOString(),
+    };
+    return { success: true, template: templateObj, data: templateObj, receipt, error: null };
+  } catch (err) {
+    return { success: false, error: serviceTemplateErrorMessage(err), rawError: err };
+  }
+}
+
+/**
+ * Atualiza modelo de culto no Supabase.
+ */
+export async function updateServiceTemplateRemote(
+  supabaseClient,
+  churchIdOrOpts,
+  maybeTemplateId = null,
+  maybeData = {}
+) {
+  let churchId, commandId, templateId, name, description, eventTypeId, activities, parallelServices;
+  if (typeof churchIdOrOpts === 'object' && churchIdOrOpts !== null) {
+    ({
+      churchId,
+      commandId,
+      templateId,
+      name,
+      description = '',
+      eventTypeId = null,
+      activities = [],
+      parallelServices = [],
+    } = churchIdOrOpts);
+  } else {
+    churchId = churchIdOrOpts;
+    templateId = maybeTemplateId;
+    ({
+      name,
+      description = '',
+      eventTypeId = null,
+      activities = [],
+      parallelServices = [],
+      commandId,
+    } = maybeData || {});
+  }
+
+  if (!churchId || !templateId) {
+    return { success: false, error: 'Parâmetros obrigatórios ausentes.' };
+  }
+  const validation = validateServiceTemplate({ name, description, activities, parallelServices });
+  if (!validation.valid) {
+    return { success: false, error: validation.error };
+  }
+  const cmdId = commandId || generateCommandUuid();
+  const cleanActs = (activities || []).map((a, i) => toTemplateActivity(a, i)).filter(Boolean);
+  const cleanServices = (parallelServices || []).map((s, i) => toTemplateParallelService(s, i)).filter(Boolean);
+
+  try {
+    const { data, error } = await invokeSupabaseRpc(supabaseClient, 'update_service_template', {
+      p_church_id: churchId,
+      p_command_id: cmdId,
+      p_template_id: templateId,
+      p_name: validation.cleanName,
+      p_description: validation.cleanDesc || null,
+      p_event_type_id: eventTypeId || null,
+      p_activities: cleanActs,
+      p_parallel_services: cleanServices,
+    });
+    if (error) {
+      return { success: false, error: serviceTemplateErrorMessage(error), rawError: error };
+    }
+    const receipt = Array.isArray(data) ? data[0] : data;
+    return { success: true, receipt, error: null };
+  } catch (err) {
+    return { success: false, error: serviceTemplateErrorMessage(err), rawError: err };
+  }
+}
+
+/**
+ * Alterna status (ativo/inativo) de modelo no Supabase.
+ */
+export async function toggleServiceTemplateStatusRemote(supabaseClient, churchIdOrOpts, maybeTemplateId = null, maybeActive = null) {
+  let churchId, commandId, templateId;
+  if (typeof churchIdOrOpts === 'object' && churchIdOrOpts !== null) {
+    ({ churchId, commandId, templateId } = churchIdOrOpts);
+  } else {
+    churchId = churchIdOrOpts;
+    templateId = maybeTemplateId;
+  }
+
+  if (!churchId || !templateId) {
+    return { success: false, error: 'Parâmetros obrigatórios ausentes.' };
+  }
+  const cmdId = commandId || generateCommandUuid();
+  try {
+    const { data, error } = await invokeSupabaseRpc(supabaseClient, 'toggle_service_template_status', {
+      p_church_id: churchId,
+      p_command_id: cmdId,
+      p_template_id: templateId,
+    });
+    if (error) {
+      return { success: false, error: serviceTemplateErrorMessage(error), rawError: error };
+    }
+    const receipt = Array.isArray(data) ? data[0] : data;
+    const active = receipt?.result_payload?.active ?? maybeActive;
+    return { success: true, active, receipt, error: null };
+  } catch (err) {
+    return { success: false, error: serviceTemplateErrorMessage(err), rawError: err };
+  }
+}
+
+/**
+ * Exclui fisicamente modelo de culto sem histórico no Supabase.
+ */
+export async function deleteServiceTemplateRemote(supabaseClient, churchIdOrOpts, maybeTemplateId = null) {
+  let churchId, commandId, templateId;
+  if (typeof churchIdOrOpts === 'object' && churchIdOrOpts !== null) {
+    ({ churchId, commandId, templateId } = churchIdOrOpts);
+  } else {
+    churchId = churchIdOrOpts;
+    templateId = maybeTemplateId;
+  }
+
+  if (!churchId || !templateId) {
+    return { success: false, error: 'Parâmetros obrigatórios ausentes.' };
+  }
+  const cmdId = commandId || generateCommandUuid();
+  try {
+    const { data, error } = await invokeSupabaseRpc(supabaseClient, 'delete_service_template', {
+      p_church_id: churchId,
+      p_command_id: cmdId,
+      p_template_id: templateId,
+    });
+    if (error) {
+      return { success: false, error: serviceTemplateErrorMessage(error), rawError: error };
+    }
+    const receipt = Array.isArray(data) ? data[0] : data;
+    return { success: true, receipt, error: null };
+  } catch (err) {
+    return { success: false, error: serviceTemplateErrorMessage(err), rawError: err };
+  }
+}
+
+/**
+ * Aplica modelo a uma edição de evento no Supabase.
+ */
+export async function instantiateServiceTemplateRemote(supabaseClient, churchIdOrOpts, maybeTemplateId = null, maybeEventId = null) {
+  let churchId, commandId, templateId, eventId;
+  if (typeof churchIdOrOpts === 'object' && churchIdOrOpts !== null) {
+    ({ churchId, commandId, templateId, eventId } = churchIdOrOpts);
+  } else {
+    churchId = churchIdOrOpts;
+    templateId = maybeTemplateId;
+    eventId = maybeEventId;
+  }
+
+  if (!churchId || !templateId || !eventId) {
+    return { success: false, error: 'Parâmetros obrigatórios ausentes.' };
+  }
+  const cmdId = commandId || generateCommandUuid();
+  try {
+    const { data, error } = await invokeSupabaseRpc(supabaseClient, 'instantiate_service_template', {
+      p_church_id: churchId,
+      p_command_id: cmdId,
+      p_template_id: templateId,
+      p_event_id: eventId,
+    });
+    if (error) {
+      return { success: false, error: serviceTemplateErrorMessage(error), rawError: error };
+    }
+    const receipt = Array.isArray(data) ? data[0] : data;
+    return { success: true, receipt, error: null };
+  } catch (err) {
+    return { success: false, error: serviceTemplateErrorMessage(err), rawError: err };
+  }
+}

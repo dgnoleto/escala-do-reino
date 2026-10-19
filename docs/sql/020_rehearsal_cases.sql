@@ -151,9 +151,10 @@ begin
 
   -- R14 (CA03): Simular uso do motivo in_use_reason_id no histórico de auditoria/atividades
   insert into app_private.audit_entries (
-    church_id, entity_type, entity_id, action, actor_user_id, details
+    church_id, action, actor_user_id, actor_source, target_type, target_id, details
   ) values (
-    pg_temp.reason_id(100), 'activity_cancellation', gen_random_uuid(), 'cancel_activity', pg_temp.reason_id(1),
+    pg_temp.reason_id(100), 'cancel_activity', pg_temp.reason_id(1), 'application',
+    'activity_cancellation', gen_random_uuid(),
     jsonb_build_object('cancellation_reason_id', in_use_reason_id, 'reason', 'Ajuste de Cronograma')
   );
 

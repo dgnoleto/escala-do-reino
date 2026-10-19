@@ -262,7 +262,7 @@ export default function PlanningView() {
     setCreateEventModalOpen(true);
   };
 
-  const handleCreateEventEditionSubmit = (e) => {
+  const handleCreateEventEditionSubmit = async (e) => {
     e?.preventDefault?.();
     setCreateEventError('');
     setCreateEventSuccess('');
@@ -292,7 +292,7 @@ export default function PlanningView() {
       }
     }
 
-    const res = createEventEdition({
+    const res = await createEventEdition({
       title: newEventTitle,
       type: newEventType,
       plannedStartAt: startIso,
@@ -314,10 +314,10 @@ export default function PlanningView() {
     }
   };
 
-  const handlePublishProgram = () => {
+  const handlePublishProgram = async () => {
     setPublishError('');
     setPublishFeedback('');
-    const res = publishCurrentProgram();
+    const res = await publishCurrentProgram();
     if (!res.success) {
       setPublishError(res.error);
     } else {
@@ -326,16 +326,20 @@ export default function PlanningView() {
     }
   };
 
-  const handleSaveDraft = () => {
+  const handleSaveDraft = async () => {
     setPublishError('');
-    saveCurrentProgramDraft();
-    setPublishFeedback('Rascunho da programação salvo com sucesso.');
-    setTimeout(() => setPublishFeedback(''), 4000);
+    const res = await saveCurrentProgramDraft();
+    if (res && !res.success) {
+      setPublishError(res.error);
+    } else {
+      setPublishFeedback('Rascunho da programação salvo com sucesso.');
+      setTimeout(() => setPublishFeedback(''), 4000);
+    }
   };
 
-  const handleChangeDurationPolicy = (val) => {
+  const handleChangeDurationPolicy = async (val) => {
     setPublishError('');
-    const res = setEventDurationPolicy(val);
+    const res = await setEventDurationPolicy(val);
     if (!res.success) {
       setPublishError(res.error);
     }

@@ -17,7 +17,7 @@ import {
   clearAuthRedirectErrorFromUrl,
 } from '../utils/invitationCommandService';
 
-const AuthContext = createContext(null);
+export const AuthContext = createContext(null);
 
 /**
  * AuthProvider — gerencia sessão Supabase Auth e vínculo com a igreja.

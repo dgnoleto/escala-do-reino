@@ -26,11 +26,11 @@ $preflight$;
 
 -- 1. Evolução da Tabela de Eventos com Políticas de Duração e Publicação
 alter table app_private.events
-  add column if not null duration_policy text not null default 'warn' check (duration_policy in ('warn', 'block')),
-  add column if not null program_status text not null default 'draft' check (program_status in ('draft', 'published')),
-  add column if not null program_version integer not null default 1,
-  add column if not null published_at timestamptz,
-  add column if not null published_by_member_id uuid references app_private.members(id) on delete set null;
+  add column if not exists duration_policy text not null default 'warn' check (duration_policy in ('warn', 'block')),
+  add column if not exists program_status text not null default 'draft' check (program_status in ('draft', 'published')),
+  add column if not exists program_version integer not null default 1,
+  add column if not exists published_at timestamptz,
+  add column if not exists published_by_member_id uuid references app_private.members(id) on delete set null;
 
 -- 2. Tabela de Recibos para Idempotência (Planejamento e Publicação de Eventos)
 create table app_private.event_planning_receipts (
@@ -230,9 +230,9 @@ begin
   );
 
   insert into app_private.audit_entries (
-    church_id, actor_member_id, action, target_entity_type, target_entity_id, payload, created_at
+    church_id, action, actor_user_id, actor_source, target_type, target_id, details
   ) values (
-    p_church_id, v_caller_member_id, c_action, 'events', v_event_id, v_payload, v_created_at
+    p_church_id, c_action, v_user_id, 'application', 'events', v_event_id, v_payload
   );
 
   return query select
@@ -274,6 +274,8 @@ declare
   v_order integer := 1;
   v_created_at timestamptz;
   v_payload jsonb;
+  v_existing_receipt record;
+  v_params_hash jsonb;
   c_action constant text := 'reorder_event_items';
 begin
   v_user_id := (select auth.uid());
@@ -283,6 +285,27 @@ begin
 
   if p_church_id is null or p_command_id is null or p_event_id is null or p_ordered_item_ids is null then
     raise exception 'Parâmetros obrigatórios ausentes.' using errcode = '22004';
+  end if;
+
+  v_params_hash := jsonb_build_object(
+    'event_id', p_event_id,
+    'ordered_item_ids', p_ordered_item_ids
+  );
+
+  -- Idempotência por recibo
+  select r.result, r.created_at into v_existing_receipt
+  from app_private.event_planning_receipts r
+  where r.user_id = v_user_id and r.command_id = p_command_id;
+
+  if v_existing_receipt is not null then
+    return query select
+      p_command_id,
+      c_action,
+      p_church_id,
+      (v_existing_receipt.result->>'event_id')::uuid,
+      v_existing_receipt.result,
+      v_existing_receipt.created_at;
+    return;
   end if;
 
   perform pg_advisory_xact_lock(hashtext(v_user_id::text), hashtext(p_command_id::text));
@@ -327,10 +350,16 @@ begin
     'total_items_reordered', array_length(p_ordered_item_ids, 1)
   );
 
-  insert into app_private.audit_entries (
-    church_id, actor_member_id, action, target_entity_type, target_entity_id, payload, created_at
+  insert into app_private.event_planning_receipts (
+    user_id, command_id, church_id, action, params, result, created_at
   ) values (
-    p_church_id, v_caller_member_id, c_action, 'events', p_event_id, v_payload, v_created_at
+    v_user_id, p_command_id, p_church_id, c_action, v_params_hash, v_payload, v_created_at
+  );
+
+  insert into app_private.audit_entries (
+    church_id, action, actor_user_id, actor_source, target_type, target_id, details
+  ) values (
+    p_church_id, c_action, v_user_id, 'application', 'events', p_event_id, v_payload
   );
 
   return query select
@@ -371,6 +400,8 @@ declare
   v_policy_clean text;
   v_created_at timestamptz;
   v_payload jsonb;
+  v_existing_receipt record;
+  v_params_hash jsonb;
   c_action constant text := 'set_event_duration_policy';
 begin
   v_user_id := (select auth.uid());
@@ -381,6 +412,27 @@ begin
   v_policy_clean := lower(btrim(coalesce(p_duration_policy, '')));
   if v_policy_clean not in ('warn', 'block') then
     raise exception 'Política de duração inválida. Opções: warn ou block.' using errcode = '22000';
+  end if;
+
+  v_params_hash := jsonb_build_object(
+    'event_id', p_event_id,
+    'duration_policy', v_policy_clean
+  );
+
+  -- Idempotência por recibo
+  select r.result, r.created_at into v_existing_receipt
+  from app_private.event_planning_receipts r
+  where r.user_id = v_user_id and r.command_id = p_command_id;
+
+  if v_existing_receipt is not null then
+    return query select
+      p_command_id,
+      c_action,
+      p_church_id,
+      (v_existing_receipt.result->>'event_id')::uuid,
+      v_existing_receipt.result,
+      v_existing_receipt.created_at;
+    return;
   end if;
 
   perform pg_advisory_xact_lock(hashtext(v_user_id::text), hashtext(p_command_id::text));
@@ -415,10 +467,16 @@ begin
     'duration_policy', v_policy_clean
   );
 
-  insert into app_private.audit_entries (
-    church_id, actor_member_id, action, target_entity_type, target_entity_id, payload, created_at
+  insert into app_private.event_planning_receipts (
+    user_id, command_id, church_id, action, params, result, created_at
   ) values (
-    p_church_id, v_caller_member_id, c_action, 'events', p_event_id, v_payload, v_created_at
+    v_user_id, p_command_id, p_church_id, c_action, v_params_hash, v_payload, v_created_at
+  );
+
+  insert into app_private.audit_entries (
+    church_id, action, actor_user_id, actor_source, target_type, target_id, details
+  ) values (
+    p_church_id, c_action, v_user_id, 'application', 'events', p_event_id, v_payload
   );
 
   return query select
@@ -460,11 +518,31 @@ declare
   v_overflow_seconds integer;
   v_created_at timestamptz;
   v_payload jsonb;
+  v_existing_receipt record;
+  v_params_hash jsonb;
   c_action constant text := 'publish_event_program';
 begin
   v_user_id := (select auth.uid());
   if v_user_id is null then
     raise exception 'Não autenticado.' using errcode = '28000';
+  end if;
+
+  v_params_hash := jsonb_build_object('event_id', p_event_id);
+
+  -- Idempotência por recibo
+  select r.result, r.created_at into v_existing_receipt
+  from app_private.event_planning_receipts r
+  where r.user_id = v_user_id and r.command_id = p_command_id;
+
+  if v_existing_receipt is not null then
+    return query select
+      p_command_id,
+      c_action,
+      p_church_id,
+      (v_existing_receipt.result->>'event_id')::uuid,
+      v_existing_receipt.result,
+      v_existing_receipt.created_at;
+    return;
   end if;
 
   perform pg_advisory_xact_lock(hashtext(v_user_id::text), hashtext(p_command_id::text));
@@ -525,10 +603,16 @@ begin
     'published_at', v_created_at
   );
 
-  insert into app_private.audit_entries (
-    church_id, actor_member_id, action, target_entity_type, target_entity_id, payload, created_at
+  insert into app_private.event_planning_receipts (
+    user_id, command_id, church_id, action, params, result, created_at
   ) values (
-    p_church_id, v_caller_member_id, c_action, 'events', p_event_id, v_payload, v_created_at
+    v_user_id, p_command_id, p_church_id, c_action, v_params_hash, v_payload, v_created_at
+  );
+
+  insert into app_private.audit_entries (
+    church_id, action, actor_user_id, actor_source, target_type, target_id, details
+  ) values (
+    p_church_id, c_action, v_user_id, 'application', 'events', p_event_id, v_payload
   );
 
   return query select
@@ -567,11 +651,31 @@ declare
   v_event record;
   v_created_at timestamptz;
   v_payload jsonb;
+  v_existing_receipt record;
+  v_params_hash jsonb;
   c_action constant text := 'save_event_program_draft';
 begin
   v_user_id := (select auth.uid());
   if v_user_id is null then
     raise exception 'Não autenticado.' using errcode = '28000';
+  end if;
+
+  v_params_hash := jsonb_build_object('event_id', p_event_id);
+
+  -- Idempotência por recibo
+  select r.result, r.created_at into v_existing_receipt
+  from app_private.event_planning_receipts r
+  where r.user_id = v_user_id and r.command_id = p_command_id;
+
+  if v_existing_receipt is not null then
+    return query select
+      p_command_id,
+      c_action,
+      p_church_id,
+      (v_existing_receipt.result->>'event_id')::uuid,
+      v_existing_receipt.result,
+      v_existing_receipt.created_at;
+    return;
   end if;
 
   perform pg_advisory_xact_lock(hashtext(v_user_id::text), hashtext(p_command_id::text));
@@ -605,6 +709,18 @@ begin
     'program_status', 'draft'
   );
 
+  insert into app_private.event_planning_receipts (
+    user_id, command_id, church_id, action, params, result, created_at
+  ) values (
+    v_user_id, p_command_id, p_church_id, c_action, v_params_hash, v_payload, v_created_at
+  );
+
+  insert into app_private.audit_entries (
+    church_id, action, actor_user_id, actor_source, target_type, target_id, details
+  ) values (
+    p_church_id, c_action, v_user_id, 'application', 'events', p_event_id, v_payload
+  );
+
   return query select
     p_command_id,
     c_action,
@@ -615,11 +731,28 @@ begin
 end;
 $function$;
 
--- 8. Permissões de Execução
+-- 8. Permissões de Execução e Ownership
+revoke all on function public.create_church_event_edition(uuid, uuid, text, text, timestamptz, timestamptz, uuid, text) from public, anon;
 grant execute on function public.create_church_event_edition(uuid, uuid, text, text, timestamptz, timestamptz, uuid, text) to authenticated;
+
+revoke all on function public.reorder_event_items(uuid, uuid, uuid, uuid[]) from public, anon;
 grant execute on function public.reorder_event_items(uuid, uuid, uuid, uuid[]) to authenticated;
+
+revoke all on function public.set_event_duration_policy(uuid, uuid, uuid, text) from public, anon;
 grant execute on function public.set_event_duration_policy(uuid, uuid, uuid, text) to authenticated;
+
+revoke all on function public.publish_event_program(uuid, uuid, uuid) from public, anon;
 grant execute on function public.publish_event_program(uuid, uuid, uuid) to authenticated;
+
+revoke all on function public.save_event_program_draft(uuid, uuid, uuid) from public, anon;
 grant execute on function public.save_event_program_draft(uuid, uuid, uuid) to authenticated;
+
+alter function public.create_church_event_edition(uuid, uuid, text, text, timestamptz, timestamptz, uuid, text) owner to postgres;
+alter function public.reorder_event_items(uuid, uuid, uuid, uuid[]) owner to postgres;
+alter function public.set_event_duration_policy(uuid, uuid, uuid, text) owner to postgres;
+alter function public.publish_event_program(uuid, uuid, uuid) owner to postgres;
+alter function public.save_event_program_draft(uuid, uuid, uuid) owner to postgres;
+
+notify pgrst, 'reload schema';
 
 commit;

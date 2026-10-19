@@ -34,23 +34,23 @@ insert into auth.users (id, email, email_confirmed_at, raw_app_meta_data) values
   (pg_temp.ep_id(99), 'externo@outra.com', clock_timestamp(), '{"provider":"email"}'::jsonb)
 on conflict do nothing;
 
-insert into app_private.churches (id, name, slug, timezone, status) values
-  (pg_temp.ep_id(10), 'Igreja Piloto 023', 'igreja-023', 'America/Sao_Paulo', 'active'),
-  (pg_temp.ep_id(20), 'Outra Igreja 023', 'outra-023', 'America/Manaus', 'active')
+insert into app_private.churches (id, name, timezone, default_duration_policy, status) values
+  (pg_temp.ep_id(10), 'Igreja Piloto 023', 'America/Sao_Paulo', 'warn', 'active'),
+  (pg_temp.ep_id(20), 'Outra Igreja 023', 'America/Manaus', 'warn', 'active')
 on conflict do nothing;
 
-insert into app_private.members (id, church_id, user_id, full_name, status) values
-  (pg_temp.ep_id(1), pg_temp.ep_id(10), pg_temp.ep_id(1), 'Pastor Marcos Admin', 'active'),
-  (pg_temp.ep_id(2), pg_temp.ep_id(10), pg_temp.ep_id(2), 'Carlos Liturgia', 'active'),
-  (pg_temp.ep_id(3), pg_temp.ep_id(10), pg_temp.ep_id(3), 'Lucas Sonoplastia', 'active'),
-  (pg_temp.ep_id(99), pg_temp.ep_id(20), pg_temp.ep_id(99), 'Membro Outra', 'active')
+insert into app_private.members (id, church_id, display_name, created_by_user_id, status) values
+  (pg_temp.ep_id(1), pg_temp.ep_id(10), 'Pastor Marcos Admin', pg_temp.ep_id(1), 'active'),
+  (pg_temp.ep_id(2), pg_temp.ep_id(10), 'Carlos Liturgia', pg_temp.ep_id(1), 'active'),
+  (pg_temp.ep_id(3), pg_temp.ep_id(10), 'Lucas Sonoplastia', pg_temp.ep_id(1), 'active'),
+  (pg_temp.ep_id(99), pg_temp.ep_id(20), 'Membro Outra', pg_temp.ep_id(99), 'active')
 on conflict do nothing;
 
-insert into app_private.church_access (church_id, user_id, member_id, is_admin, status, onboarding_completed_at) values
-  (pg_temp.ep_id(10), pg_temp.ep_id(1), pg_temp.ep_id(1), true, 'active', clock_timestamp()),
-  (pg_temp.ep_id(10), pg_temp.ep_id(2), pg_temp.ep_id(2), false, 'active', clock_timestamp()),
-  (pg_temp.ep_id(10), pg_temp.ep_id(3), pg_temp.ep_id(3), false, 'active', clock_timestamp()),
-  (pg_temp.ep_id(20), pg_temp.ep_id(99), pg_temp.ep_id(99), true, 'active', clock_timestamp())
+insert into app_private.church_access (church_id, user_id, member_id, is_admin, status, granted_by_user_id, onboarding_completed_at) values
+  (pg_temp.ep_id(10), pg_temp.ep_id(1), pg_temp.ep_id(1), true, 'active', pg_temp.ep_id(1), clock_timestamp()),
+  (pg_temp.ep_id(10), pg_temp.ep_id(2), pg_temp.ep_id(2), false, 'active', pg_temp.ep_id(1), clock_timestamp()),
+  (pg_temp.ep_id(10), pg_temp.ep_id(3), pg_temp.ep_id(3), false, 'active', pg_temp.ep_id(1), clock_timestamp()),
+  (pg_temp.ep_id(20), pg_temp.ep_id(99), pg_temp.ep_id(99), true, 'active', pg_temp.ep_id(99), clock_timestamp())
 on conflict do nothing;
 
 do $ensaios$

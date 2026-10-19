@@ -237,11 +237,14 @@ begin
   values (p_church_id, v_clean_name, v_clean_desc, true)
   returning id into v_new_id;
 
-  insert into app_private.audit_entries (church_id, actor_user_id, action, details)
+  insert into app_private.audit_entries (church_id, action, actor_user_id, actor_source, target_type, target_id, details)
   values (
     p_church_id,
+    'create_event_type',
     v_uid,
-    'Cadastro de Tipo de Evento',
+    'application',
+    'event_type',
+    v_new_id,
     jsonb_build_object('event_type_id', v_new_id, 'name', v_clean_name, 'description', v_clean_desc)
   );
 
@@ -331,11 +334,14 @@ begin
       description = v_clean_desc
   where id = p_type_id and church_id = p_church_id;
 
-  insert into app_private.audit_entries (church_id, actor_user_id, action, details)
+  insert into app_private.audit_entries (church_id, action, actor_user_id, actor_source, target_type, target_id, details)
   values (
     p_church_id,
+    'update_event_type',
     v_uid,
-    'Alteração de Tipo de Evento',
+    'application',
+    'event_type',
+    p_type_id,
     jsonb_build_object(
       'event_type_id', p_type_id,
       'previous_name', v_old_name,
@@ -412,11 +418,14 @@ begin
   set active = not v_current_active
   where id = p_type_id and church_id = p_church_id;
 
-  insert into app_private.audit_entries (church_id, actor_user_id, action, details)
+  insert into app_private.audit_entries (church_id, action, actor_user_id, actor_source, target_type, target_id, details)
   values (
     p_church_id,
+    case when not v_current_active then 'activate_event_type' else 'deactivate_event_type' end,
     v_uid,
-    case when not v_current_active then 'Reativação de Tipo de Evento' else 'Desativação de Tipo de Evento' end,
+    'application',
+    'event_type',
+    p_type_id,
     jsonb_build_object('event_type_id', p_type_id, 'name', v_name, 'active', not v_current_active)
   );
 
@@ -489,11 +498,14 @@ begin
   delete from app_private.event_types
   where id = p_type_id and church_id = p_church_id;
 
-  insert into app_private.audit_entries (church_id, actor_user_id, action, details)
+  insert into app_private.audit_entries (church_id, action, actor_user_id, actor_source, target_type, target_id, details)
   values (
     p_church_id,
+    'delete_event_type',
     v_uid,
-    'Exclusão de Tipo de Evento',
+    'application',
+    'event_type',
+    p_type_id,
     jsonb_build_object('event_type_id', p_type_id, 'name', v_name)
   );
 
@@ -648,11 +660,14 @@ begin
   )
   returning id into v_new_id;
 
-  insert into app_private.audit_entries (church_id, actor_user_id, action, details)
+  insert into app_private.audit_entries (church_id, action, actor_user_id, actor_source, target_type, target_id, details)
   values (
     p_church_id,
+    'create_standard_activity',
     v_uid,
-    'Cadastro de Atividade Padrão',
+    'application',
+    'standard_activity',
+    v_new_id,
     jsonb_build_object(
       'activity_id', v_new_id,
       'name', v_clean_name,
@@ -775,11 +790,14 @@ begin
       description = v_clean_desc
   where id = p_activity_id and church_id = p_church_id;
 
-  insert into app_private.audit_entries (church_id, actor_user_id, action, details)
+  insert into app_private.audit_entries (church_id, action, actor_user_id, actor_source, target_type, target_id, details)
   values (
     p_church_id,
+    'update_standard_activity',
     v_uid,
-    'Alteração de Atividade Padrão',
+    'application',
+    'standard_activity',
+    p_activity_id,
     jsonb_build_object(
       'activity_id', p_activity_id,
       'previous_name', v_old_name,
@@ -868,11 +886,14 @@ begin
   set active = not v_current_active
   where id = p_activity_id and church_id = p_church_id;
 
-  insert into app_private.audit_entries (church_id, actor_user_id, action, details)
+  insert into app_private.audit_entries (church_id, action, actor_user_id, actor_source, target_type, target_id, details)
   values (
     p_church_id,
+    case when not v_current_active then 'activate_standard_activity' else 'deactivate_standard_activity' end,
     v_uid,
-    case when not v_current_active then 'Reativação de Atividade Padrão' else 'Desativação de Atividade Padrão' end,
+    'application',
+    'standard_activity',
+    p_activity_id,
     jsonb_build_object('activity_id', p_activity_id, 'name', v_name, 'active', not v_current_active)
   );
 
@@ -945,11 +966,14 @@ begin
   delete from app_private.standard_activities
   where id = p_activity_id and church_id = p_church_id;
 
-  insert into app_private.audit_entries (church_id, actor_user_id, action, details)
+  insert into app_private.audit_entries (church_id, action, actor_user_id, actor_source, target_type, target_id, details)
   values (
     p_church_id,
+    'delete_standard_activity',
     v_uid,
-    'Exclusão de Atividade Padrão',
+    'application',
+    'standard_activity',
+    p_activity_id,
     jsonb_build_object('activity_id', p_activity_id, 'name', v_name)
   );
 
@@ -973,17 +997,47 @@ begin
 end;
 $function$;
 
--- 7. Concessão explícita de execução para authenticated
+-- 7. Privilégios e proprietário
+revoke all on function public.list_event_types(uuid, boolean) from public, anon, service_role;
 grant execute on function public.list_event_types(uuid, boolean) to authenticated;
-grant execute on function public.create_event_type(uuid, uuid, text, text) to authenticated;
-grant execute on function public.update_event_type(uuid, uuid, uuid, text, text) to authenticated;
-grant execute on function public.toggle_event_type_status(uuid, uuid, uuid) to authenticated;
-grant execute on function public.delete_event_type(uuid, uuid, uuid) to authenticated;
+alter function public.list_event_types(uuid, boolean) owner to postgres;
 
+revoke all on function public.create_event_type(uuid, uuid, text, text) from public, anon, service_role;
+grant execute on function public.create_event_type(uuid, uuid, text, text) to authenticated;
+alter function public.create_event_type(uuid, uuid, text, text) owner to postgres;
+
+revoke all on function public.update_event_type(uuid, uuid, uuid, text, text) from public, anon, service_role;
+grant execute on function public.update_event_type(uuid, uuid, uuid, text, text) to authenticated;
+alter function public.update_event_type(uuid, uuid, uuid, text, text) owner to postgres;
+
+revoke all on function public.toggle_event_type_status(uuid, uuid, uuid) from public, anon, service_role;
+grant execute on function public.toggle_event_type_status(uuid, uuid, uuid) to authenticated;
+alter function public.toggle_event_type_status(uuid, uuid, uuid) owner to postgres;
+
+revoke all on function public.delete_event_type(uuid, uuid, uuid) from public, anon, service_role;
+grant execute on function public.delete_event_type(uuid, uuid, uuid) to authenticated;
+alter function public.delete_event_type(uuid, uuid, uuid) owner to postgres;
+
+revoke all on function public.list_standard_activities(uuid, boolean) from public, anon, service_role;
 grant execute on function public.list_standard_activities(uuid, boolean) to authenticated;
+alter function public.list_standard_activities(uuid, boolean) owner to postgres;
+
+revoke all on function public.create_standard_activity(uuid, uuid, text, integer, text, text) from public, anon, service_role;
 grant execute on function public.create_standard_activity(uuid, uuid, text, integer, text, text) to authenticated;
+alter function public.create_standard_activity(uuid, uuid, text, integer, text, text) owner to postgres;
+
+revoke all on function public.update_standard_activity(uuid, uuid, uuid, text, integer, text, text) from public, anon, service_role;
 grant execute on function public.update_standard_activity(uuid, uuid, uuid, text, integer, text, text) to authenticated;
+alter function public.update_standard_activity(uuid, uuid, uuid, text, integer, text, text) owner to postgres;
+
+revoke all on function public.toggle_standard_activity_status(uuid, uuid, uuid) from public, anon, service_role;
 grant execute on function public.toggle_standard_activity_status(uuid, uuid, uuid) to authenticated;
+alter function public.toggle_standard_activity_status(uuid, uuid, uuid) owner to postgres;
+
+revoke all on function public.delete_standard_activity(uuid, uuid, uuid) from public, anon, service_role;
 grant execute on function public.delete_standard_activity(uuid, uuid, uuid) to authenticated;
+alter function public.delete_standard_activity(uuid, uuid, uuid) owner to postgres;
+
+notify pgrst, 'reload schema';
 
 commit;

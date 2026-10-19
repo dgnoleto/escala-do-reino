@@ -161,11 +161,11 @@ export default function AdminView() {
     setTimeout(() => setInviteSuccess(false), 3000);
   };
 
-  const handleAddReason = (e) => {
+  const handleAddReason = async (e) => {
     e.preventDefault();
     setReasonError('');
     setReasonSuccess('');
-    const res = addCancelReason(newReasonText);
+    const res = await addCancelReason(newReasonText);
     if (!res.success) {
       setReasonError(res.error);
     } else {
@@ -182,9 +182,9 @@ export default function AdminView() {
     setReasonError('');
   };
 
-  const handleSaveEditReason = (id) => {
+  const handleSaveEditReason = async (id) => {
     setEditingError('');
-    const res = updateCancelReason(id, editingReasonText);
+    const res = await updateCancelReason(id, editingReasonText);
     if (!res.success) {
       setEditingError(res.error);
     } else {
@@ -201,10 +201,10 @@ export default function AdminView() {
     setEditingError('');
   };
 
-  const handleToggleReasonStatus = (id) => {
+  const handleToggleReasonStatus = async (id) => {
     setReasonError('');
     setReasonSuccess('');
-    const res = toggleCancelReasonStatus(id);
+    const res = await toggleCancelReasonStatus(id);
     if (!res.success) {
       setReasonError(res.error);
     } else {
@@ -213,10 +213,10 @@ export default function AdminView() {
     }
   };
 
-  const handleDeleteReason = (id) => {
+  const handleDeleteReason = async (id) => {
     setReasonError('');
     setReasonSuccess('');
-    const res = deleteCancelReason(id);
+    const res = await deleteCancelReason(id);
     if (!res.success) {
       setReasonError(res.error);
     } else {
@@ -226,11 +226,11 @@ export default function AdminView() {
   };
 
   // Handlers para Tipos de Evento (Issue #25)
-  const handleAddType = (e) => {
+  const handleAddType = async (e) => {
     e.preventDefault();
     setTypeError('');
     setTypeSuccess('');
-    const res = addEventType(newTypeName, newTypeDesc);
+    const res = await addEventType(newTypeName, newTypeDesc);
     if (!res.success) {
       setTypeError(res.error);
     } else {
@@ -249,9 +249,9 @@ export default function AdminView() {
     setTypeError('');
   };
 
-  const handleSaveEditType = (id) => {
+  const handleSaveEditType = async (id) => {
     setEditingTypeError('');
-    const res = updateEventType(id, editingTypeName, editingTypeDesc);
+    const res = await updateEventType(id, editingTypeName, editingTypeDesc);
     if (!res.success) {
       setEditingTypeError(res.error);
     } else {
@@ -270,10 +270,10 @@ export default function AdminView() {
     setEditingTypeError('');
   };
 
-  const handleToggleTypeStatus = (id) => {
+  const handleToggleTypeStatus = async (id) => {
     setTypeError('');
     setTypeSuccess('');
-    const res = toggleEventTypeStatus(id);
+    const res = await toggleEventTypeStatus(id);
     if (!res.success) {
       setTypeError(res.error);
     } else {
@@ -282,10 +282,10 @@ export default function AdminView() {
     }
   };
 
-  const handleDeleteType = (id) => {
+  const handleDeleteType = async (id) => {
     setTypeError('');
     setTypeSuccess('');
-    const res = deleteEventType(id);
+    const res = await deleteEventType(id);
     if (!res.success) {
       setTypeError(res.error);
     } else {
@@ -295,11 +295,11 @@ export default function AdminView() {
   };
 
   // Handlers para Atividades Padrão (Issue #25)
-  const handleAddActivity = (e) => {
+  const handleAddActivity = async (e) => {
     e.preventDefault();
     setActError('');
     setActSuccess('');
-    const res = addStandardActivity(newActName, newActDuration, newActCategory, newActDesc);
+    const res = await addStandardActivity(newActName, newActDuration, newActCategory, newActDesc);
     if (!res.success) {
       setActError(res.error);
     } else {
@@ -322,9 +322,9 @@ export default function AdminView() {
     setActError('');
   };
 
-  const handleSaveEditActivity = (id) => {
+  const handleSaveEditActivity = async (id) => {
     setEditingActError('');
-    const res = updateStandardActivity(id, editingActName, editingActDuration, editingActCategory, editingActDesc);
+    const res = await updateStandardActivity(id, editingActName, editingActDuration, editingActCategory, editingActDesc);
     if (!res.success) {
       setEditingActError(res.error);
     } else {
@@ -346,10 +346,10 @@ export default function AdminView() {
     setEditingActError('');
   };
 
-  const handleToggleActivityStatus = (id) => {
+  const handleToggleActivityStatus = async (id) => {
     setActError('');
     setActSuccess('');
-    const res = toggleStandardActivityStatus(id);
+    const res = await toggleStandardActivityStatus(id);
     if (!res.success) {
       setActError(res.error);
     } else {
@@ -358,10 +358,10 @@ export default function AdminView() {
     }
   };
 
-  const handleDeleteActivity = (id) => {
+  const handleDeleteActivity = async (id) => {
     setActError('');
     setActSuccess('');
-    const res = deleteStandardActivity(id);
+    const res = await deleteStandardActivity(id);
     if (!res.success) {
       setActError(res.error);
     } else {
@@ -371,7 +371,7 @@ export default function AdminView() {
   };
 
   // Handlers para Modelos de Culto (Issue #27)
-  const handleSaveTemplate = (e) => {
+  const handleSaveTemplate = async (e) => {
     e.preventDefault();
     setTemplateError('');
     setTemplateSuccess('');
@@ -385,7 +385,7 @@ export default function AdminView() {
     };
 
     if (editingTemplateId) {
-      const res = updateServiceTemplate(editingTemplateId, payload);
+      const res = await updateServiceTemplate(editingTemplateId, payload);
       if (!res.success) {
         setTemplateError(res.error);
       } else {
@@ -397,7 +397,7 @@ export default function AdminView() {
         setTimeout(() => setTemplateSuccess(''), 3000);
       }
     } else {
-      const res = addServiceTemplate(payload);
+      const res = await addServiceTemplate(payload);
       if (!res.success) {
         setTemplateError(res.error);
       } else {
@@ -429,10 +429,10 @@ export default function AdminView() {
     setTemplateError('');
   };
 
-  const handleToggleTemplateStatus = (id) => {
+  const handleToggleTemplateStatus = async (id) => {
     setTemplateError('');
     setTemplateSuccess('');
-    const res = toggleServiceTemplateStatus(id);
+    const res = await toggleServiceTemplateStatus(id);
     if (!res.success) {
       setTemplateError(res.error);
     } else {
@@ -441,10 +441,10 @@ export default function AdminView() {
     }
   };
 
-  const handleDeleteTemplate = (id) => {
+  const handleDeleteTemplate = async (id) => {
     setTemplateError('');
     setTemplateSuccess('');
-    const res = deleteServiceTemplate(id);
+    const res = await deleteServiceTemplate(id);
     if (!res.success) {
       setTemplateError(res.error);
     } else {

@@ -90,6 +90,21 @@ begin
     if v_used then return true; end if;
   end if;
 
+  -- Verifica registros históricos de cancelamento na auditoria
+  if to_regclass('app_private.audit_entries') is not null then
+    select exists (
+      select 1 from app_private.audit_entries a
+      where a.church_id = p_church_id
+        and a.target_type in ('activity_cancellation', 'cancellation_reason')
+        and (
+          a.target_id = p_reason_id
+          or (a.details->>'cancellation_reason_id')::uuid = p_reason_id
+          or lower(btrim(coalesce(a.details->>'reason', ''))) = lower(btrim(p_reason_name))
+        )
+    ) into v_used;
+    if v_used then return true; end if;
+  end if;
+
   return false;
 end;
 $function$;
@@ -194,9 +209,10 @@ begin
 
   -- Auditoria
   insert into app_private.audit_entries (
-    church_id, entity_type, entity_id, action, actor_user_id, details
+    church_id, action, actor_user_id, actor_source, target_type, target_id, details
   ) values (
-    p_church_id, 'cancellation_reason', v_reason.id, 'create_cancellation_reason', v_uid,
+    p_church_id, 'create_cancellation_reason', v_uid, 'application',
+    'cancellation_reason', v_reason.id,
     jsonb_build_object('name', v_clean_name, 'active', true)
   );
 
@@ -284,9 +300,10 @@ begin
 
   -- Auditoria
   insert into app_private.audit_entries (
-    church_id, entity_type, entity_id, action, actor_user_id, details
+    church_id, action, actor_user_id, actor_source, target_type, target_id, details
   ) values (
-    p_church_id, 'cancellation_reason', v_reason.id, 'update_cancellation_reason', v_uid,
+    p_church_id, 'update_cancellation_reason', v_uid, 'application',
+    'cancellation_reason', v_reason.id,
     jsonb_build_object('previous_name', v_prev_name, 'new_name', v_clean_name)
   );
 
@@ -358,11 +375,13 @@ begin
 
   -- Auditoria
   insert into app_private.audit_entries (
-    church_id, entity_type, entity_id, action, actor_user_id, details
+    church_id, action, actor_user_id, actor_source, target_type, target_id, details
   ) values (
-    p_church_id, 'cancellation_reason', v_reason.id,
+    p_church_id,
     case when p_active then 'activate_cancellation_reason' else 'deactivate_cancellation_reason' end,
-    v_uid, jsonb_build_object('name', v_reason.name, 'active', p_active)
+    v_uid, 'application',
+    'cancellation_reason', v_reason.id,
+    jsonb_build_object('name', v_reason.name, 'active', p_active)
   );
 
   -- Recibo
@@ -437,9 +456,10 @@ begin
 
   -- Auditoria
   insert into app_private.audit_entries (
-    church_id, entity_type, entity_id, action, actor_user_id, details
+    church_id, action, actor_user_id, actor_source, target_type, target_id, details
   ) values (
-    p_church_id, 'cancellation_reason', p_reason_id, 'delete_cancellation_reason', v_uid,
+    p_church_id, 'delete_cancellation_reason', v_uid, 'application',
+    'cancellation_reason', p_reason_id,
     jsonb_build_object('name', v_reason.name)
   );
 
@@ -455,5 +475,28 @@ begin
   return query select p_reason_id, p_command_id, true;
 end;
 $function$;
+
+-- Privilégios e proprietário
+revoke all on function public.list_cancellation_reasons(uuid, boolean) from public, anon, service_role;
+grant execute on function public.list_cancellation_reasons(uuid, boolean) to authenticated;
+alter function public.list_cancellation_reasons(uuid, boolean) owner to postgres;
+
+revoke all on function public.create_cancellation_reason(uuid, uuid, text) from public, anon, service_role;
+grant execute on function public.create_cancellation_reason(uuid, uuid, text) to authenticated;
+alter function public.create_cancellation_reason(uuid, uuid, text) owner to postgres;
+
+revoke all on function public.update_cancellation_reason(uuid, uuid, uuid, text) from public, anon, service_role;
+grant execute on function public.update_cancellation_reason(uuid, uuid, uuid, text) to authenticated;
+alter function public.update_cancellation_reason(uuid, uuid, uuid, text) owner to postgres;
+
+revoke all on function public.toggle_cancellation_reason_status(uuid, uuid, uuid, boolean) from public, anon, service_role;
+grant execute on function public.toggle_cancellation_reason_status(uuid, uuid, uuid, boolean) to authenticated;
+alter function public.toggle_cancellation_reason_status(uuid, uuid, uuid, boolean) owner to postgres;
+
+revoke all on function public.delete_cancellation_reason(uuid, uuid, uuid) from public, anon, service_role;
+grant execute on function public.delete_cancellation_reason(uuid, uuid, uuid) to authenticated;
+alter function public.delete_cancellation_reason(uuid, uuid, uuid) owner to postgres;
+
+notify pgrst, 'reload schema';
 
 commit;
