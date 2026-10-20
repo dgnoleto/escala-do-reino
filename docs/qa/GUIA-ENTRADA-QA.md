@@ -38,14 +38,14 @@ Os links abaixo são relativos ao repositório e acompanham a versão consultada
 | Ordem | Documento | Para que serve |
 |---|---|---|
 | 1 | [PRD](../PRD.md) | Problema, escopo, permissões, regras aprovadas e critérios M01–M64. |
-| 2 | [Contrato de convites](../CONTRATO-CONVITES-ACESSO.md) | Regras de convites, estados, nome, recuperação e casos técnicos. Ler especialmente 2.1, 9 e 11. |
-| 3 | [Cadastro de membros](../CADASTRO-MEMBROS.md) | Cadastro somente com nome, listagem, comandos e limites. |
-| 4 | [Criação de igreja](../CRIACAO-IGREJA.md) | Elegibilidade, administração e proteção do último administrador. |
-| 5 | [Consulta de acesso](../CONSULTA-ACESSO.md) e [Acesso e auditoria](../ACESSO-E-AUDITORIA.md) | Autorização e rastreabilidade. Conferir afirmações históricas contra o estado atualizado. |
-| 6 | [Arquitetura do banco](../ARQUITETURA-BANCO.md) | Modelo e propostas técnicas; uma proposta não se torna regra aprovada por constar aqui. |
-| 7 | [Evolução futura](../EVOLUCAO-FUTURA.md) | Assuntos adiados e limites do escopo atual. |
+| 2 | [Contrato de convites](../acesso/CONTRATO-CONVITES-ACESSO.md) | Regras de convites, estados, nome, recuperação e casos técnicos. Ler especialmente 2.1, 9 e 11. |
+| 3 | [Cadastro de membros](../produto/CADASTRO-MEMBROS.md) | Cadastro somente com nome, listagem, comandos e limites. |
+| 4 | [Criação de igreja](../produto/CRIACAO-IGREJA.md) | Elegibilidade, administração e proteção do último administrador. |
+| 5 | [Consulta de acesso](../acesso/CONSULTA-ACESSO.md) e [Acesso e auditoria](../acesso/ACESSO-E-AUDITORIA.md) | Autorização e rastreabilidade. Conferir afirmações históricas contra o estado atualizado. |
+| 6 | [Arquitetura do banco](../arquitetura/ARQUITETURA-BANCO.md) | Modelo e propostas técnicas; uma proposta não se torna regra aprovada por constar aqui. |
+| 7 | [Evolução futura](../produto/EVOLUCAO-FUTURA.md) | Assuntos adiados e limites do escopo atual. |
 
-Consultar [schema de acesso](../SCHEMA-ACESSO.md), [schema de aprovação e auditoria](../SCHEMA-APROVACAO-AUDITORIA.md) e docs/sql somente quando o cenário exigir investigação técnica.
+Consultar [schema de acesso](../arquitetura/SCHEMA-ACESSO.md), [schema de aprovação e auditoria](../arquitetura/SCHEMA-APROVACAO-AUDITORIA.md) e docs/sql somente quando o cenário exigir investigação técnica.
 
 **Lacuna identificada na preparação de 11/10/2026:** o README ainda afirma que a interface e-mail/senha não foi implementada e que convites estão em preparação. O PRD também contém um parágrafo histórico de implementação com convites em preparação. O início do contrato de convites descreve sua origem como entrega documental, enquanto a seção 11 já descreve a interface integrada. As regras aprovadas continuam sendo referência; as declarações de andamento foram encaminhadas para atualização na [issue #10](https://github.com/dgnoleto/escala-do-reino/issues/10). Consultar seu andamento e o estado atual antes de tratar este registro histórico como uma pendência ainda aberta. Divergências não autorizam a IA a escolher ou criar uma nova regra: registrar a dúvida e validar com o responsável.
 

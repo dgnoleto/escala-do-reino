@@ -47,6 +47,7 @@ import {
   toServiceTemplateObject,
   toTemplateActivity,
   toTemplateParallelService,
+  normalizeNfcText,
   validateServiceTemplate,
   instantiateTemplateForEvent,
   removeParallelServiceFromEvent,
@@ -58,6 +59,7 @@ import {
   deleteServiceTemplateRemote,
   instantiateServiceTemplateRemote,
   serviceTemplateErrorMessage,
+  hasTemplateChangedRemotely,
 } from '../utils/serviceTemplateService';
 import {
   createEventEditionObject,
@@ -110,6 +112,8 @@ export function AppProvider({
 
   const previousChurchIdRef = useRef(effectiveChurchId);
   const loadRequestSeqRef = useRef(0);
+  const lastSuccessfulSyncSeqRef = useRef(0);
+  const editingDraftsRef = useRef(new Map());
 
   const ensureAuthorizedContext = () => {
     if (!effectiveClient || !effectiveChurchId) {
@@ -199,14 +203,65 @@ export function AppProvider({
 
       if (loadRequestSeqRef.current !== currentSeq) return;
 
-      if (reasonsRes.success) setCancelReasons(reasonsRes.data);
-      if (typesRes.success) setEventTypes(typesRes.data);
-      if (actsRes.success) setStandardActivities(actsRes.data);
-      if (templatesRes.success) setServiceTemplates(templatesRes.data);
+      // Domínio: Motivos de cancelamento
+      if (reasonsRes.success) {
+        setCancelReasons(reasonsRes.data);
+        setIsReasonsStale(false);
+      } else {
+        setIsReasonsStale(true);
+        setCancelReasons(prev => prev.map(r => ({ ...r, isStale: true })));
+      }
+
+      // Domínio: Tipos de evento
+      if (typesRes.success) {
+        setEventTypes(typesRes.data);
+        setIsEventTypesStale(false);
+      } else {
+        setIsEventTypesStale(true);
+        setEventTypes(prev => prev.map(t => ({ ...t, isStale: true })));
+      }
+
+      // Domínio: Atividades padrão
+      if (actsRes.success) {
+        setStandardActivities(actsRes.data);
+        setIsActivitiesStale(false);
+      } else {
+        setIsActivitiesStale(true);
+        setStandardActivities(prev => prev.map(a => ({ ...a, isStale: true })));
+      }
+
+      // Domínio: Modelos de culto
+      if (templatesRes.success) {
+        setServiceTemplates(templatesRes.data);
+        setIsTemplatesStale(false);
+
+        // Se houver rascunhos em edição, atualiza a referência de origem se os dados remotos forem idênticos
+        if (editingDraftsRef.current && editingDraftsRef.current.size > 0 && Array.isArray(templatesRes.data)) {
+          for (const [draftId, draftOrigin] of editingDraftsRef.current.entries()) {
+            const remoteTpl = templatesRes.data.find(t => t.id === draftId);
+            if (remoteTpl && !hasTemplateChangedRemotely(draftOrigin, remoteTpl)) {
+              draftOrigin.syncSeq = currentSeq;
+              draftOrigin.updatedAt = remoteTpl.updatedAt || draftOrigin.updatedAt;
+            }
+          }
+        }
+      } else {
+        setIsTemplatesStale(true);
+        setServiceTemplates(prev => prev.map(t => ({ ...t, isStale: true })));
+      }
+
+      // Problema A3: O sinal global isDataStale SÓ é liberado se TODAS as consultas forem bem-sucedidas!
+      const hasAnyDomainFailed = !reasonsRes.success || !typesRes.success || !actsRes.success || !templatesRes.success;
+      setIsDataStale(hasAnyDomainFailed);
+      if (!hasAnyDomainFailed) {
+        lastSuccessfulSyncSeqRef.current = currentSeq;
+      }
 
       const firstFailed = [reasonsRes, typesRes, actsRes, templatesRes].find(r => !r.success);
       if (firstFailed) {
         setRemoteError(firstFailed.error);
+      } else {
+        setRemoteError(null);
       }
 
       // Consulta complementar de membros e equipes reais da igreja se disponível
@@ -352,7 +407,35 @@ export function AppProvider({
   // Simulação de Rede / Conexão (PRD 10.3)
   const [isOnline, setIsOnline] = useState(true);
   const [isDataStale, setIsDataStale] = useState(false);
+  const [isTemplatesStale, setIsTemplatesStale] = useState(false);
+  const [isEventTypesStale, setIsEventTypesStale] = useState(false);
+  const [isActivitiesStale, setIsActivitiesStale] = useState(false);
+  const [isReasonsStale, setIsReasonsStale] = useState(false);
   const [lastSyncTime, setLastSyncTime] = useState(new Date().toLocaleTimeString('pt-BR'));
+
+  const beginEditingTemplate = useCallback((id) => {
+    const tpl = serviceTemplates.find(t => t.id === id);
+    if (!tpl) return null;
+    const origin = {
+      id,
+      syncSeq: loadRequestSeqRef.current,
+      name: tpl.name,
+      description: tpl.description || '',
+      eventTypeId: tpl.eventTypeId || null,
+      active: tpl.active !== false,
+      updatedAt: tpl.updatedAt || null,
+      parallelServicesCount: tpl.parallelServices?.length ?? tpl.parallelServicesCount ?? 0,
+      activitiesCount: tpl.activities?.length ?? tpl.activitiesCount ?? 0,
+      parallelServices: (tpl.parallelServices || []).map(s => ({ ...s })),
+      activities: (tpl.activities || []).map(a => ({ ...a }))
+    };
+    editingDraftsRef.current.set(id, origin);
+    return origin;
+  }, [serviceTemplates]);
+
+  const cancelEditingTemplate = useCallback((id) => {
+    editingDraftsRef.current.delete(id);
+  }, []);
 
   // Tema Visual (Dark Litúrgico vs Light)
   const [theme, setTheme] = useState('dark');
@@ -911,6 +994,13 @@ export function AppProvider({
   // ADMINISTRAÇÃO (PRD 3.2: Exclusivo Admin Web)
   const addCancelReason = (reasonText) => {
     if (!isAdmin) return { success: false, error: "Apenas administradores podem cadastrar motivos de cancelamento." };
+    if (isDataStale || isReasonsStale) {
+      const detail = remoteError ? `: ${remoteError}` : '. Reconcilie a conexão antes de cadastrar.';
+      return {
+        success: false,
+        error: `Falha de sincronização: os dados de motivos de cancelamento estão desatualizados${detail}`
+      };
+    }
     const validation = validateCancellationReason(reasonText, cancelReasons);
     if (!validation.valid) {
       return { success: false, error: validation.error };
@@ -957,6 +1047,12 @@ export function AppProvider({
     if (!isAdmin) return { success: false, error: "Apenas administradores podem alterar motivos de cancelamento." };
     const target = cancelReasons.find(r => r.id === id);
     if (!target) return { success: false, error: "Motivo não encontrado." };
+    if (isDataStale || isReasonsStale || target.isStale) {
+      return {
+        success: false,
+        error: "Os dados de motivos de cancelamento estão desatualizados. Reconcilie a conexão antes de alterar o motivo."
+      };
+    }
     const validation = validateCancellationReason(newName, cancelReasons, id);
     if (!validation.valid) {
       return { success: false, error: validation.error };
@@ -995,6 +1091,12 @@ export function AppProvider({
     if (!isAdmin) return { success: false, error: "Apenas administradores podem alterar o status de motivos." };
     const target = cancelReasons.find(r => r.id === id);
     if (!target) return { success: false, error: "Motivo não encontrado." };
+    if (isDataStale || isReasonsStale || target.isStale) {
+      return {
+        success: false,
+        error: "Os dados de motivos de cancelamento estão desatualizados. Reconcilie a conexão antes de alterar o status."
+      };
+    }
     const authCheck = ensureAuthorizedContext();
     if (!authCheck.allowed) return { success: false, error: authCheck.error };
 
@@ -1035,6 +1137,12 @@ export function AppProvider({
     if (!isAdmin) return { success: false, error: "Apenas administradores podem excluir motivos de cancelamento." };
     const target = cancelReasons.find(r => r.id === id);
     if (!target) return { success: false, error: "Motivo não encontrado." };
+    if (isDataStale || isReasonsStale || target.isStale) {
+      return {
+        success: false,
+        error: "Os dados de motivos de cancelamento estão desatualizados. Reconcilie a conexão antes de excluir."
+      };
+    }
     const deleteCheck = canDeleteCancellationReason(target, event.activities);
     if (!deleteCheck.canDelete) {
       return { success: false, error: deleteCheck.message };
@@ -1066,6 +1174,13 @@ export function AppProvider({
   // Gerenciamento de Tipos de Evento (PRD §5 - Issue #25)
   const addEventType = (name, description = '') => {
     if (!isAdmin) return { success: false, error: "Apenas administradores podem cadastrar tipos de evento." };
+    if (isDataStale || isEventTypesStale) {
+      const detail = remoteError ? `: ${remoteError}` : '. Reconcilie a conexão antes de cadastrar.';
+      return {
+        success: false,
+        error: `Falha de conexão ou sincronização: os dados de tipos de evento estão desatualizados${detail}`
+      };
+    }
     const validation = validateEventType(name, description, eventTypes);
     if (!validation.valid) {
       return { success: false, error: validation.error };
@@ -1080,8 +1195,12 @@ export function AppProvider({
           if (!res.success) {
             return { success: false, error: res.error };
           }
+          const createdId = res.data?.id;
+          if (!createdId) {
+            return { success: false, error: "O banco de dados não retornou o identificador persistido do tipo de evento criado." };
+          }
           const newType = {
-            id: res.data?.id || `et-${Date.now()}`,
+            id: createdId,
             name: validation.cleanName,
             description: validation.cleanDesc,
             active: true,
@@ -1114,6 +1233,12 @@ export function AppProvider({
     if (!isAdmin) return { success: false, error: "Apenas administradores podem alterar tipos de evento." };
     const target = eventTypes.find(t => t.id === id);
     if (!target) return { success: false, error: "Tipo de evento não encontrado." };
+    if (isDataStale || isEventTypesStale || target.isStale) {
+      return {
+        success: false,
+        error: "Os dados de tipos de evento estão desatualizados. Reconcilie a conexão antes de alterar o tipo de evento."
+      };
+    }
     const validation = validateEventType(newName, newDescription, eventTypes, id);
     if (!validation.valid) {
       return { success: false, error: validation.error };
@@ -1162,6 +1287,12 @@ export function AppProvider({
     if (!isAdmin) return { success: false, error: "Apenas administradores podem alterar o status de tipos de evento." };
     const target = eventTypes.find(t => t.id === id);
     if (!target) return { success: false, error: "Tipo de evento não encontrado." };
+    if (isDataStale || isEventTypesStale || target.isStale) {
+      return {
+        success: false,
+        error: "Os dados de tipos de evento estão desatualizados. Reconcilie a conexão antes de alterar o status."
+      };
+    }
     const authCheck = ensureAuthorizedContext();
     if (!authCheck.allowed) return { success: false, error: authCheck.error };
 
@@ -1202,6 +1333,12 @@ export function AppProvider({
     if (!isAdmin) return { success: false, error: "Apenas administradores podem excluir tipos de evento." };
     const target = eventTypes.find(t => t.id === id);
     if (!target) return { success: false, error: "Tipo de evento não encontrado." };
+    if (isDataStale || isEventTypesStale || target.isStale) {
+      return {
+        success: false,
+        error: "Os dados de tipos de evento estão desatualizados. Reconcilie a conexão antes de excluir."
+      };
+    }
     const deleteCheck = canDeleteEventType(target, [event]);
     if (!deleteCheck.canDelete) {
       return { success: false, error: deleteCheck.message };
@@ -1233,6 +1370,13 @@ export function AppProvider({
   // Gerenciamento de Atividades Padrão com Duração (PRD §5 - Issue #25)
   const addStandardActivity = (name, defaultDurationMinutes, category = 'Liturgia', description = '') => {
     if (!isAdmin) return { success: false, error: "Apenas administradores podem cadastrar atividades padrão." };
+    if (isDataStale || isActivitiesStale) {
+      const detail = remoteError ? `: ${remoteError}` : '. Reconcilie a conexão antes de cadastrar.';
+      return {
+        success: false,
+        error: `Falha de sincronização: os dados de atividades padrão estão desatualizados${detail}`
+      };
+    }
     const validation = validateStandardActivity(name, defaultDurationMinutes, category, description, standardActivities);
     if (!validation.valid) {
       return { success: false, error: validation.error };
@@ -1254,8 +1398,12 @@ export function AppProvider({
           if (!res.success) {
             return { success: false, error: res.error };
           }
+          const createdId = res.data?.id;
+          if (!createdId) {
+            return { success: false, error: "O banco de dados não retornou o identificador persistido da atividade padrão criada." };
+          }
           const newActivity = {
-            id: res.data?.id || `sa-${Date.now()}`,
+            id: createdId,
             name: validation.cleanName,
             defaultDurationMinutes: validation.cleanDuration,
             category: validation.cleanCat,
@@ -1297,13 +1445,28 @@ export function AppProvider({
   const updateStandardActivity = (id, newName, newDurationMinutes, newCategory = 'Liturgia', newDescription = '') => {
     if (!isAdmin) return { success: false, error: "Apenas administradores podem alterar atividades padrão." };
     const target = standardActivities.find(a => a.id === id);
+    if (isDataStale || isActivitiesStale || target?.isStale) {
+      const detail = remoteError ? `: ${remoteError}` : '. Reconcilie a conexão antes de alterar a atividade.';
+      return {
+        success: false,
+        error: `Falha de sincronização: os dados de atividades padrão estão desatualizados${detail}`
+      };
+    }
+    const authCheck = ensureAuthorizedContext();
+    if (!authCheck.allowed) return { success: false, error: authCheck.error };
+
+    if (!authCheck.inMemory && typeof id === 'string' && id.startsWith('sa-')) {
+      return {
+        success: false,
+        error: 'Identificador de atividade padrão inválido ou não sincronizado com o banco de dados. Recarregue os dados da igreja antes de editar.'
+      };
+    }
+
     if (!target) return { success: false, error: "Atividade padrão não encontrada." };
     const validation = validateStandardActivity(newName, newDurationMinutes, newCategory, newDescription, standardActivities, id);
     if (!validation.valid) {
       return { success: false, error: validation.error };
     }
-    const authCheck = ensureAuthorizedContext();
-    if (!authCheck.allowed) return { success: false, error: authCheck.error };
 
     const previousName = target.name;
     const previousDuration = target.defaultDurationMinutes;
@@ -1365,8 +1528,13 @@ export function AppProvider({
     if (!isAdmin) return { success: false, error: "Apenas administradores podem alterar o status de atividades padrão." };
     const target = standardActivities.find(a => a.id === id);
     if (!target) return { success: false, error: "Atividade padrão não encontrada." };
+    if (isDataStale || isActivitiesStale || target.isStale) {
+      return {
+        success: false,
+        error: "Os dados de atividades padrão estão desatualizados. Reconcilie a conexão antes de alterar o status."
+      };
+    }
     const authCheck = ensureAuthorizedContext();
-    if (!authCheck.allowed) return { success: false, error: authCheck.error };
 
     const nextActive = !target.active;
 
@@ -1405,6 +1573,12 @@ export function AppProvider({
     if (!isAdmin) return { success: false, error: "Apenas administradores podem excluir atividades padrão." };
     const target = standardActivities.find(a => a.id === id);
     if (!target) return { success: false, error: "Atividade padrão não encontrada." };
+    if (isDataStale || isActivitiesStale || target.isStale) {
+      return {
+        success: false,
+        error: "Os dados de atividades padrão estão desatualizados. Reconcilie a conexão antes de excluir."
+      };
+    }
     const deleteCheck = canDeleteStandardActivity(target, event.activities);
     if (!deleteCheck.canDelete) {
       return { success: false, error: deleteCheck.message };
@@ -1436,6 +1610,13 @@ export function AppProvider({
   // Gerenciamento de Modelos Reutilizáveis de Culto (PRD §5, M28 - Issue #27)
   const addServiceTemplate = (data) => {
     if (!isAdmin) return { success: false, error: "Apenas administradores podem cadastrar modelos de culto." };
+    // Problema A3: Bloqueio de criação de modelo durante estado de desatualização
+    if (isDataStale || isTemplatesStale) {
+      return {
+        success: false,
+        error: "Não é possível cadastrar novos modelos enquanto os dados estiverem desatualizados. Reconcilie a conexão antes de cadastrar."
+      };
+    }
     const validation = validateServiceTemplate(data, serviceTemplates);
     if (!validation.valid) {
       return { success: false, error: validation.error };
@@ -1463,8 +1644,12 @@ export function AppProvider({
           if (!res.success) {
             return { success: false, error: res.error };
           }
+          const createdId = res.data?.id;
+          if (!createdId) {
+            return { success: false, error: "O banco de dados não retornou o identificador persistido do modelo de culto criado." };
+          }
           const newTemplate = {
-            id: res.data?.id || `st-${Date.now()}`,
+            id: createdId,
             eventTypeId: data.eventTypeId || null,
             name: validation.cleanName,
             description: validation.cleanDesc,
@@ -1499,10 +1684,90 @@ export function AppProvider({
     return { success: true, template: newTemplate };
   };
 
-  const updateServiceTemplate = (id, data) => {
+  const updateServiceTemplate = (id, data, options = {}) => {
     if (!isAdmin) return { success: false, error: "Apenas administradores podem alterar modelos de culto." };
     const target = serviceTemplates.find(t => t.id === id);
     if (!target) return { success: false, error: "Modelo de culto não encontrado." };
+
+    // Atualização originada por reconciliação / sincronização remota
+    if (options.syncUpdate) {
+      lastSuccessfulSyncSeqRef.current += 1;
+      setServiceTemplates(prev =>
+        prev.map(t => t.id === id ? {
+          ...t,
+          ...data,
+          parallelServices: data.parallelServices || t.parallelServices,
+          activities: data.activities || t.activities,
+          parallelServicesCount: (data.parallelServices || t.parallelServices || []).length,
+          activitiesCount: (data.activities || t.activities || []).length,
+          isStale: false,
+          updatedAt: data.updatedAt || new Date().toISOString()
+        } : t)
+      );
+      return { success: true, syncUpdate: true };
+    }
+
+    // Regra B3: Um modelo incompleto não pode ser editado ou salvo
+    if (target.isComplete === false || (target.activitiesCount > 0 && (!target.activities || target.activities.length === 0))) {
+      return {
+        success: false,
+        error: "Não é possível atualizar modelo de culto com detalhes incompletos. Recarregue os dados da igreja antes de editar."
+      };
+    }
+
+    // Problema B & A3: Proteção contra escrita desatualizada
+    if (isDataStale || isTemplatesStale || target.isStale) {
+      return {
+        success: false,
+        error: "Os dados do modelo de culto estão desatualizados devido a uma falha na última sincronização. Reconcilie a conexão antes de alterar o modelo."
+      };
+    }
+
+    // Problema A2: Proteção de integridade contra salvamento de formulário antigo após alteração remota real
+    const draftOrigin = options?.originSnapshot || editingDraftsRef.current.get(id);
+    if (draftOrigin) {
+      const hasChanged = hasTemplateChangedRemotely(draftOrigin, target);
+      if (hasChanged) {
+        return {
+          success: false,
+          conflict: true,
+          error: "Os dados deste modelo foram atualizados no servidor por outra sessão ou sincronização. Reabra o modelo para carregar as alterações mais recentes antes de salvar."
+        };
+      } else {
+        // Se não houve alteração remota efetiva, atualizar a referência de origem do rascunho e permitir o salvamento, preservando as alterações locais.
+        draftOrigin.syncSeq = lastSuccessfulSyncSeqRef.current;
+        draftOrigin.updatedAt = target.updatedAt || draftOrigin.updatedAt;
+      }
+    }
+
+    const originParallelCount = typeof options.originParallelServicesCount === 'number'
+      ? options.originParallelServicesCount
+      : undefined;
+    if (typeof originParallelCount === 'number') {
+      const currentParallelCount = target.parallelServices?.length ?? target.parallelServicesCount ?? 0;
+      if (currentParallelCount !== originParallelCount) {
+        return {
+          success: false,
+          conflict: true,
+          error: "A quantidade de apoios deste modelo foi modificada no servidor por outra sessão ou sincronização. Reabra o modelo para carregar as alterações mais recentes antes de salvar."
+        };
+      }
+    }
+
+    const originActsCount = typeof options.originActivitiesCount === 'number'
+      ? options.originActivitiesCount
+      : undefined;
+    if (typeof originActsCount === 'number') {
+      const currentActsCount = target.activities?.length ?? target.activitiesCount ?? 0;
+      if (currentActsCount !== originActsCount) {
+        return {
+          success: false,
+          conflict: true,
+          error: "A quantidade de atividades deste modelo foi modificada no servidor por outra sessão ou sincronização. Reabra o modelo para carregar as alterações mais recentes antes de salvar."
+        };
+      }
+    }
+
     const validation = validateServiceTemplate(data, serviceTemplates, id);
     if (!validation.valid) {
       return { success: false, error: validation.error };
@@ -1511,12 +1776,26 @@ export function AppProvider({
     if (!authCheck.allowed) return { success: false, error: authCheck.error };
 
     const previousName = target.name;
-    const activities = Array.isArray(data.activities)
-      ? data.activities.map((a, i) => toTemplateActivity(a, i)).filter(Boolean)
-      : target.activities;
-    const parallelServices = Array.isArray(data.parallelServices)
-      ? data.parallelServices.map((s, i) => toTemplateParallelService(s, i)).filter(Boolean)
-      : target.parallelServices;
+
+    // Regra C: Resolução de campos escalares com preservação do conteúdo existente quando omitidos
+    const resolvedDescription = data.description !== undefined
+      ? (data.description === null || data.description === '' ? '' : normalizeNfcText(data.description))
+      : (target.description ?? '');
+
+    const resolvedEventTypeId = data.eventTypeId !== undefined
+      ? (data.eventTypeId || null)
+      : (target.eventTypeId ?? null);
+
+    // Regra D: Distinguir campo omitido (undefined) de lista vazia intencional ([])
+    const activities = data.activities !== undefined
+      ? (Array.isArray(data.activities) ? data.activities.map((a, i) => toTemplateActivity(a, i)).filter(Boolean) : [])
+      : undefined;
+    const parallelServices = data.parallelServices !== undefined
+      ? (Array.isArray(data.parallelServices) ? data.parallelServices.map((s, i) => toTemplateParallelService(s, i)).filter(Boolean) : [])
+      : undefined;
+
+    const resolvedActivities = activities !== undefined ? activities : (target.activities || []);
+    const resolvedParallelServices = parallelServices !== undefined ? parallelServices : (target.parallelServices || []);
 
     if (!authCheck.inMemory) {
       return (async () => {
@@ -1524,9 +1803,11 @@ export function AppProvider({
           const res = await updateServiceTemplateRemote(effectiveClient, effectiveChurchId, id, {
             ...data,
             name: validation.cleanName,
-            description: validation.cleanDesc,
+            description: resolvedDescription,
+            eventTypeId: resolvedEventTypeId,
             activities,
-            parallelServices
+            parallelServices,
+            existingTemplate: target
           });
           if (!res.success) {
             return { success: false, error: res.error };
@@ -1534,14 +1815,20 @@ export function AppProvider({
           setServiceTemplates(prev =>
             prev.map(t => t.id === id ? {
               ...t,
-              eventTypeId: data.eventTypeId !== undefined ? data.eventTypeId : t.eventTypeId,
+              eventTypeId: resolvedEventTypeId,
               name: validation.cleanName,
-              description: validation.cleanDesc,
-              activities,
-              parallelServices,
+              description: resolvedDescription,
+              activities: resolvedActivities,
+              parallelServices: resolvedParallelServices,
+              activitiesCount: resolvedActivities.length,
+              parallelServicesCount: resolvedParallelServices.length,
+              totalDurationMinutes: resolvedActivities.reduce((acc, a) => acc + (a.plannedDurationMinutes || 0), 0),
+              isComplete: true,
+              isStale: false,
               updatedAt: new Date().toISOString()
             } : t)
           );
+          editingDraftsRef.current.delete(id);
           addAuditLog("Alteração de Modelo de Culto", `Modelo de culto alterado de "${previousName}" para "${validation.cleanName}".`);
           return { success: true, remote: true };
         } catch (err) {
@@ -1553,14 +1840,20 @@ export function AppProvider({
     setServiceTemplates(prev =>
       prev.map(t => t.id === id ? {
         ...t,
-        eventTypeId: data.eventTypeId !== undefined ? data.eventTypeId : t.eventTypeId,
+        eventTypeId: resolvedEventTypeId,
         name: validation.cleanName,
-        description: validation.cleanDesc,
-        activities,
-        parallelServices,
+        description: resolvedDescription,
+        activities: resolvedActivities,
+        parallelServices: resolvedParallelServices,
+        activitiesCount: resolvedActivities.length,
+        parallelServicesCount: resolvedParallelServices.length,
+        totalDurationMinutes: resolvedActivities.reduce((acc, a) => acc + (a.plannedDurationMinutes || 0), 0),
+        isComplete: true,
+        isStale: false,
         updatedAt: new Date().toISOString()
       } : t)
     );
+    editingDraftsRef.current.delete(id);
     addAuditLog("Alteração de Modelo de Culto", `Modelo de culto alterado de "${previousName}" para "${validation.cleanName}".`);
     return { success: true };
   };
@@ -1569,6 +1862,15 @@ export function AppProvider({
     if (!isAdmin) return { success: false, error: "Apenas administradores podem alterar o status de modelos de culto." };
     const target = serviceTemplates.find(t => t.id === id);
     if (!target) return { success: false, error: "Modelo de culto não encontrado." };
+
+    // Problema B & A3: Proteção contra escrita desatualizada
+    if (isDataStale || isTemplatesStale || target.isStale) {
+      return {
+        success: false,
+        error: "Os dados do modelo de culto estão desatualizados devido a uma falha na última sincronização. Reconcilie a conexão antes de alterar o modelo."
+      };
+    }
+
     const authCheck = ensureAuthorizedContext();
     if (!authCheck.allowed) return { success: false, error: authCheck.error };
 
@@ -1609,6 +1911,15 @@ export function AppProvider({
     if (!isAdmin) return { success: false, error: "Apenas administradores podem excluir modelos de culto." };
     const target = serviceTemplates.find(t => t.id === id);
     if (!target) return { success: false, error: "Modelo de culto não encontrado." };
+
+    // Problema B & A3: Proteção contra escrita desatualizada
+    if (isDataStale || isTemplatesStale || target.isStale) {
+      return {
+        success: false,
+        error: "Os dados do modelo de culto estão desatualizados devido a uma falha na última sincronização. Reconcilie a conexão antes de alterar o modelo."
+      };
+    }
+
     const deleteCheck = canDeleteServiceTemplate(target, [event]);
     if (!deleteCheck.canDelete) {
       return { success: false, error: deleteCheck.reason };
@@ -1645,10 +1956,31 @@ export function AppProvider({
     if (!template) {
       return { success: false, error: "Modelo de culto não encontrado." };
     }
+
+    // Problema B & A3: Proteção contra escrita desatualizada
+    if (isDataStale || isTemplatesStale || template.isStale) {
+      return {
+        success: false,
+        error: "Não é possível aplicar um modelo de culto com dados desatualizados. Reconcilie a conexão antes de aplicar."
+      };
+    }
+
+    // Regra B3: Modelo incompleto não pode ser aplicado
+    if (template.isComplete === false || (template.activitiesCount > 0 && (!template.activities || template.activities.length === 0))) {
+      return {
+        success: false,
+        error: "Não é possível aplicar modelo de culto com detalhes incompletos. Recarregue os dados da igreja."
+      };
+    }
+
     const authCheck = ensureAuthorizedContext();
     if (!authCheck.allowed) return { success: false, error: authCheck.error };
 
-    const updatedEvent = instantiateTemplateForEvent(template, event);
+    const updatedEvent = {
+      ...instantiateTemplateForEvent(template, event),
+      isDraftPreview: true,
+      templateApplied: true,
+    };
 
     if (!authCheck.inMemory) {
       return (async () => {
@@ -1660,9 +1992,15 @@ export function AppProvider({
           setEvent(updatedEvent);
           addAuditLog(
             "Aplicação de Modelo no Culto",
-            `Modelo '${template.name}' aplicado ao planejamento. Atividades litúrgicas e apoios padrão configurados sem alocação nominal de pessoas (PRD §5 / M28).`
+            `Modelo '${template.name}' aplicado à prévia do culto em memória. Observação: a persistência durável no servidor depende da issue #29.`
           );
-          return { success: true, remote: true };
+          // Etapa 3: Tratamento provisório que impede o usuário de interpretar prévia em memória como programação persistida
+          return {
+            success: true,
+            remote: true,
+            persisted: false,
+            warning: "Programação carregada na prévia em memória a partir do modelo. A gravação persistente dos itens no servidor depende da implementação da issue #29."
+          };
         } catch (err) {
           return { success: false, error: err.message || "Falha ao aplicar modelo de culto no servidor." };
         }
@@ -1672,9 +2010,9 @@ export function AppProvider({
     setEvent(updatedEvent);
     addAuditLog(
       "Aplicação de Modelo no Culto",
-      `Modelo '${template.name}' aplicado ao planejamento. Atividades litúrgicas e apoios padrão configurados sem alocação nominal de pessoas (PRD §5 / M28).`
+      `Modelo '${template.name}' aplicado ao planejamento local.`
     );
-    return { success: true };
+    return { success: true, persisted: false };
   };
 
   const removeParallelServiceFromCurrentEvent = (serviceId) => {
@@ -2077,6 +2415,12 @@ export function AppProvider({
         setIsOnline,
         isDataStale,
         setIsDataStale,
+        isTemplatesStale,
+        isEventTypesStale,
+        isActivitiesStale,
+        isReasonsStale,
+        beginEditingTemplate,
+        cancelEditingTemplate,
         lastSyncTime,
         theme,
         setTheme,

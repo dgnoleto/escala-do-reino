@@ -1,7 +1,7 @@
 # Modelos Reutilizáveis de Culto com Atividades e Apoios Padrão
 
 Documento normativo e contratual da funcionalidade de modelos de culto na web (Issue #27).
-Alinhado ao [PRD do Escala do Reino](PRD.md) (§4, §5 e M28) e aos contratos de tipos de evento e atividades ([CADASTRO-TIPOS-ATIVIDADES.md](CADASTRO-TIPOS-ATIVIDADES.md)).
+Alinhado ao [PRD do Escala do Reino](../PRD.md) (§4, §5 e M28) e aos contratos de tipos de evento e atividades ([CADASTRO-TIPOS-ATIVIDADES.md](CADASTRO-TIPOS-ATIVIDADES.md)).
 
 ---
 

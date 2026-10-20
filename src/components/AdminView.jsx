@@ -28,8 +28,26 @@ import {
 } from '../utils/eventTypeActivityService';
 import {
   isTemplateUsedInEvents,
-  canDeleteServiceTemplate
+  canDeleteServiceTemplate,
+  hasTemplateChangedRemotely
 } from '../utils/serviceTemplateService';
+
+const VALID_ADMIN_TABS = ['event_types', 'templates', 'activities', 'reasons', 'invites', 'liturgy', 'members'];
+
+const resolveInitialTab = (tab) => {
+  if (!tab || tab === 'cadastros' || !VALID_ADMIN_TABS.includes(tab)) return 'event_types';
+  return tab;
+};
+
+// Presets recomendados de serviços paralelos da igreja (Issue #27)
+const PARALLEL_SERVICE_PRESETS = [
+  { teamId: 'limpeza', serviceName: 'Limpeza do Templo', prepRequiredMinutes: 60 },
+  { teamId: 'apoio', serviceName: 'Organização das Cadeiras & Templo', prepRequiredMinutes: 60 },
+  { teamId: 'recepcao', serviceName: 'Recepção & Boas-Vindas', prepRequiredMinutes: 20 },
+  { teamId: 'portaria', serviceName: 'Portaria & Estacionamento', prepRequiredMinutes: 30 },
+  { teamId: 'som', serviceName: 'Sonoplastia & Retorno', prepRequiredMinutes: 30 },
+  { teamId: 'midia', serviceName: 'Transmissão ao Vivo & Mídia', prepRequiredMinutes: 20 }
+];
 
 export default function AdminView({ onBack, initialTab = 'event_types' } = {}) {
   const {
@@ -66,12 +84,53 @@ export default function AdminView({ onBack, initialTab = 'event_types' } = {}) {
     addAuditLog,
     isOnline,
     isDataStale,
+    isTemplatesStale,
+    isEventTypesStale,
+    isActivitiesStale,
+    isReasonsStale,
+    beginEditingTemplate,
+    cancelEditingTemplate,
     remoteLoading,
     remoteError,
     reloadRemoteData
   } = useApp();
 
-  const [activeAdminTab, setActiveAdminTab] = useState(initialTab);
+  const [activeAdminTab, setActiveAdminTab] = useState(() => resolveInitialTab(initialTab));
+
+  React.useEffect(() => {
+    if (initialTab) {
+      setActiveAdminTab(resolveInitialTab(initialTab));
+    }
+  }, [initialTab]);
+
+  const handleTabKeyDown = (e) => {
+    const tabKeys = ['event_types', 'templates', 'activities', 'reasons', 'invites', 'liturgy', 'members'];
+    const currentIdx = tabKeys.indexOf(activeAdminTab);
+    if (currentIdx === -1) return;
+    let nextIdx = -1;
+    if (e.key === 'ArrowRight') {
+      e.preventDefault();
+      nextIdx = (currentIdx + 1) % tabKeys.length;
+    } else if (e.key === 'ArrowLeft') {
+      e.preventDefault();
+      nextIdx = (currentIdx - 1 + tabKeys.length) % tabKeys.length;
+    } else if (e.key === 'Home') {
+      e.preventDefault();
+      nextIdx = 0;
+    } else if (e.key === 'End') {
+      e.preventDefault();
+      nextIdx = tabKeys.length - 1;
+    }
+    if (nextIdx !== -1) {
+      const nextTab = tabKeys[nextIdx];
+      setActiveAdminTab(nextTab);
+      const btnId = `tab-admin-${nextTab.replace('_', '-')}`;
+      setTimeout(() => {
+        const el = document.getElementById(btnId);
+        if (el) el.focus();
+      }, 0);
+    }
+  };
 
   // Formulário de Convite de Acesso (PRD 3.1 & Cenário M40)
   const [inviteEmail, setInviteEmail] = useState('');
@@ -121,14 +180,31 @@ export default function AdminView({ onBack, initialTab = 'event_types' } = {}) {
     { title: 'Bênção e Encerramento', category: 'Liturgia', plannedDurationMinutes: 5, notes: '' }
   ]);
   const [templateParallelServices, setTemplateParallelServices] = useState([
-    { teamId: 'recepcao', serviceName: 'Recepção & Portaria', prepRequiredMinutes: 15, isDefaultActive: true },
+    { teamId: 'limpeza', serviceName: 'Limpeza do Templo', prepRequiredMinutes: 60, isDefaultActive: true },
+    { teamId: 'apoio', serviceName: 'Organização das Cadeiras & Templo', prepRequiredMinutes: 60, isDefaultActive: true },
+    { teamId: 'recepcao', serviceName: 'Recepção & Boas-Vindas', prepRequiredMinutes: 20, isDefaultActive: true },
+    { teamId: 'portaria', serviceName: 'Portaria & Estacionamento', prepRequiredMinutes: 30, isDefaultActive: true },
     { teamId: 'som', serviceName: 'Sonoplastia & Retorno', prepRequiredMinutes: 30, isDefaultActive: true },
     { teamId: 'midia', serviceName: 'Transmissão ao Vivo & Mídia', prepRequiredMinutes: 20, isDefaultActive: true }
   ]);
   const [templateError, setTemplateError] = useState('');
   const [templateSuccess, setTemplateSuccess] = useState('');
   const [editingTemplateId, setEditingTemplateId] = useState(null);
+  const [editingTemplateOrigin, setEditingTemplateOrigin] = useState(null);
+  const [hadSyncFailureWhileEditing, setHadSyncFailureWhileEditing] = useState(false);
   const [selectedStandardActForTemplate, setSelectedStandardActForTemplate] = useState('');
+
+  React.useEffect(() => {
+    if (editingTemplateId && (isDataStale || isTemplatesStale || remoteError)) {
+      setHadSyncFailureWhileEditing(true);
+    }
+  }, [editingTemplateId, isDataStale, isTemplatesStale, remoteError]);
+
+  // Estados de Reordenação e Serviços Paralelos (Issue #27)
+  const [draggedActivityIdx, setDraggedActivityIdx] = useState(null);
+  const [customServiceName, setCustomServiceName] = useState('');
+  const [customServiceTeamId, setCustomServiceTeamId] = useState('apoio');
+  const [customServicePrepMinutes, setCustomServicePrepMinutes] = useState(30);
 
   // Designação da Liderança da Liturgia (PRD 3.2 & Cenário M05)
   const [selectedEventIdForLiturgy, setSelectedEventIdForLiturgy] = useState(() => (event?.id || events?.[0]?.id || ''));
@@ -387,26 +463,90 @@ export default function AdminView({ onBack, initialTab = 'event_types' } = {}) {
     }
   };
 
+  const currentTemplateInStore = editingTemplateId ? serviceTemplates.find(t => t.id === editingTemplateId) : null;
+
+  const isFormOutdated = React.useMemo(() => {
+    if (!editingTemplateId || !editingTemplateOrigin) return false;
+    if (!currentTemplateInStore) return true;
+
+    // Se houve alteração remota efetiva em relação ao snapshot de origem:
+    if (hasTemplateChangedRemotely(editingTemplateOrigin, currentTemplateInStore)) {
+      return true;
+    }
+
+    return false;
+  }, [editingTemplateId, editingTemplateOrigin, currentTemplateInStore]);
+
+  const handleReloadFormFromCurrent = () => {
+    if (!currentTemplateInStore) return;
+    setTemplateName(currentTemplateInStore.name);
+    setTemplateDesc(currentTemplateInStore.description || '');
+    setTemplateEventTypeId(currentTemplateInStore.eventTypeId || '');
+    setTemplateActivities(currentTemplateInStore.activities && currentTemplateInStore.activities.length > 0 ? [...currentTemplateInStore.activities].map((a, i) => ({ ...a, displayOrder: i + 1 })) : []);
+    setTemplateParallelServices(currentTemplateInStore.parallelServices && currentTemplateInStore.parallelServices.length > 0 ? [...currentTemplateInStore.parallelServices] : []);
+    const origin = beginEditingTemplate ? beginEditingTemplate(currentTemplateInStore.id) : null;
+    setEditingTemplateOrigin(origin || {
+      id: currentTemplateInStore.id,
+      name: currentTemplateInStore.name,
+      description: currentTemplateInStore.description || '',
+      eventTypeId: currentTemplateInStore.eventTypeId || null,
+      active: currentTemplateInStore.active !== false,
+      updatedAt: currentTemplateInStore.updatedAt || null,
+      parallelServicesCount: currentTemplateInStore.parallelServices?.length ?? currentTemplateInStore.parallelServicesCount ?? 0,
+      activitiesCount: currentTemplateInStore.activities?.length ?? currentTemplateInStore.activitiesCount ?? 0,
+      parallelServices: (currentTemplateInStore.parallelServices || []).map(s => ({ ...s })),
+      activities: (currentTemplateInStore.activities || []).map(a => ({ ...a }))
+    });
+    setHadSyncFailureWhileEditing(false);
+    setTemplateError('');
+  };
+
   // Handlers para Modelos de Culto (Issue #27)
   const handleSaveTemplate = async (e) => {
     e.preventDefault();
     setTemplateError('');
     setTemplateSuccess('');
 
+    if (isDataStale || isTemplatesStale) {
+      setTemplateError('Não é possível salvar: os dados do servidor estão desatualizados. Recarregue os dados da igreja antes de continuar.');
+      return;
+    }
+
+    if (isFormOutdated) {
+      setTemplateError('Não é possível salvar: os dados deste modelo foram atualizados no servidor ou reconciliados após uma desconexão. Carregue os dados atuais antes de salvar.');
+      return;
+    }
+
+    const orderedActivities = templateActivities.map((act, idx) => ({
+      ...act,
+      displayOrder: idx + 1
+    }));
+
     const payload = {
       name: templateName,
       description: templateDesc,
       eventTypeId: templateEventTypeId || null,
-      activities: templateActivities,
+      activities: orderedActivities,
       parallelServices: templateParallelServices
     };
 
     if (editingTemplateId) {
-      const res = await updateServiceTemplate(editingTemplateId, payload);
+      const options = {
+        originSnapshot: editingTemplateOrigin,
+        originUpdatedAt: editingTemplateOrigin?.updatedAt,
+        originParallelServicesCount: editingTemplateOrigin?.parallelServicesCount,
+        originActivitiesCount: editingTemplateOrigin?.activitiesCount
+      };
+      const res = await updateServiceTemplate(editingTemplateId, payload, options);
       if (!res.success) {
         setTemplateError(res.error);
       } else {
+        if (cancelEditingTemplate) {
+          cancelEditingTemplate(editingTemplateId);
+        }
         setEditingTemplateId(null);
+        setEditingTemplateOrigin(null);
+        setHadSyncFailureWhileEditing(false);
         setTemplateName('');
         setTemplateDesc('');
         setTemplateEventTypeId('');
@@ -428,18 +568,46 @@ export default function AdminView({ onBack, initialTab = 'event_types' } = {}) {
   };
 
   const handleStartEditTemplate = (tpl) => {
+    if (tpl.isStale || isDataStale || isTemplatesStale) {
+      setTemplateError(`Não é possível editar o modelo "${tpl.name}": os dados estão desatualizados. Recarregue os dados da igreja antes de realizar alterações.`);
+      return;
+    }
+    // Regra B3: Um modelo incompleto não pode ser editado como se estivesse carregado
+    if (tpl.isComplete === false || (tpl.activitiesCount > 0 && (!tpl.activities || tpl.activities.length === 0))) {
+      setTemplateError(`Não é possível editar o modelo "${tpl.name}" porque seus detalhes completos não foram carregados do servidor. Tente recarregar os dados da igreja.`);
+      return;
+    }
+    const origin = beginEditingTemplate ? beginEditingTemplate(tpl.id) : null;
     setEditingTemplateId(tpl.id);
+    setEditingTemplateOrigin(origin || {
+      id: tpl.id,
+      name: tpl.name,
+      description: tpl.description || '',
+      eventTypeId: tpl.eventTypeId || null,
+      active: tpl.active !== false,
+      updatedAt: tpl.updatedAt || null,
+      parallelServicesCount: Array.isArray(tpl.parallelServices) ? tpl.parallelServices.length : (tpl.parallelServicesCount || 0),
+      activitiesCount: Array.isArray(tpl.activities) ? tpl.activities.length : (tpl.activitiesCount || 0),
+      parallelServices: (tpl.parallelServices || []).map(s => ({ ...s })),
+      activities: (tpl.activities || []).map(a => ({ ...a }))
+    });
+    setHadSyncFailureWhileEditing(false);
     setTemplateName(tpl.name);
     setTemplateDesc(tpl.description || '');
     setTemplateEventTypeId(tpl.eventTypeId || '');
-    setTemplateActivities(tpl.activities && tpl.activities.length > 0 ? [...tpl.activities] : []);
+    setTemplateActivities(tpl.activities && tpl.activities.length > 0 ? [...tpl.activities].map((a, i) => ({ ...a, displayOrder: i + 1 })) : []);
     setTemplateParallelServices(tpl.parallelServices && tpl.parallelServices.length > 0 ? [...tpl.parallelServices] : []);
     setTemplateError('');
     setTemplateSuccess('');
   };
 
   const handleCancelEditTemplate = () => {
+    if (cancelEditingTemplate && editingTemplateId) {
+      cancelEditingTemplate(editingTemplateId);
+    }
     setEditingTemplateId(null);
+    setEditingTemplateOrigin(null);
+    setHadSyncFailureWhileEditing(false);
     setTemplateName('');
     setTemplateDesc('');
     setTemplateEventTypeId('');
@@ -483,7 +651,7 @@ export default function AdminView({ onBack, initialTab = 'event_types' } = {}) {
             plannedDurationMinutes: std.defaultDurationMinutes || 10,
             notes: std.description || ''
           }
-        ]);
+        ].map((a, i) => ({ ...a, displayOrder: i + 1 })));
         setSelectedStandardActForTemplate('');
         return;
       }
@@ -496,11 +664,61 @@ export default function AdminView({ onBack, initialTab = 'event_types' } = {}) {
         plannedDurationMinutes: 10,
         notes: ''
       }
-    ]);
+    ].map((a, i) => ({ ...a, displayOrder: i + 1 })));
   };
 
   const handleRemoveActivityFromTemplate = (idx) => {
-    setTemplateActivities(prev => prev.filter((_, i) => i !== idx));
+    setTemplateActivities(prev => prev.filter((_, i) => i !== idx).map((a, i) => ({ ...a, displayOrder: i + 1 })));
+  };
+
+  // Reordenação de Atividades no Modelo (Issue #27)
+  const handleMoveActivityUp = (idx) => {
+    if (idx <= 0) return;
+    setTemplateActivities(prev => {
+      const copy = [...prev];
+      const temp = copy[idx - 1];
+      copy[idx - 1] = copy[idx];
+      copy[idx] = temp;
+      return copy.map((a, i) => ({ ...a, displayOrder: i + 1 }));
+    });
+  };
+
+  const handleMoveActivityDown = (idx) => {
+    setTemplateActivities(prev => {
+      if (idx >= prev.length - 1) return prev;
+      const copy = [...prev];
+      const temp = copy[idx + 1];
+      copy[idx + 1] = copy[idx];
+      copy[idx] = temp;
+      return copy.map((a, i) => ({ ...a, displayOrder: i + 1 }));
+    });
+  };
+
+  const handleActivityDragStart = (e, idx) => {
+    setDraggedActivityIdx(idx);
+    e.dataTransfer.effectAllowed = 'move';
+    e.dataTransfer.setData('text/plain', String(idx));
+  };
+
+  const handleActivityDragOver = (e) => {
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'move';
+  };
+
+  const handleActivityDrop = (e, dropIdx) => {
+    e.preventDefault();
+    const fromIdx = draggedActivityIdx !== null ? draggedActivityIdx : parseInt(e.dataTransfer.getData('text/plain'), 10);
+    if (isNaN(fromIdx) || fromIdx === dropIdx || fromIdx < 0 || fromIdx >= templateActivities.length) {
+      setDraggedActivityIdx(null);
+      return;
+    }
+    setTemplateActivities(prev => {
+      const copy = [...prev];
+      const [moved] = copy.splice(fromIdx, 1);
+      copy.splice(dropIdx, 0, moved);
+      return copy.map((a, i) => ({ ...a, displayOrder: i + 1 }));
+    });
+    setDraggedActivityIdx(null);
   };
 
   const handleToggleParallelServiceInTemplate = (idx) => {
@@ -514,6 +732,65 @@ export default function AdminView({ onBack, initialTab = 'event_types' } = {}) {
     setTemplateParallelServices(prev =>
       prev.map((s, i) => i === idx ? { ...s, prepRequiredMinutes: isNaN(parsed) ? 0 : Math.max(0, Math.min(180, parsed)) } : s)
     );
+  };
+
+  // Handlers para Serviços Paralelos do Modelo (Issue #27 / Correção D)
+  // Presets sem duplicação acidental:
+  // - Ausente: adiciona
+  // - Presente e ativo: preserva, sem duplicar
+  // - Presente e inativo: reativa preservando configurações
+  const handleAddPresetParallelService = (preset) => {
+    setTemplateParallelServices(prev => {
+      // Identifica estritamente por serviceName, NUNCA por teamId
+      const existsIdx = prev.findIndex(s => s.serviceName.toLowerCase() === preset.serviceName.toLowerCase());
+      if (existsIdx >= 0) {
+        const existing = prev[existsIdx];
+        if (!existing.isDefaultActive) {
+          // Reativa serviço sem sobrescrever o tempo de preparação customizado
+          return prev.map((s, i) => i === existsIdx ? { ...s, isDefaultActive: true } : s);
+        }
+        // Já presente e ativo: preserva sem duplicar acidentalmente
+        return prev;
+      }
+      return [
+        ...prev,
+        {
+          ...preset,
+          id: `tps-${Date.now()}-${prev.length + 1}`,
+          isDefaultActive: true
+        }
+      ];
+    });
+  };
+
+  const handleAddCustomParallelService = (e) => {
+    if (e && e.preventDefault) e.preventDefault();
+    if (!customServiceName.trim()) return;
+    setTemplateParallelServices(prev => [
+      ...prev,
+      {
+        id: `tps-${Date.now()}-${prev.length + 1}`,
+        teamId: customServiceTeamId || 'apoio',
+        serviceName: customServiceName.trim(),
+        prepRequiredMinutes: Math.max(0, Math.min(180, parseInt(customServicePrepMinutes, 10) || 0)),
+        isDefaultActive: true
+      }
+    ]);
+    setCustomServiceName('');
+    setCustomServicePrepMinutes(30);
+  };
+
+  const handleRemoveParallelService = (idx) => {
+    setTemplateParallelServices(prev => prev.filter((_, i) => i !== idx));
+  };
+
+  const calculateAntecedentTime = (prepMinutes, baseTime = '19:00') => {
+    const [h, m] = baseTime.split(':').map(Number);
+    const baseTotalMinutes = h * 60 + m;
+    const startMinutes = (baseTotalMinutes - (prepMinutes || 0) + 1440) % 1440;
+    const startH = Math.floor(startMinutes / 60);
+    const startM = startMinutes % 60;
+    return `${String(startH).padStart(2, '0')}:${String(startM).padStart(2, '0')}`;
   };
 
   const handleDesignateLeader = () => {
@@ -530,6 +807,10 @@ export default function AdminView({ onBack, initialTab = 'event_types' } = {}) {
   };
 
   const isControlsDisabled = !isOnline || isDataStale;
+  const isTemplateControlsDisabled = isControlsDisabled || isTemplatesStale;
+  const isTypeControlsDisabled = isControlsDisabled || isEventTypesStale;
+  const isActivityControlsDisabled = isControlsDisabled || isActivitiesStale;
+  const isReasonControlsDisabled = isControlsDisabled || isReasonsStale;
 
   return (
     <div className="admin-container">
@@ -595,32 +876,27 @@ export default function AdminView({ onBack, initialTab = 'event_types' } = {}) {
             <span className="badge badge-primary">Painel de Administração Web (Exclusivo Admin)</span>
             <span className="badge badge-pending">Igreja: {church.name}</span>
           </div>
-          <h1 className="admin-title">Governança, Cadastros & Designações</h1>
+          <h1 className="admin-title">Administração da Igreja</h1>
           <p className="admin-subtitle">
-            Gerenciamento global restrito a administradores (PRD 3.2, 4 e 5). Cadastre tipos de evento, atividades com
-            durações padrão, motivos de cancelamento, convites de acesso e designe a liderança da liturgia por evento.
+            Gerenciamento global restrito a administradores (PRD 3.2, 4 e 5). Configure tipos de evento, modelos de culto,
+            atividades com durações padrão, motivos de cancelamento, convites de acesso e designe a liderança da liturgia por evento.
           </p>
         </div>
       </div>
 
-      {/* Sub-Navegação Administrativa */}
-      <div className="admin-nav-tabs">
+      {/* Sub-Navegação Administrativa Responsiva */}
+      <div
+        className="admin-nav-tabs"
+        role="tablist"
+        aria-label="Abas da Administração da Igreja"
+        onKeyDown={handleTabKeyDown}
+      >
         <button
-          className={`admin-tab-btn ${activeAdminTab === 'invites' ? 'active' : ''}`}
-          onClick={() => setActiveAdminTab('invites')}
-        >
-          <UserPlus size={16} /> Convites de Acesso à Igreja (PRD 3.1)
-        </button>
-
-        <button
-          className={`admin-tab-btn ${activeAdminTab === 'liturgy' ? 'active' : ''}`}
-          onClick={() => setActiveAdminTab('liturgy')}
-          id="tab-admin-liturgy"
-        >
-          <Shield size={16} /> Designação da Liturgia por Evento (PRD 3.2)
-        </button>
-
-        <button
+          type="button"
+          role="tab"
+          aria-selected={activeAdminTab === 'event_types'}
+          aria-controls="panel-admin-event-types"
+          tabIndex={activeAdminTab === 'event_types' ? 0 : -1}
           className={`admin-tab-btn ${activeAdminTab === 'event_types' ? 'active' : ''}`}
           onClick={() => setActiveAdminTab('event_types')}
           id="tab-admin-event-types"
@@ -629,14 +905,11 @@ export default function AdminView({ onBack, initialTab = 'event_types' } = {}) {
         </button>
 
         <button
-          className={`admin-tab-btn ${activeAdminTab === 'activities' ? 'active' : ''}`}
-          onClick={() => setActiveAdminTab('activities')}
-          id="tab-admin-activities"
-        >
-          <Clock size={16} /> Atividades & Durações (PRD §5)
-        </button>
-
-        <button
+          type="button"
+          role="tab"
+          aria-selected={activeAdminTab === 'templates'}
+          aria-controls="panel-admin-templates"
+          tabIndex={activeAdminTab === 'templates' ? 0 : -1}
           className={`admin-tab-btn ${activeAdminTab === 'templates' ? 'active' : ''}`}
           onClick={() => setActiveAdminTab('templates')}
           id="tab-admin-templates"
@@ -645,15 +918,66 @@ export default function AdminView({ onBack, initialTab = 'event_types' } = {}) {
         </button>
 
         <button
+          type="button"
+          role="tab"
+          aria-selected={activeAdminTab === 'activities'}
+          aria-controls="panel-admin-activities"
+          tabIndex={activeAdminTab === 'activities' ? 0 : -1}
+          className={`admin-tab-btn ${activeAdminTab === 'activities' ? 'active' : ''}`}
+          onClick={() => setActiveAdminTab('activities')}
+          id="tab-admin-activities"
+        >
+          <Clock size={16} /> Atividades & Durações (PRD §5)
+        </button>
+
+        <button
+          type="button"
+          role="tab"
+          aria-selected={activeAdminTab === 'reasons'}
+          aria-controls="panel-admin-reasons"
+          tabIndex={activeAdminTab === 'reasons' ? 0 : -1}
           className={`admin-tab-btn ${activeAdminTab === 'reasons' ? 'active' : ''}`}
           onClick={() => setActiveAdminTab('reasons')}
+          id="tab-admin-reasons"
         >
           <Tag size={16} /> Motivos de Cancelamento Web (PRD 7.3)
         </button>
 
         <button
+          type="button"
+          role="tab"
+          aria-selected={activeAdminTab === 'invites'}
+          aria-controls="panel-admin-invites"
+          tabIndex={activeAdminTab === 'invites' ? 0 : -1}
+          className={`admin-tab-btn ${activeAdminTab === 'invites' ? 'active' : ''}`}
+          onClick={() => setActiveAdminTab('invites')}
+          id="tab-admin-invites"
+        >
+          <UserPlus size={16} /> Convites de Acesso à Igreja (PRD 3.1)
+        </button>
+
+        <button
+          type="button"
+          role="tab"
+          aria-selected={activeAdminTab === 'liturgy'}
+          aria-controls="panel-admin-liturgy"
+          tabIndex={activeAdminTab === 'liturgy' ? 0 : -1}
+          className={`admin-tab-btn ${activeAdminTab === 'liturgy' ? 'active' : ''}`}
+          onClick={() => setActiveAdminTab('liturgy')}
+          id="tab-admin-liturgy"
+        >
+          <Shield size={16} /> Designação da Liturgia por Evento (PRD 3.2)
+        </button>
+
+        <button
+          type="button"
+          role="tab"
+          aria-selected={activeAdminTab === 'members'}
+          aria-controls="panel-admin-members"
+          tabIndex={activeAdminTab === 'members' ? 0 : -1}
           className={`admin-tab-btn ${activeAdminTab === 'members' ? 'active' : ''}`}
           onClick={() => setActiveAdminTab('members')}
+          id="tab-admin-members"
         >
           <Users size={16} /> Membros e Aptidões (PRD 3)
         </button>
@@ -661,7 +985,13 @@ export default function AdminView({ onBack, initialTab = 'event_types' } = {}) {
 
       {/* ABA 1: CONVITES DE ACESSO À IGREJA (PRD 3.1 & Cenário M01, M40) */}
       {activeAdminTab === 'invites' && (
-        <div className="grid-2">
+        <div
+          role="tabpanel"
+          id="panel-admin-invites"
+          aria-labelledby="tab-admin-invites"
+          tabIndex={0}
+          className="grid-2"
+        >
           <div className="card">
             <h2 className="tab-sec-title">
               <UserPlus size={18} color="var(--primary)" /> Enviar Convite de Acesso
@@ -736,7 +1066,13 @@ export default function AdminView({ onBack, initialTab = 'event_types' } = {}) {
 
       {/* ABA 2: DESIGNAÇÃO DA LIDERANÇA DA LITURGIA (PRD 3.2, Cenário M05 & Issue #28 CA03) */}
       {activeAdminTab === 'liturgy' && (
-        <div className="card">
+        <div
+          role="tabpanel"
+          id="panel-admin-liturgy"
+          aria-labelledby="tab-admin-liturgy"
+          tabIndex={0}
+          className="card"
+        >
           <h2 className="tab-sec-title">
             <Shield size={18} color="var(--primary)" /> Designação da Liderança da Liturgia por Evento
           </h2>
@@ -824,7 +1160,13 @@ export default function AdminView({ onBack, initialTab = 'event_types' } = {}) {
 
       {/* ABA 3: MOTIVOS DE CANCELAMENTO PRÉ-CADASTRADOS (PRD 7.3 & Cenário M12) */}
       {activeAdminTab === 'reasons' && (
-        <div className="grid-2">
+        <div
+          role="tabpanel"
+          id="panel-admin-reasons"
+          aria-labelledby="tab-admin-reasons"
+          tabIndex={0}
+          className="grid-2"
+        >
           <div className="card">
             <h2 className="tab-sec-title">
               <Tag size={18} color="var(--primary)" /> Cadastrar Motivo de Cancelamento
@@ -867,7 +1209,7 @@ export default function AdminView({ onBack, initialTab = 'event_types' } = {}) {
                     setNewReasonText(e.target.value);
                     if (reasonError) setReasonError('');
                   }}
-                  disabled={isControlsDisabled}
+                  disabled={isReasonControlsDisabled}
                   required
                 />
               </div>
@@ -876,7 +1218,7 @@ export default function AdminView({ onBack, initialTab = 'event_types' } = {}) {
                 type="submit"
                 id="btn-add-cancel-reason"
                 className="btn btn-primary"
-                disabled={isControlsDisabled || !newReasonText.trim()}
+                disabled={isReasonControlsDisabled || !newReasonText.trim()}
               >
                 <Plus size={15} /> Cadastrar Novo Motivo
               </button>
@@ -1044,7 +1386,13 @@ export default function AdminView({ onBack, initialTab = 'event_types' } = {}) {
 
       {/* ABA: TIPOS DE EVENTO (PRD §5 - Issue #25) */}
       {activeAdminTab === 'event_types' && (
-        <div className="grid-2">
+        <div
+          role="tabpanel"
+          id="panel-admin-event-types"
+          aria-labelledby="tab-admin-event-types"
+          tabIndex={0}
+          className="grid-2"
+        >
           <div className="card">
             <h2 className="tab-sec-title">
               <Calendar size={18} color="var(--primary)" /> Cadastrar Tipo de Evento
@@ -1087,7 +1435,7 @@ export default function AdminView({ onBack, initialTab = 'event_types' } = {}) {
                     setNewTypeName(e.target.value);
                     if (typeError) setTypeError('');
                   }}
-                  disabled={isControlsDisabled}
+                  disabled={isTypeControlsDisabled}
                   required
                 />
               </div>
@@ -1110,7 +1458,7 @@ export default function AdminView({ onBack, initialTab = 'event_types' } = {}) {
                     setNewTypeDesc(e.target.value);
                     if (typeError) setTypeError('');
                   }}
-                  disabled={isControlsDisabled}
+                  disabled={isTypeControlsDisabled}
                 />
               </div>
 
@@ -1118,7 +1466,7 @@ export default function AdminView({ onBack, initialTab = 'event_types' } = {}) {
                 type="submit"
                 id="btn-add-event-type"
                 className="btn btn-primary"
-                disabled={isControlsDisabled || !newTypeName.trim()}
+                disabled={isTypeControlsDisabled || !newTypeName.trim()}
               >
                 <Plus size={15} /> Cadastrar Tipo de Evento
               </button>
@@ -1296,7 +1644,13 @@ export default function AdminView({ onBack, initialTab = 'event_types' } = {}) {
 
       {/* ABA: ATIVIDADES PADRÃO & DURAÇÕES (PRD §5 & CA02 - Issue #25) */}
       {activeAdminTab === 'activities' && (
-        <div className="grid-2">
+        <div
+          role="tabpanel"
+          id="panel-admin-activities"
+          aria-labelledby="tab-admin-activities"
+          tabIndex={0}
+          className="grid-2"
+        >
           <div className="card">
             <h2 className="tab-sec-title">
               <Clock size={18} color="var(--primary)" /> Cadastrar Atividade Padrão
@@ -1403,7 +1757,7 @@ export default function AdminView({ onBack, initialTab = 'event_types' } = {}) {
                     setNewActDesc(e.target.value);
                     if (actError) setActError('');
                   }}
-                  disabled={isControlsDisabled}
+                  disabled={isActivityControlsDisabled}
                 />
               </div>
 
@@ -1411,7 +1765,7 @@ export default function AdminView({ onBack, initialTab = 'event_types' } = {}) {
                 type="submit"
                 id="btn-add-activity"
                 className="btn btn-primary"
-                disabled={isControlsDisabled || !newActName.trim() || !newActDuration}
+                disabled={isActivityControlsDisabled || !newActName.trim() || !newActDuration}
               >
                 <Plus size={15} /> Cadastrar Atividade Padrão
               </button>
@@ -1628,7 +1982,13 @@ export default function AdminView({ onBack, initialTab = 'event_types' } = {}) {
 
       {/* ABA: MODELOS DE CULTO COM ATIVIDADES E APOIOS PADRÃO (PRD §5 & M28 - Issue #27) */}
       {activeAdminTab === 'templates' && (
-        <div className="grid-2">
+        <div
+          role="tabpanel"
+          id="panel-admin-templates"
+          aria-labelledby="tab-admin-templates"
+          tabIndex={0}
+          className="grid-2"
+        >
           {/* Formulário de Criação / Edição de Modelo */}
           <div className="card">
             <h2 className="tab-sec-title">
@@ -1648,6 +2008,76 @@ export default function AdminView({ onBack, initialTab = 'event_types' } = {}) {
             {templateError && (
               <div className="error-banner">
                 <AlertCircle size={16} /> {templateError}
+              </div>
+            )}
+
+            {(isDataStale || isTemplatesStale) && (
+              <div
+                id="template-stale-warning"
+                className="error-banner"
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'space-between',
+                  gap: '8px',
+                  backgroundColor: '#fffbeb',
+                  color: '#92400e',
+                  borderColor: '#fcd34d',
+                  marginBottom: '1rem'
+                }}
+              >
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                  <AlertCircle size={18} color="#b45309" />
+                  <span style={{ fontSize: '13px' }}>
+                    <strong>Dados desatualizados:</strong> A sincronização com o servidor falhou. O conteúdo existente é exibido apenas para consulta. Edições e aplicações estão bloqueadas até a reconciliação.
+                  </span>
+                </div>
+                {reloadRemoteData && (
+                  <button
+                    type="button"
+                    className="btn btn-sm btn-secondary"
+                    id="btn-retry-template-sync"
+                    onClick={() => reloadRemoteData()}
+                    disabled={remoteLoading}
+                    style={{ whiteSpace: 'nowrap' }}
+                  >
+                    {remoteLoading ? 'Sincronizando...' : 'Tentar novamente'}
+                  </button>
+                )}
+              </div>
+            )}
+
+            {isFormOutdated && (
+              <div
+                id="template-outdated-warning"
+                className="error-banner"
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'space-between',
+                  gap: '8px',
+                  backgroundColor: '#fffbeb',
+                  color: '#92400e',
+                  borderColor: '#fcd34d',
+                  marginBottom: '1rem',
+                  padding: '12px'
+                }}
+              >
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                  <AlertCircle size={18} color="#b45309" />
+                  <span style={{ fontSize: '13px' }}>
+                    <strong>Dados atualizados no servidor:</strong> Este modelo foi modificado por outra sessão ou sincronizado com novos dados após uma desconexão. Para não sobrescrever alterações remotas (como serviços ou etapas adicionadas), o salvamento está bloqueado.
+                  </span>
+                </div>
+                <button
+                  type="button"
+                  className="btn btn-sm btn-secondary"
+                  id="btn-reload-template-from-server"
+                  onClick={handleReloadFormFromCurrent}
+                  style={{ whiteSpace: 'nowrap' }}
+                >
+                  Carregar dados atuais
+                </button>
               </div>
             )}
 
@@ -1713,24 +2143,29 @@ export default function AdminView({ onBack, initialTab = 'event_types' } = {}) {
                 />
               </div>
 
-              {/* Construtor de Atividades Principais do Modelo */}
-              <div className="form-group" style={{ background: 'var(--bg-inset)', padding: '14px', borderRadius: 'var(--radius-md)', border: '1px solid var(--border-subtle)' }}>
+              {/* Construtor de Atividades Principais do Modelo com Reordenação (Issue #27) */}
+              <div className="form-group" style={{ background: 'var(--bg-inset)', padding: '16px', borderRadius: 'var(--radius-md)', border: '1px solid var(--border-subtle)' }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
                   <label className="form-label" style={{ fontWeight: 700, margin: 0 }}>
                     <Clock size={14} style={{ display: 'inline', marginRight: '4px', verticalAlign: 'middle' }} />
                     Etapas Litúrgicas do Modelo ({templateActivities.length})
                   </label>
                   <span style={{ fontSize: '12px', color: 'var(--text-muted)', fontWeight: 600 }}>
-                    Total: {templateActivities.reduce((s, a) => s + (parseInt(a.plannedDurationMinutes) || 0), 0)} min
+                    Duração Litúrgica Total: {templateActivities.reduce((s, a) => s + (parseInt(a.plannedDurationMinutes) || 0), 0)} min
                   </span>
                 </div>
+                <p style={{ fontSize: '11px', color: 'var(--text-muted)', marginBottom: '10px' }}>
+                  Reorganize a sequência litúrgica arrastando e soltando ou usando os botões ▲ e ▼. A numeração é recalculada automaticamente e modificações não alteram eventos já criados (CA04).
+                </p>
 
-                <div style={{ display: 'flex', gap: '8px', marginBottom: '10px' }}>
+                <div style={{ display: 'flex', gap: '8px', marginBottom: '12px' }}>
                   <select
+                    id="template-select-standard-act"
                     className="form-select"
                     value={selectedStandardActForTemplate}
                     onChange={e => setSelectedStandardActForTemplate(e.target.value)}
                     style={{ flex: 1, fontSize: '12px' }}
+                    disabled={isControlsDisabled}
                   >
                     <option value="">-- Escolher de Atividades Padrão --</option>
                     {standardActivities.filter(a => a.active !== false).map(a => (
@@ -1739,8 +2174,10 @@ export default function AdminView({ onBack, initialTab = 'event_types' } = {}) {
                   </select>
                   <button
                     type="button"
+                    id="btn-add-activity-to-template"
                     className="btn btn-sm btn-secondary"
                     onClick={handleAddActivityToTemplate}
+                    disabled={isControlsDisabled}
                     style={{ whiteSpace: 'nowrap' }}
                   >
                     <Plus size={14} /> Adicionar Etapa
@@ -1756,29 +2193,82 @@ export default function AdminView({ onBack, initialTab = 'event_types' } = {}) {
                     {templateActivities.map((act, idx) => (
                       <div
                         key={idx}
+                        id={`template-activity-row-${idx}`}
+                        draggable={!isControlsDisabled}
+                        onDragStart={(e) => handleActivityDragStart(e, idx)}
+                        onDragOver={handleActivityDragOver}
+                        onDrop={(e) => handleActivityDrop(e, idx)}
                         style={{
                           display: 'flex',
                           alignItems: 'center',
                           justifyContent: 'space-between',
-                          padding: '6px 10px',
-                          background: 'var(--bg-surface)',
+                          padding: '8px 10px',
+                          background: draggedActivityIdx === idx ? 'var(--bg-card-hover)' : 'var(--bg-surface)',
                           border: '1px solid var(--border-subtle)',
                           borderRadius: 'var(--radius-sm)',
-                          fontSize: '12px'
+                          fontSize: '12px',
+                          cursor: isControlsDisabled ? 'default' : 'grab',
+                          transition: 'background 0.15s ease'
                         }}
                       >
-                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flex: 1 }}>
-                          <span style={{ fontWeight: 800, color: 'var(--primary)' }}>{idx + 1}.</span>
-                          <span style={{ fontWeight: 600 }}>{act.title}</span>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flex: 1, minWidth: 0 }}>
+                          {/* Controles Acessíveis de Subir e Descer */}
+                          <div style={{ display: 'flex', flexDirection: 'column', gap: '1px' }}>
+                            <button
+                              type="button"
+                              id={`btn-move-up-template-activity-${idx}`}
+                              onClick={() => handleMoveActivityUp(idx)}
+                              disabled={isControlsDisabled || idx === 0}
+                              title="Mover atividade para cima"
+                              aria-label={`Mover ${act.title} para cima`}
+                              style={{
+                                border: 'none',
+                                background: 'transparent',
+                                cursor: idx === 0 ? 'not-allowed' : 'pointer',
+                                padding: '1px 3px',
+                                color: idx === 0 ? 'var(--text-muted)' : 'var(--text-secondary)',
+                                fontSize: '10px',
+                                lineHeight: 1
+                              }}
+                            >
+                              ▲
+                            </button>
+                            <button
+                              type="button"
+                              id={`btn-move-down-template-activity-${idx}`}
+                              onClick={() => handleMoveActivityDown(idx)}
+                              disabled={isControlsDisabled || idx === templateActivities.length - 1}
+                              title="Mover atividade para baixo"
+                              aria-label={`Mover ${act.title} para baixo`}
+                              style={{
+                                border: 'none',
+                                background: 'transparent',
+                                cursor: idx === templateActivities.length - 1 ? 'not-allowed' : 'pointer',
+                                padding: '1px 3px',
+                                color: idx === templateActivities.length - 1 ? 'var(--text-muted)' : 'var(--text-secondary)',
+                                fontSize: '10px',
+                                lineHeight: 1
+                              }}
+                            >
+                              ▼
+                            </button>
+                          </div>
+
+                          <span style={{ fontWeight: 800, color: 'var(--primary)', minWidth: '22px' }}>{idx + 1}.</span>
+                          <span style={{ fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{act.title}</span>
                           <span className="badge badge-primary" style={{ fontSize: '10px', padding: '2px 6px' }}>{act.category || 'Liturgia'}</span>
                         </div>
+
                         <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                           <span style={{ color: 'var(--text-secondary)', fontWeight: 600 }}>{act.plannedDurationMinutes} min</span>
                           <button
                             type="button"
+                            id={`btn-remove-template-act-${idx}`}
                             onClick={() => handleRemoveActivityFromTemplate(idx)}
+                            disabled={isControlsDisabled}
                             style={{ background: 'transparent', border: 'none', color: '#ef4444', cursor: 'pointer', padding: '2px' }}
                             title="Remover etapa"
+                            aria-label={`Remover ${act.title}`}
                           >
                             <Trash2 size={13} />
                           </button>
@@ -1789,57 +2279,226 @@ export default function AdminView({ onBack, initialTab = 'event_types' } = {}) {
                 )}
               </div>
 
-              {/* Construtor de Serviços Paralelos / Apoios Padrão */}
-              <div className="form-group" style={{ background: 'var(--bg-inset)', padding: '14px', borderRadius: 'var(--radius-md)', border: '1px solid var(--border-subtle)' }}>
-                <label className="form-label" style={{ fontWeight: 700, marginBottom: '8px', display: 'block' }}>
-                  <Shield size={14} style={{ display: 'inline', marginRight: '4px', verticalAlign: 'middle' }} />
-                  Serviços Paralelos & Apoios Técnicos Padrão (CA01 / M28)
-                </label>
-                <p style={{ fontSize: '11px', color: 'var(--text-muted)', marginBottom: '10px' }}>
-                  Marque os apoios que acompanham o evento por padrão (com tempo de preparação prévio). Retirar transmissão da edição depois não altera o modelo (CA02).
+              {/* Construtor Completo de Serviços Paralelos / Apoios Técnicos com Preparação Prévia (Issue #27) */}
+              <div className="form-group" style={{ background: 'var(--bg-inset)', padding: '16px', borderRadius: 'var(--radius-md)', border: '1px solid var(--border-subtle)' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px' }}>
+                  <label className="form-label" style={{ fontWeight: 700, margin: 0 }}>
+                    <Shield size={14} style={{ display: 'inline', marginRight: '4px', verticalAlign: 'middle' }} />
+                    Serviços Paralelos & Apoios Técnicos (Issue #27)
+                  </label>
+                  <span className="badge badge-secondary" style={{ fontSize: '11px' }}>
+                    {templateParallelServices.filter(s => s.isDefaultActive).length} Apoios Ativos
+                  </span>
+                </div>
+                <p style={{ fontSize: '11px', color: 'var(--text-muted)', marginBottom: '12px', lineHeight: 1.4 }}>
+                  Serviços paralelos (como Limpeza, Som, Portaria e Transmissão) podem iniciar antes do horário do culto.
+                  <strong> Eles não somam sua duração ao tempo litúrgico</strong> e <strong>não escalam pessoas automaticamente</strong>.
                 </p>
 
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                  {templateParallelServices.map((serv, idx) => (
-                    <div
-                      key={idx}
-                      style={{
-                        display: 'flex',
-                        alignItems: 'center',
-                        justifyContent: 'space-between',
-                        padding: '8px 10px',
-                        background: 'var(--bg-surface)',
-                        border: '1px solid var(--border-subtle)',
-                        borderRadius: 'var(--radius-sm)',
-                        fontSize: '12px'
-                      }}
-                    >
-                      <label style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer', flex: 1, margin: 0 }}>
-                        <input
-                          type="checkbox"
-                          checked={serv.isDefaultActive}
-                          onChange={() => handleToggleParallelServiceInTemplate(idx)}
-                        />
-                        <span style={{ fontWeight: 600, color: serv.isDefaultActive ? 'var(--text-primary)' : 'var(--text-muted)' }}>
-                          {serv.serviceName}
-                        </span>
-                        <span className="badge badge-secondary" style={{ fontSize: '10px' }}>{serv.teamId}</span>
-                      </label>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                        <span style={{ fontSize: '11px', color: 'var(--text-muted)' }}>Prep:</span>
-                        <input
-                          type="number"
-                          className="form-input"
-                          style={{ width: '60px', padding: '2px 6px', fontSize: '11px' }}
-                          min="0"
-                          max="180"
-                          value={serv.prepRequiredMinutes}
-                          onChange={e => handlePrepMinutesChange(idx, e.target.value)}
-                        />
-                        <span style={{ fontSize: '11px', color: 'var(--text-muted)' }}>min</span>
+                {/* Presets rápidos de serviços da igreja */}
+                <div style={{ marginBottom: '12px' }}>
+                  <span style={{ fontSize: '11px', fontWeight: 600, color: 'var(--text-secondary)', display: 'block', marginBottom: '6px' }}>
+                    Adicionar Serviços Recomendados:
+                  </span>
+                  <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
+                    {PARALLEL_SERVICE_PRESETS.map((p, pIdx) => {
+                      const matched = templateParallelServices.find(s => s.serviceName.toLowerCase() === p.serviceName.toLowerCase());
+                      const isPresent = !!matched;
+                      const isActive = isPresent && matched.isDefaultActive !== false;
+                      const isInactive = isPresent && !isActive;
+
+                      let label = `+ ${p.serviceName} (${p.prepRequiredMinutes}m prep)`;
+                      let buttonTitle = `Adicionar ${p.serviceName}`;
+                      if (isActive) {
+                        label = `✓ ${p.serviceName} (${matched.prepRequiredMinutes}m prep)`;
+                        buttonTitle = `${p.serviceName} já está ativo no modelo`;
+                      } else if (isInactive) {
+                        label = `↻ Reativar ${p.serviceName} (${matched.prepRequiredMinutes}m prep)`;
+                        buttonTitle = `Reativar ${p.serviceName}`;
+                      }
+
+                      return (
+                        <button
+                          key={pIdx}
+                          type="button"
+                          className="btn btn-sm btn-secondary"
+                          id={`btn-preset-service-${p.teamId}`}
+                          onClick={() => handleAddPresetParallelService(p)}
+                          disabled={isControlsDisabled}
+                          title={buttonTitle}
+                          style={{
+                            fontSize: '11px',
+                            padding: '3px 8px',
+                            background: isActive ? 'rgba(99, 102, 241, 0.15)' : (isInactive ? 'rgba(234, 179, 8, 0.15)' : undefined),
+                            borderColor: isActive ? 'var(--primary)' : (isInactive ? '#eab308' : undefined),
+                            color: isActive ? 'var(--primary)' : (isInactive ? '#b45309' : undefined)
+                          }}
+                        >
+                          {label}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                {/* Lista de serviços paralelos cadastrados no modelo */}
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', marginBottom: '14px' }}>
+                  {templateParallelServices.length === 0 ? (
+                    <p style={{ fontSize: '12px', color: 'var(--text-muted)', fontStyle: 'italic', margin: 0 }}>
+                      Nenhum serviço paralelo configurado para este modelo.
+                    </p>
+                  ) : (
+                    templateParallelServices.map((serv, idx) => (
+                      <div
+                        key={idx}
+                        id={`template-parallel-service-row-${idx}`}
+                        style={{
+                          display: 'flex',
+                          flexDirection: 'column',
+                          gap: '6px',
+                          padding: '10px 12px',
+                          background: 'var(--bg-surface)',
+                          border: '1px solid var(--border-subtle)',
+                          borderRadius: 'var(--radius-sm)',
+                          fontSize: '12px',
+                          opacity: serv.isDefaultActive ? 1 : 0.65
+                        }}
+                      >
+                        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                          <label style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer', flex: 1, margin: 0 }}>
+                            <input
+                              type="checkbox"
+                              id={`parallel-service-active-${idx}`}
+                              aria-label={`Ativar serviço ${serv.serviceName}`}
+                              checked={serv.isDefaultActive}
+                              onChange={() => handleToggleParallelServiceInTemplate(idx)}
+                              disabled={isControlsDisabled}
+                            />
+                            <span style={{ fontWeight: 700, color: serv.isDefaultActive ? 'var(--text-primary)' : 'var(--text-muted)' }}>
+                              {serv.serviceName}
+                            </span>
+                            <span className="badge badge-secondary" style={{ fontSize: '10px' }}>{serv.teamId}</span>
+                          </label>
+
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+                              <label htmlFor={`parallel-service-prep-${idx}`} style={{ fontSize: '11px', color: 'var(--text-muted)', fontWeight: 600 }}>
+                                Preparação:
+                              </label>
+                              <input
+                                type="number"
+                                id={`parallel-service-prep-${idx}`}
+                                aria-label={`Minutos de preparação para ${serv.serviceName}`}
+                                className="form-input"
+                                style={{ width: '56px', padding: '2px 6px', fontSize: '11px', textAlign: 'center' }}
+                                min="0"
+                                max="180"
+                                value={serv.prepRequiredMinutes}
+                                onChange={e => handlePrepMinutesChange(idx, e.target.value)}
+                                disabled={isControlsDisabled}
+                              />
+                              <span style={{ fontSize: '11px', color: 'var(--text-muted)' }}>min</span>
+                            </div>
+
+                            <button
+                              type="button"
+                              id={`btn-remove-parallel-service-${idx}`}
+                              onClick={() => handleRemoveParallelService(idx)}
+                              disabled={isControlsDisabled}
+                              style={{ background: 'transparent', border: 'none', color: '#ef4444', cursor: 'pointer', padding: '2px' }}
+                              title="Remover serviço paralelo"
+                              aria-label={`Remover serviço paralelo ${serv.serviceName}`}
+                            >
+                              <Trash2 size={13} />
+                            </button>
+                          </div>
+                        </div>
+
+                        {/* Indicador de Antecedência de Horário */}
+                        <div style={{ fontSize: '11px', color: 'var(--text-secondary)', paddingLeft: '22px' }}>
+                          {serv.prepRequiredMinutes > 0 ? (
+                            <span>
+                              ⏳ Inicia <strong>{serv.prepRequiredMinutes} min antes</strong> do culto (ex: se o culto for às 19h00, a preparação inicia às <strong>{calculateAntecedentTime(serv.prepRequiredMinutes, '19:00')}</strong>).
+                            </span>
+                          ) : (
+                            <span>⏱ Inicia concomitantemente com a abertura do culto.</span>
+                          )}
+                        </div>
                       </div>
+                    ))
+                  )}
+                </div>
+
+                {/* Adicionar serviço paralelo personalizado */}
+                <div style={{ borderTop: '1px solid var(--border-subtle)', paddingTop: '10px' }}>
+                  <span style={{ fontSize: '11px', fontWeight: 600, color: 'var(--text-secondary)', display: 'block', marginBottom: '6px' }}>
+                    Cadastrar Outro Apoio ou Serviço Paralelo:
+                  </span>
+                  <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap', alignItems: 'center' }}>
+                    <label htmlFor="custom-parallel-service-name-input" className="sr-only" style={{ position: 'absolute', width: '1px', height: '1px', padding: 0, margin: '-1px', overflow: 'hidden', clip: 'rect(0, 0, 0, 0)', border: 0 }}>
+                      Nome do serviço paralelo
+                    </label>
+                    <input
+                      type="text"
+                      id="custom-parallel-service-name-input"
+                      aria-label="Nome do serviço paralelo"
+                      className="form-input"
+                      style={{ flex: 2, minWidth: '140px', fontSize: '11px', padding: '6px 8px' }}
+                      placeholder="Nome do serviço (ex: Berçário)"
+                      value={customServiceName}
+                      onChange={e => setCustomServiceName(e.target.value)}
+                      disabled={isControlsDisabled}
+                    />
+                    <label htmlFor="custom-parallel-service-team-select" className="sr-only" style={{ position: 'absolute', width: '1px', height: '1px', padding: 0, margin: '-1px', overflow: 'hidden', clip: 'rect(0, 0, 0, 0)', border: 0 }}>
+                      Equipe do serviço paralelo
+                    </label>
+                    <select
+                      id="custom-parallel-service-team-select"
+                      aria-label="Equipe do serviço paralelo"
+                      className="form-select"
+                      style={{ flex: 1, minWidth: '100px', fontSize: '11px', padding: '6px 8px' }}
+                      value={customServiceTeamId}
+                      onChange={e => setCustomServiceTeamId(e.target.value)}
+                      disabled={isControlsDisabled}
+                    >
+                      <option value="apoio">Apoio Geral</option>
+                      <option value="limpeza">Limpeza</option>
+                      <option value="recepcao">Recepção</option>
+                      <option value="portaria">Portaria</option>
+                      <option value="som">Sonoplastia</option>
+                      <option value="midia">Transmissão</option>
+                      <option value="infantil">Ministério Infantil</option>
+                    </select>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+                      <label htmlFor="custom-parallel-service-prep-input" className="sr-only" style={{ position: 'absolute', width: '1px', height: '1px', padding: 0, margin: '-1px', overflow: 'hidden', clip: 'rect(0, 0, 0, 0)', border: 0 }}>
+                        Minutos de preparação antes do culto
+                      </label>
+                      <input
+                        type="number"
+                        id="custom-parallel-service-prep-input"
+                        aria-label="Minutos de preparação antes do culto"
+                        className="form-input"
+                        style={{ width: '56px', fontSize: '11px', padding: '6px 4px', textAlign: 'center' }}
+                        min="0"
+                        max="180"
+                        value={customServicePrepMinutes}
+                        onChange={e => setCustomServicePrepMinutes(e.target.value)}
+                        disabled={isControlsDisabled}
+                        title="Minutos de preparação antes do culto"
+                      />
+                      <span style={{ fontSize: '10px', color: 'var(--text-muted)' }}>min</span>
                     </div>
-                  ))}
+                    <button
+                      type="button"
+                      id="btn-add-custom-parallel-service"
+                      className="btn btn-sm btn-secondary"
+                      onClick={handleAddCustomParallelService}
+                      disabled={isControlsDisabled || !customServiceName.trim()}
+                      style={{ whiteSpace: 'nowrap', fontSize: '11px' }}
+                    >
+                      <Plus size={13} /> Adicionar Apoio
+                    </button>
+                  </div>
                 </div>
               </div>
 
@@ -1854,7 +2513,7 @@ export default function AdminView({ onBack, initialTab = 'event_types' } = {}) {
                   id="btn-save-template"
                   className="btn btn-primary"
                   style={{ flex: 1 }}
-                  disabled={isControlsDisabled}
+                  disabled={isTemplateControlsDisabled || isFormOutdated}
                 >
                   <Check size={16} /> {editingTemplateId ? 'Salvar Alterações do Modelo' : 'Cadastrar Modelo de Culto'}
                 </button>
@@ -1912,6 +2571,11 @@ export default function AdminView({ onBack, initialTab = 'event_types' } = {}) {
                             <span className={`badge ${tpl.active ? 'badge-primary' : 'badge-secondary'}`}>
                               {tpl.active ? 'Ativo' : 'Desativado'}
                             </span>
+                            {tpl.isStale && (
+                              <span className="badge" style={{ backgroundColor: '#fef3c7', color: '#92400e', borderColor: '#fcd34d', fontSize: '10px' }}>
+                                Desatualizado (somente leitura)
+                              </span>
+                            )}
                             {evType && (
                               <span className="badge badge-secondary" style={{ fontSize: '11px' }}>
                                 {evType.name}
@@ -1933,6 +2597,8 @@ export default function AdminView({ onBack, initialTab = 'event_types' } = {}) {
                         <div style={{ display: 'flex', gap: '6px' }}>
                           <button
                             type="button"
+                            id={`btn-edit-template-${idx}`}
+                            data-template-id={tpl.id}
                             className="btn btn-secondary btn-sm"
                             onClick={() => handleStartEditTemplate(tpl)}
                             title="Editar modelo"
@@ -1973,7 +2639,13 @@ export default function AdminView({ onBack, initialTab = 'event_types' } = {}) {
 
       {/* ABA 4: MEMBROS E APTIDÕES (PRD 3 & Cenário M35) */}
       {activeAdminTab === 'members' && (
-        <div className="card">
+        <div
+          role="tabpanel"
+          id="panel-admin-members"
+          aria-labelledby="tab-admin-members"
+          tabIndex={0}
+          className="card"
+        >
           <h2 className="tab-sec-title">
             <Users size={18} color="var(--primary)" /> Membros Cadastrados & Habilitação de Aptidões
           </h2>
@@ -2058,7 +2730,7 @@ export default function AdminView({ onBack, initialTab = 'event_types' } = {}) {
         .admin-nav-tabs {
           display: flex;
           gap: 8px;
-          overflow-x: auto;
+          flex-wrap: wrap;
           padding-bottom: 4px;
         }
 

@@ -48,16 +48,17 @@ export function toEventTypeObject(item, index = 0) {
  */
 export function toStandardActivityObject(item, index = 0) {
   if (!item) return null;
-  const duration = parseInt(item.defaultDurationMinutes || item.plannedDurationMinutes, 10);
+  const rawDuration = item.defaultDurationMinutes ?? item.default_duration_minutes ?? item.plannedDurationMinutes;
+  const duration = parseInt(rawDuration, 10);
   return {
-    id: item.id || `sa-${Date.now()}-${index}`,
+    id: item.id || (index !== undefined ? `sa-${Date.now()}-${index}` : null),
     name: normalizeNfcText(item.name || item.title || ''),
     defaultDurationMinutes: !isNaN(duration) && duration > 0 ? duration : 10,
     category: normalizeNfcText(item.category || 'Liturgia'),
     description: normalizeNfcText(item.description || item.notes || ''),
     active: item.active !== false,
-    createdAt: item.createdAt || null,
-    updatedAt: item.updatedAt || null,
+    createdAt: item.createdAt || item.created_at || null,
+    updatedAt: item.updatedAt || item.updated_at || null,
   };
 }
 
@@ -343,6 +344,9 @@ export function eventTypeActivityErrorMessage(error) {
   if (code === '23514' || code === '22023') {
     return 'Dados informados inválidos. Verifique os campos preenchidos e a duração em minutos.';
   }
+  if (code === '22P02' || lower.includes('invalid input syntax for type uuid')) {
+    return 'Identificador inválido fornecido para a operação. Atualize a página e tente novamente.';
+  }
   return error.message || 'Falha na operação de tipos de evento e atividades.';
 }
 
@@ -388,9 +392,15 @@ export async function fetchEventTypesRemote(supabaseClient, churchId, includeIna
     if (error) {
       return { success: false, data: [], error: eventTypeActivityErrorMessage(error), rawError: error };
     }
-    const list = Array.isArray(data)
-      ? data.map((item, idx) => toEventTypeObject(item, idx)).filter(Boolean)
-      : [];
+    if (!Array.isArray(data)) {
+      return {
+        success: false,
+        data: [],
+        error: 'Resposta remota estruturalmente inválida: esperava-se um array de tipos de evento.',
+        rawError: data
+      };
+    }
+    const list = data.map((item, idx) => toEventTypeObject(item, idx)).filter(Boolean);
     return { success: true, data: list, error: null };
   } catch (err) {
     return { success: false, data: [], error: eventTypeActivityErrorMessage(err), rawError: err };
@@ -429,14 +439,17 @@ export async function createEventTypeRemote(supabaseClient, churchIdOrOpts, mayb
       return { success: false, error: eventTypeActivityErrorMessage(error), rawError: error };
     }
     const receipt = Array.isArray(data) ? data[0] : data;
-    const createdId = receipt?.result_entity_id || receipt?.result_payload?.type_id || `et-${Date.now()}`;
+    const createdId = receipt?.id || receipt?.type_id || receipt?.result_entity_id || receipt?.result_payload?.type_id;
+    if (!createdId) {
+      return { success: false, error: 'Identificador do tipo de evento não retornado pelo servidor.', rawError: data };
+    }
     const typeObj = {
       id: createdId,
       name: validation.cleanName,
       description: validation.cleanDesc || '',
       active: true,
       createdAt: receipt?.created_at || new Date().toISOString(),
-      updatedAt: receipt?.created_at || new Date().toISOString(),
+      updatedAt: receipt?.updated_at || receipt?.created_at || new Date().toISOString(),
     };
     return { success: true, eventType: typeObj, data: typeObj, receipt, error: null };
   } catch (err) {
@@ -564,9 +577,15 @@ export async function fetchStandardActivitiesRemote(supabaseClient, churchId, in
     if (error) {
       return { success: false, data: [], error: eventTypeActivityErrorMessage(error), rawError: error };
     }
-    const list = Array.isArray(data)
-      ? data.map((item, idx) => toStandardActivityObject(item, idx)).filter(Boolean)
-      : [];
+    if (!Array.isArray(data)) {
+      return {
+        success: false,
+        data: [],
+        error: 'Resposta remota estruturalmente inválida: esperava-se um array de atividades padrão.',
+        rawError: data
+      };
+    }
+    const list = data.map((item, idx) => toStandardActivityObject(item, idx)).filter(Boolean);
     return { success: true, data: list, error: null };
   } catch (err) {
     return { success: false, data: [], error: eventTypeActivityErrorMessage(err), rawError: err };
@@ -623,7 +642,10 @@ export async function createStandardActivityRemote(
       return { success: false, error: eventTypeActivityErrorMessage(error), rawError: error };
     }
     const receipt = Array.isArray(data) ? data[0] : data;
-    const createdId = receipt?.result_entity_id || receipt?.result_payload?.activity_id || `sa-${Date.now()}`;
+    const createdId = receipt?.id || receipt?.activity_id || receipt?.result_entity_id || receipt?.result_payload?.activity_id;
+    if (!createdId) {
+      return { success: false, error: 'Identificador da atividade padrão não retornado pelo servidor.', rawError: data };
+    }
     const actObj = {
       id: createdId,
       name: validation.cleanName,
@@ -632,7 +654,7 @@ export async function createStandardActivityRemote(
       description: validation.cleanDesc || '',
       active: true,
       createdAt: receipt?.created_at || new Date().toISOString(),
-      updatedAt: receipt?.created_at || new Date().toISOString(),
+      updatedAt: receipt?.updated_at || receipt?.created_at || new Date().toISOString(),
     };
     return { success: true, activity: actObj, data: actObj, receipt, error: null };
   } catch (err) {

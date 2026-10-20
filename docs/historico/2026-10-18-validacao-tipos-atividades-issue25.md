@@ -47,7 +47,7 @@
    - Seletor `#select-standard-activity-template` no modal de nova etapa litúrgica, permitindo carregar nome, categoria e duração padrão a partir do cadastro, mantendo a edição do culto livremente ajustável sem alterar o cadastro padrão nem outros eventos (CA02/CA03).
 
 6. **Especificação de Contrato e Migração SQL:**
-   - Contrato normativo: `docs/CADASTRO-TIPOS-ATIVIDADES.md`.
+   - Contrato normativo: `docs/produto/CADASTRO-TIPOS-ATIVIDADES.md`.
    - Candidato de migração: `docs/sql/021_event_types_and_activities.sql` contendo tabelas `app_private.event_types`, `app_private.standard_activities`, recibos de comando `app_private.event_type_activity_receipts`, índices e 10 RPCs públicas de consulta e mutação.
    - Ensaio transacional: `docs/sql/021_rehearsal_cases.sql` cobrindo 20 casos de teste sob `ROLLBACK` (T01 a T20).
 

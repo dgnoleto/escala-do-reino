@@ -234,9 +234,15 @@ export async function fetchCancellationReasonsRemote(supabaseClient, churchId, i
     if (error) {
       return { success: false, data: [], error: cancellationReasonErrorMessage(error), rawError: error };
     }
-    const list = Array.isArray(data)
-      ? data.map((item, idx) => toReasonObject(item, idx)).filter(Boolean)
-      : [];
+    if (!Array.isArray(data)) {
+      return {
+        success: false,
+        data: [],
+        error: 'Resposta remota estruturalmente inválida: esperava-se um array de motivos de cancelamento.',
+        rawError: data
+      };
+    }
+    const list = data.map((item, idx) => toReasonObject(item, idx)).filter(Boolean);
     return { success: true, data: list, error: null };
   } catch (err) {
     return { success: false, data: [], error: cancellationReasonErrorMessage(err), rawError: err };

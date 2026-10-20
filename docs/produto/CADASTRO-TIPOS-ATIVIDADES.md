@@ -1,7 +1,7 @@
 # Cadastro e Manutenção de Tipos de Evento e Atividades com Durações Padrão
 
 Documento normativo e contratual da funcionalidade de tipos de evento e atividades na web (Issue #25).
-Alinhado ao [PRD do Escala do Reino](PRD.md) (§4, §5 e §6) e ao [Documento de Arquitetura do Banco](ARQUITETURA-BANCO.md).
+Alinhado ao [PRD do Escala do Reino](../PRD.md) (§4, §5 e §6) e ao [Documento de Arquitetura do Banco](../arquitetura/ARQUITETURA-BANCO.md).
 
 ---
 

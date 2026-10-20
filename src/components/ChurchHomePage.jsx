@@ -421,129 +421,159 @@ export default function ChurchHomePage() {
           </div>
         )}
 
-        {isAdmin && (
-          <div className="church-home-admin-section">
-            <div className="church-home-admin-box">
-              <div className="church-home-admin-icon" aria-hidden="true"><Church size={20} /></div>
-              <div className="church-home-admin-info">
-                <span className="church-home-admin-title">Dados da Igreja</span>
-                <span className="church-home-admin-desc">Atualize o endereço, a localização no Google Maps e a logo.</span>
+        {/* Grid responsivo de módulos da igreja */}
+        <div className="church-home-grid" role="region" aria-label="Módulos e Ações da Igreja">
+          {isAdmin && (
+            <div className="church-home-admin-section">
+              <div className="church-home-admin-box">
+                <div className="church-home-admin-icon" aria-hidden="true"><Church size={20} /></div>
+                <div className="church-home-admin-info">
+                  <span className="church-home-admin-title">Dados da Igreja</span>
+                  <span className="church-home-admin-desc">Atualize o endereço, a localização no Google Maps e a logo.</span>
+                </div>
               </div>
+              <button id="btn-goto-church-settings" className="btn btn-primary church-home-admin-btn" type="button" onClick={() => setCurrentView('church-settings')}>
+                Acessar Dados da Igreja
+              </button>
             </div>
-            <button id="btn-goto-church-settings" className="btn btn-primary church-home-admin-btn" type="button" onClick={() => setCurrentView('church-settings')}>
-              Acessar Dados da Igreja
-            </button>
-          </div>
-        )}
+          )}
 
-        {/* Bloco de Gestão de Membros exclusivo para Administrador */}
-        {isAdmin && (
+          {/* Bloco de Gestão de Membros exclusivo para Administrador */}
+          {isAdmin && (
+            <div className="church-home-admin-section">
+              <div className="church-home-admin-box">
+                <div className="church-home-admin-icon" aria-hidden="true">
+                  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                       strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2" />
+                    <circle cx="9" cy="7" r="4" />
+                    <path d="M23 21v-2a4 4 0 00-3-3.87" />
+                    <path d="M16 3.13a4 4 0 010 7.75" />
+                  </svg>
+                </div>
+                <div className="church-home-admin-info">
+                  <span className="church-home-admin-title">Gestão de Membros</span>
+                  <span className="church-home-admin-desc">
+                    Cadastre novos membros e consulte a listagem da igreja.
+                  </span>
+                </div>
+              </div>
+              <button
+                id="btn-goto-members"
+                className="btn btn-primary church-home-admin-btn"
+                onClick={() => setCurrentView('members')}
+                type="button"
+                aria-label="Acessar Gestão de Membros"
+              >
+                Acessar Membros
+              </button>
+            </div>
+          )}
+
+          {/* Bloco de Administração da Igreja (Cadastros & Modelos Litúrgicos) exclusivo para Administrador */}
+          {isAdmin && (
+            <div className="church-home-admin-section">
+              <div className="church-home-admin-box">
+                <div className="church-home-admin-icon" aria-hidden="true">
+                  <Layers size={20} />
+                </div>
+                <div className="church-home-admin-info">
+                  <span className="church-home-admin-title">Administração da Igreja</span>
+                  <span className="church-home-admin-desc">
+                    Gerencie tipos de eventos, modelos de culto, atividades com durações e motivos de cancelamento.
+                  </span>
+                </div>
+              </div>
+              <button
+                id="btn-goto-admin-cadastros"
+                className="btn btn-primary church-home-admin-btn"
+                onClick={() => setCurrentView('admin')}
+                type="button"
+                aria-label="Acessar Administração da Igreja"
+              >
+                Acessar Administração
+              </button>
+            </div>
+          )}
+
+          {/* Bloco de Gestão de Ministérios e Equipes */}
           <div className="church-home-admin-section">
             <div className="church-home-admin-box">
               <div className="church-home-admin-icon" aria-hidden="true">
-                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-                     strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                  <path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2" />
-                  <circle cx="9" cy="7" r="4" />
-                  <path d="M23 21v-2a4 4 0 00-3-3.87" />
-                  <path d="M16 3.13a4 4 0 010 7.75" />
-                </svg>
+                <Users size={20} />
               </div>
               <div className="church-home-admin-info">
-                <span className="church-home-admin-title">Gestão de Membros</span>
+                <span className="church-home-admin-title">Ministérios &amp; Equipes</span>
                 <span className="church-home-admin-desc">
-                  Cadastre novos membros e consulte a listagem da igreja.
+                  {isAdmin
+                    ? 'Gerencie equipes, líderes, funções técnicas e qualificações para escalas.'
+                    : 'Consulte os ministérios, funções e integrantes da igreja.'}
                 </span>
               </div>
             </div>
             <button
-              id="btn-goto-members"
+              id="btn-goto-teams"
               className="btn btn-primary church-home-admin-btn"
-              onClick={() => setCurrentView('members')}
+              onClick={() => setCurrentView('teams')}
               type="button"
-              aria-label="Acessar Gestão de Membros"
+              aria-label="Acessar Ministérios e Equipes"
             >
-              Acessar Membros
+              Acessar Equipes
             </button>
           </div>
-        )}
 
-        {/* Bloco de Cadastros e Modelos Litúrgicos exclusivo para Administrador */}
-        {isAdmin && (
-          <div className="church-home-admin-section" style={{ marginTop: '12px' }}>
+          {/* Bloco de Planejamento de Cultos (Admin e Membro) */}
+          <div className="church-home-admin-section">
             <div className="church-home-admin-box">
               <div className="church-home-admin-icon" aria-hidden="true">
-                <Layers size={20} />
+                <Calendar size={20} />
               </div>
               <div className="church-home-admin-info">
-                <span className="church-home-admin-title">Cadastros &amp; Modelos Litúrgicos</span>
+                <span className="church-home-admin-title">Planejamento de Cultos</span>
                 <span className="church-home-admin-desc">
-                  Gerencie tipos de eventos, atividades padrão com durações, modelos de culto e motivos de cancelamento.
+                  {isAdmin
+                    ? 'Crie e estruture edições de cultos, ordem litúrgica, durações e escalas das equipes.'
+                    : 'Consulte as programações de cultos, ordem litúrgica e escalas das equipes.'}
                 </span>
               </div>
             </div>
             <button
-              id="btn-goto-admin-cadastros"
+              id="btn-goto-planning"
               className="btn btn-primary church-home-admin-btn"
-              onClick={() => setCurrentView('admin')}
+              onClick={() => setCurrentView('planning')}
               type="button"
-              aria-label="Acessar Cadastros e Modelos Litúrgicos"
+              aria-label="Acessar Planejamento de Cultos"
             >
-              Acessar Cadastros
+              Acessar Planejamento
             </button>
           </div>
-        )}
 
-        {/* Bloco de Gestão de Ministérios e Equipes */}
-        <div className="church-home-admin-section" style={{ marginTop: '12px' }}>
-          <div className="church-home-admin-box">
-            <div className="church-home-admin-icon" aria-hidden="true">
-              <Users size={20} />
+          {/* Bloco Criar Minha Igreja para contas com apenas acesso básico de membro */}
+          {!isAdmin && !pendingCommand && eligibilityData?.eligible && (
+            <div className="church-home-create-section">
+              <div className="church-home-create-box">
+                <div className="church-home-create-icon" aria-hidden="true">
+                  <Church size={20} />
+                </div>
+                <div className="church-home-create-info">
+                  <span className="church-home-create-title">Quer iniciar sua comunidade?</span>
+                  <span className="church-home-create-desc">
+                    Cadastre sua própria igreja e torne-se o administrador responsável por ela.
+                  </span>
+                </div>
+              </div>
+              <button
+                id="btn-goto-create-church"
+                className="btn btn-secondary church-home-create-btn"
+                onClick={() => setIsCreateModalOpen(true)}
+                type="button"
+                aria-label="Criar minha igreja"
+              >
+                <PlusCircle size={15} />
+                Criar minha igreja
+              </button>
             </div>
-            <div className="church-home-admin-info">
-              <span className="church-home-admin-title">Ministérios &amp; Equipes</span>
-              <span className="church-home-admin-desc">
-                {isAdmin
-                  ? 'Gerencie equipes, líderes, funções técnicas e qualificações para escalas.'
-                  : 'Consulte os ministérios, funções e integrantes da igreja.'}
-              </span>
-            </div>
-          </div>
-          <button
-            id="btn-goto-teams"
-            className="btn btn-primary church-home-admin-btn"
-            onClick={() => setCurrentView('teams')}
-            type="button"
-            aria-label="Acessar Ministérios e Equipes"
-          >
-            Acessar Equipes
-          </button>
-        </div>
-
-        {/* Bloco de Planejamento de Cultos (Admin e Membro) */}
-        <div className="church-home-admin-section" style={{ marginTop: '12px' }}>
-          <div className="church-home-admin-box">
-            <div className="church-home-admin-icon" aria-hidden="true">
-              <Calendar size={20} />
-            </div>
-            <div className="church-home-admin-info">
-              <span className="church-home-admin-title">Planejamento de Cultos</span>
-              <span className="church-home-admin-desc">
-                {isAdmin
-                  ? 'Crie e estruture edições de cultos, ordem litúrgica, durações e escalas das equipes.'
-                  : 'Consulte as programações de cultos, ordem litúrgica e escalas das equipes.'}
-              </span>
-            </div>
-          </div>
-          <button
-            id="btn-goto-planning"
-            className="btn btn-primary church-home-admin-btn"
-            onClick={() => setCurrentView('planning')}
-            type="button"
-            aria-label="Acessar Planejamento de Cultos"
-          >
-            Acessar Planejamento
-          </button>
+          )}
         </div>
 
         {/* Aviso de limite de administração para Administrador */}
@@ -553,33 +583,6 @@ export default function ChurchHomePage() {
             <span>
               Sua conta já administra ativamente esta igreja. Pelas regras de governança, uma conta pode administrar no máximo uma igreja por vez.
             </span>
-          </div>
-        )}
-
-        {/* Bloco Criar Minha Igreja para contas com apenas acesso básico de membro */}
-        {!isAdmin && !pendingCommand && eligibilityData?.eligible && (
-          <div className="church-home-create-section">
-            <div className="church-home-create-box">
-              <div className="church-home-create-icon" aria-hidden="true">
-                <Church size={20} />
-              </div>
-              <div className="church-home-create-info">
-                <span className="church-home-create-title">Quer iniciar sua comunidade?</span>
-                <span className="church-home-create-desc">
-                  Cadastre sua própria igreja e torne-se o administrador responsável por ela.
-                </span>
-              </div>
-            </div>
-            <button
-              id="btn-goto-create-church"
-              className="btn btn-secondary church-home-create-btn"
-              onClick={() => setIsCreateModalOpen(true)}
-              type="button"
-              aria-label="Criar minha igreja"
-            >
-              <PlusCircle size={15} />
-              Criar minha igreja
-            </button>
           </div>
         )}
 
@@ -603,7 +606,7 @@ export default function ChurchHomePage() {
           </svg>
           <span>
             {isAdmin
-              ? 'Planejamento de cultos e cadastros litúrgicos integrados à sua jornada. Acesse as seções acima.'
+              ? 'Planejamento de cultos e administração integrados à sua jornada. Acesse as seções acima.'
               : 'Seu acesso foi confirmado. Acompanhe as escalas e o planejamento de cultos acima.'}
           </span>
         </div>
@@ -662,9 +665,9 @@ export default function ChurchHomePage() {
           border: 1px solid var(--border-subtle);
           border-radius: var(--radius-xl);
           box-shadow: var(--shadow-lg);
-          padding: 40px 36px;
+          padding: 36px 36px 32px;
           width: 100%;
-          max-width: 440px;
+          max-width: 1040px;
           display: flex;
           flex-direction: column;
           align-items: center;
@@ -672,9 +675,37 @@ export default function ChurchHomePage() {
           animation: scaleUp 0.3s cubic-bezier(0.16, 1, 0.3, 1);
         }
 
-        @media (max-width: 480px) {
+        /* Grid adaptativo para os módulos de ação */
+        .church-home-grid {
+          display: grid;
+          grid-template-columns: repeat(auto-fit, minmax(290px, 1fr));
+          gap: 16px;
+          width: 100%;
+          margin-bottom: 20px;
+        }
+
+        @media (max-width: 768px) {
           .church-home-card {
-            padding: 32px 20px;
+            padding: 28px 24px;
+            max-width: 680px;
+          }
+          .church-home-grid {
+            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+            gap: 14px;
+          }
+        }
+
+        @media (max-width: 480px) {
+          .church-home-page {
+            padding: 16px 12px;
+          }
+          .church-home-card {
+            padding: 24px 16px;
+            max-width: 100%;
+          }
+          .church-home-grid {
+            grid-template-columns: 1fr;
+            gap: 12px;
           }
         }
 
@@ -777,26 +808,33 @@ export default function ChurchHomePage() {
           color: var(--primary);
         }
 
-        /* Bloco de administração de membros */
-        .church-home-admin-section {
+        /* Bloco de administração e módulos */
+        .church-home-admin-section, .church-home-create-section {
           width: 100%;
           background: var(--bg-surface);
           border: 1px solid var(--border-subtle);
           border-radius: var(--radius-lg);
-          padding: 16px;
-          margin-bottom: 20px;
+          padding: 18px;
+          margin-bottom: 0;
           display: flex;
           flex-direction: column;
-          gap: 12px;
+          justify-content: space-between;
+          gap: 14px;
+          transition: border-color 0.2s ease, box-shadow 0.2s ease, transform 0.15s ease;
         }
 
-        .church-home-admin-box {
+        .church-home-admin-section:hover, .church-home-create-section:hover {
+          border-color: var(--primary-border);
+          box-shadow: var(--shadow-sm);
+        }
+
+        .church-home-admin-box, .church-home-create-box {
           display: flex;
           align-items: flex-start;
           gap: 12px;
         }
 
-        .church-home-admin-icon {
+        .church-home-admin-icon, .church-home-create-icon {
           width: 36px;
           height: 36px;
           border-radius: var(--radius-md);
@@ -809,28 +847,29 @@ export default function ChurchHomePage() {
           flex-shrink: 0;
         }
 
-        .church-home-admin-info {
+        .church-home-admin-info, .church-home-create-info {
           display: flex;
           flex-direction: column;
           gap: 2px;
         }
 
-        .church-home-admin-title {
+        .church-home-admin-title, .church-home-create-title {
           font-size: 14px;
           font-weight: 700;
           color: var(--text-primary);
         }
 
-        .church-home-admin-desc {
+        .church-home-admin-desc, .church-home-create-desc {
           font-size: 12px;
           color: var(--text-secondary);
           line-height: 1.4;
         }
 
-        .church-home-admin-btn {
+        .church-home-admin-btn, .church-home-create-btn {
           width: 100%;
           justify-content: center;
           font-weight: 700;
+          margin-top: auto;
         }
 
         /* Aviso de limite de administração para admin */

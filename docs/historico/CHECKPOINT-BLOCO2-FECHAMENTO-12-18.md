@@ -63,7 +63,7 @@
 | **M18-07** | Membro/acesso/auditoria/recibo atômicos | **Pendente para exclusão efetiva:** Recibos e auditoria de 015 atômicos; efeito em cascata da exclusão depende de 016. | Implementar 016. |
 | **M18-10** | Concorrência sem ciclos/deadlocks | **Pendente para exclusão efetiva:** Eliminação do ciclo no desenho e ordenação de locks pronta; validação física entre alocação e exclusão aguarda 016. | Ensaio físico em 2 sessões após 016. |
 | **M18-12** | Dependência futura/em andamento bloqueia; histórico preserva | **Parcial avançado:** Tabelas operacionais, alocações e consultas criadas em 015; integração da consulta de impedimentos no ciclo de membros aguarda 016. | Conectar consultas em 016. |
-| **D12-01 a D12-04** | Revisão documental da issue #12 fiel e consistente | **Candidata pronta e preservada:** `docs/REVISAO-CANDIDATA-ISSUE12.md` com 12 seções exatas, pós-MVP preservado na Seção 9 e commit `1c8dbb0` intacto. | Integração e publicação final. |
+| **D12-01 a D12-04** | Revisão documental da issue #12 fiel e consistente | **Candidata pronta e preservada:** `docs/historico/REVISAO-CANDIDATA-ISSUE12.md` com 12 seções exatas, pós-MVP preservado na Seção 9 e commit `1c8dbb0` intacto. | Integração e publicação final. |
 
 ---
 

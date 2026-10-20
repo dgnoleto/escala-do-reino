@@ -47,7 +47,7 @@
    - Ausência absoluta de campos de texto livre ou criação administrativa na interface móvel de culto.
 
 6. **Especificação de Contrato e Migração SQL:**
-   - Contrato normativo: `docs/CADASTRO-MOTIVOS-CANCELAMENTO.md` especificando modelo relacional, permissões, RPCs públicas e regras de concorrência.
+   - Contrato normativo: `docs/produto/CADASTRO-MOTIVOS-CANCELAMENTO.md` especificando modelo relacional, permissões, RPCs públicas e regras de concorrência.
    - Candidato de migração: `docs/sql/020_cancellation_reasons.sql` implementando tabela `app_private.cancellation_reasons`, recibos de comando e RPCs (`list_cancellation_reasons`, `create_cancellation_reason`, `update_cancellation_reason`, `toggle_cancellation_reason_status`, `delete_cancellation_reason`).
    - Ensaio transacional: `docs/sql/020_rehearsal_cases.sql` com 15 casos transacionais sob `ROLLBACK` (R01 a R15).
 

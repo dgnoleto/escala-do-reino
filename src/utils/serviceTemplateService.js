@@ -20,65 +20,151 @@ export function normalizeNfcText(value) {
 }
 
 /**
- * Converte um item para o formato padronizado de Atividade do Modelo.
+ * Converte um item para o formato padronizado de Atividade do Modelo (Frontend).
  * Garante que NÃO contenha pessoas escaladas nem voluntários (CA03).
+ * Suporta leitura tanto em camelCase (memória) quanto em snake_case (banco Postgres SQL 022).
  */
 export function toTemplateActivity(item, index = 0) {
   if (!item) return null;
-  const duration = parseInt(item.plannedDurationMinutes || item.defaultDurationMinutes, 10);
+  const rawDuration = item.plannedDurationMinutes ?? item.planned_duration_minutes ?? item.defaultDurationMinutes ?? item.default_duration_minutes;
+  const duration = parseInt(rawDuration, 10);
+  const displayOrder = item.displayOrder ?? item.display_order;
   return {
-    id: item.id || `ta-${Date.now()}-${index}`,
-    standardActivityId: item.standardActivityId || null,
+    id: item.id || `ta-${Date.now()}-${index}-${Math.floor(Math.random() * 10000)}`,
+    standardActivityId: item.standardActivityId ?? item.standard_activity_id ?? null,
     title: normalizeNfcText(item.title || item.name || 'Nova Etapa'),
     category: normalizeNfcText(item.category || 'Liturgia'),
     plannedDurationMinutes: !isNaN(duration) && duration >= MIN_DURATION_MINUTES && duration <= MAX_DURATION_MINUTES ? duration : 10,
-    displayOrder: typeof item.displayOrder === 'number' ? item.displayOrder : index + 1,
+    displayOrder: typeof displayOrder === 'number' ? displayOrder : index + 1,
     notes: normalizeNfcText(item.notes || item.description || ''),
-    requiresPlayback: Boolean(item.requiresPlayback),
+    requiresPlayback: Boolean(item.requiresPlayback ?? item.requires_playback),
   };
 }
 
 /**
- * Converte um item para o formato padronizado de Serviço Paralelo / Apoio do Modelo.
+ * Converte um item para o formato padronizado de Serviço Paralelo / Apoio do Modelo (Frontend).
  * Garante que NÃO contenha pessoas escaladas nem voluntários (CA03).
+ * Suporta leitura tanto em camelCase quanto em snake_case (banco Postgres SQL 022).
  */
 export function toTemplateParallelService(item, index = 0) {
   if (!item) return null;
-  const prep = parseInt(item.prepRequiredMinutes, 10);
+  const rawPrep = item.prepRequiredMinutes ?? item.prep_required_minutes;
+  const prep = parseInt(rawPrep, 10);
+  const isDefaultActive = item.isDefaultActive ?? item.is_default_active;
+  const displayOrder = item.displayOrder ?? item.display_order;
   return {
-    id: item.id || `tps-${Date.now()}-${index}`,
-    teamId: normalizeNfcText(item.teamId || 'apoio'),
-    serviceName: normalizeNfcText(item.serviceName || item.name || 'Serviço de Apoio'),
+    id: item.id || `tps-${Date.now()}-${index}-${Math.floor(Math.random() * 10000)}`,
+    teamId: normalizeNfcText(item.teamId ?? item.team_id ?? 'apoio'),
+    serviceName: normalizeNfcText(item.serviceName ?? item.service_name ?? item.name ?? 'Serviço de Apoio'),
     prepRequiredMinutes: !isNaN(prep) && prep >= 0 && prep <= MAX_PREP_MINUTES ? prep : 0,
-    isDefaultActive: item.isDefaultActive !== false,
-    displayOrder: typeof item.displayOrder === 'number' ? item.displayOrder : index + 1,
+    isDefaultActive: isDefaultActive !== false,
+    displayOrder: typeof displayOrder === 'number' ? displayOrder : index + 1,
+  };
+}
+
+/**
+ * Converte uma atividade do modelo para os atributos JSON snake_case exigidos pelo contrato PostgreSQL (SQL 022).
+ */
+export function serializeTemplateActivityForSql(item, index) {
+  if (!item) return null;
+  const rawDuration = item.plannedDurationMinutes ?? item.planned_duration_minutes ?? item.defaultDurationMinutes ?? item.default_duration_minutes;
+  const duration = parseInt(rawDuration, 10);
+  const displayOrder = item.displayOrder ?? item.display_order;
+  const cleanTitle = normalizeNfcText(item.title || item.name || 'Nova Etapa');
+  const cleanCategory = normalizeNfcText(item.category || 'Liturgia');
+  const cleanNotes = normalizeNfcText(item.notes || item.description || '');
+
+  const computedOrder = typeof index === 'number'
+    ? index + 1
+    : (typeof displayOrder === 'number' ? displayOrder : 1);
+
+  return {
+    standard_activity_id: item.standardActivityId ?? item.standard_activity_id ?? null,
+    title: cleanTitle || 'Etapa',
+    category: cleanCategory || 'Liturgia',
+    planned_duration_minutes: !isNaN(duration) && duration >= MIN_DURATION_MINUTES && duration <= MAX_DURATION_MINUTES ? duration : 10,
+    display_order: computedOrder,
+    notes: cleanNotes ? cleanNotes : null,
+    requires_playback: Boolean(item.requiresPlayback ?? item.requires_playback),
+  };
+}
+
+/**
+ * Converte um serviço paralelo para os atributos JSON snake_case exigidos pelo contrato PostgreSQL (SQL 022).
+ */
+export function serializeTemplateParallelServiceForSql(item, index) {
+  if (!item) return null;
+  const rawPrep = item.prepRequiredMinutes ?? item.prep_required_minutes;
+  const prep = parseInt(rawPrep, 10);
+  const isDefaultActive = item.isDefaultActive ?? item.is_default_active;
+  const displayOrder = item.displayOrder ?? item.display_order;
+
+  const computedOrder = typeof index === 'number'
+    ? index + 1
+    : (typeof displayOrder === 'number' ? displayOrder : 1);
+
+  return {
+    team_id: normalizeNfcText(item.teamId ?? item.team_id ?? 'apoio') || 'apoio',
+    service_name: normalizeNfcText(item.serviceName ?? item.service_name ?? item.name ?? 'Serviço de Apoio') || 'Serviço de Apoio',
+    prep_required_minutes: !isNaN(prep) && prep >= 0 && prep <= MAX_PREP_MINUTES ? prep : 0,
+    is_default_active: isDefaultActive !== false,
+    display_order: computedOrder,
   };
 }
 
 /**
  * Converte um item para o formato padronizado de Modelo de Culto.
+ * Normaliza campos retornados pelo SQL 022 e preserva integridade multi-tenant.
  */
 export function toServiceTemplateObject(item, index = 0) {
   if (!item) return null;
 
-  const activities = Array.isArray(item.activities)
-    ? item.activities.map((a, i) => toTemplateActivity(a, i)).filter(Boolean)
+  const rawActivities = item.activities;
+  const rawParallel = item.parallelServices ?? item.parallel_services;
+
+  const activities = Array.isArray(rawActivities)
+    ? rawActivities.map((a, i) => toTemplateActivity(a, i)).filter(Boolean)
     : [];
 
-  const parallelServices = Array.isArray(item.parallelServices)
-    ? item.parallelServices.map((s, i) => toTemplateParallelService(s, i)).filter(Boolean)
+  const parallelServices = Array.isArray(rawParallel)
+    ? rawParallel.map((s, i) => toTemplateParallelService(s, i)).filter(Boolean)
     : [];
+
+  const actsCount = typeof (item.activitiesCount ?? item.activities_count) === 'number'
+    ? (item.activitiesCount ?? item.activities_count)
+    : (Array.isArray(rawActivities) ? activities.length : 0);
+
+  const parallelCount = typeof (item.parallelServicesCount ?? item.parallel_services_count) === 'number'
+    ? (item.parallelServicesCount ?? item.parallel_services_count)
+    : (Array.isArray(rawParallel) ? parallelServices.length : 0);
+
+  const totalDur = typeof (item.totalDurationMinutes ?? item.total_duration_minutes) === 'number'
+    ? (item.totalDurationMinutes ?? item.total_duration_minutes)
+    : activities.reduce((acc, a) => acc + (a.plannedDurationMinutes || 0), 0);
+
+  const isComplete = Boolean(
+    item.isComplete !== false &&
+    Array.isArray(rawActivities) &&
+    Array.isArray(rawParallel)
+  );
 
   return {
     id: item.id || `st-${Date.now()}-${index}`,
-    eventTypeId: item.eventTypeId || null,
+    churchId: item.churchId ?? item.church_id ?? null,
+    eventTypeId: item.eventTypeId ?? item.event_type_id ?? null,
+    eventTypeName: item.eventTypeName ?? item.event_type_name ?? null,
     name: normalizeNfcText(item.name || ''),
     description: normalizeNfcText(item.description || ''),
     active: item.active !== false,
     activities,
     parallelServices,
-    createdAt: item.createdAt || null,
-    updatedAt: item.updatedAt || null,
+    activitiesCount: actsCount,
+    parallelServicesCount: parallelCount,
+    totalDurationMinutes: totalDur,
+    usedInHistory: Boolean(item.usedInHistory ?? item.used_in_history),
+    isComplete,
+    createdAt: item.createdAt ?? item.created_at ?? null,
+    updatedAt: item.updatedAt ?? item.updated_at ?? null,
   };
 }
 
@@ -94,8 +180,18 @@ export function getActiveTemplates(templates = []) {
  * Validação de Modelo de Culto.
  */
 export function validateServiceTemplate(data = {}, existingTemplates = [], currentId = null) {
-  const cleanName = normalizeNfcText(data.name || '');
-  const cleanDesc = normalizeNfcText(data.description || '');
+  const templateList = Array.isArray(existingTemplates) ? existingTemplates : [];
+  let current = null;
+  if (currentId && templateList.length > 0) {
+    current = templateList.find(t => t && t.id === currentId) || null;
+  } else if (existingTemplates && typeof existingTemplates === 'object' && !Array.isArray(existingTemplates)) {
+    current = existingTemplates.current || (existingTemplates.name ? existingTemplates : null);
+  }
+
+  const rawName = data.name !== undefined ? data.name : current?.name;
+  const cleanName = normalizeNfcText(rawName || '');
+  const rawDesc = data.description !== undefined ? data.description : current?.description;
+  const cleanDesc = normalizeNfcText(rawDesc || '');
 
   if (!cleanName || cleanName.length < MIN_NAME_LENGTH) {
     return {
@@ -125,9 +221,10 @@ export function validateServiceTemplate(data = {}, existingTemplates = [], curre
   }
 
   // Verificar duplicidade de nome (case-insensitive)
-  const isDuplicate = existingTemplates.some(t => {
+  const isDuplicate = templateList.some(t => {
     if (!t) return false;
     if (currentId && t.id === currentId) return false;
+    if (current?.id && t.id === current.id) return false;
     return normalizeNfcText(t.name).toLowerCase() === cleanName.toLowerCase();
   });
 
@@ -213,6 +310,15 @@ export function validateServiceTemplate(data = {}, existingTemplates = [], curre
  */
 export function instantiateTemplateForEvent(template, targetEvent = {}) {
   if (!template) return targetEvent;
+
+  if (
+    template.isComplete === false ||
+    (template.activitiesCount > 0 && (!template.activities || template.activities.length === 0))
+  ) {
+    throw new Error(
+      `Não é possível aplicar o modelo "${template.name || 'desconhecido'}" com detalhes incompletos. Recarregue os dados da igreja.`
+    );
+  }
 
   const activities = (template.activities || []).map((a, idx) => ({
     id: `act-${Date.now()}-${idx + 1}-${Math.floor(Math.random() * 1000)}`,
@@ -350,6 +456,9 @@ export function serviceTemplateErrorMessage(error) {
   if (code === '23514' || code === '22023') {
     return 'Dados do modelo de culto inválidos. Verifique os campos e durações preenchidos.';
   }
+  if (code === '22P02' || lower.includes('invalid input syntax for type uuid')) {
+    return 'Identificador inválido fornecido para a operação. Atualize a página e tente novamente.';
+  }
   return error.message || 'Falha na operação de modelos de culto.';
 }
 
@@ -382,6 +491,7 @@ export function generateCommandUuid() {
 
 /**
  * Consulta modelos de culto da igreja no Supabase.
+ * Regra B: Não converte erros de leitura de detalhes em listas vazias de sucesso.
  */
 export async function fetchServiceTemplatesRemote(supabaseClient, churchId, includeInactive = true) {
   if (!churchId) {
@@ -395,19 +505,50 @@ export async function fetchServiceTemplatesRemote(supabaseClient, churchId, incl
     if (error) {
       return { success: false, data: [], error: serviceTemplateErrorMessage(error), rawError: error };
     }
-    const list = Array.isArray(data)
-      ? data.map((item, idx) => toServiceTemplateObject(item, idx)).filter(Boolean)
-      : [];
-    return { success: true, data: list, error: null };
+    if (!Array.isArray(data)) {
+      return {
+        success: false,
+        data: [],
+        error: 'Resposta remota estruturalmente inválida: esperava-se um array de modelos de culto.',
+        rawError: data
+      };
+    }
+
+    const list = [];
+    for (let idx = 0; idx < data.length; idx++) {
+      const item = data[idx];
+      const detail = await getServiceTemplateRemote(supabaseClient, { templateId: item.id });
+      if (!detail.success || !detail.template) {
+        // Regra B1 & B2: Erro remoto não pode ser convertido em sucesso e resumo não equivale a detalhes
+        return {
+          success: false,
+          data: [],
+          templates: [],
+          error: `Falha ao carregar detalhes do modelo de culto "${item.name}": ${detail.error || 'Erro remoto'}`,
+          rawError: detail.rawError || detail.error
+        };
+      }
+      list.push(detail.template);
+    }
+    return { success: true, data: list, templates: list, error: null };
   } catch (err) {
-    return { success: false, data: [], error: serviceTemplateErrorMessage(err), rawError: err };
+    return { success: false, data: [], templates: [], error: serviceTemplateErrorMessage(err), rawError: err };
   }
 }
 
 /**
- * Busca modelo de culto por ID no Supabase.
+ * Busca modelo de culto por ID no Supabase com detalhes completos.
  */
-export async function getServiceTemplateRemote(supabaseClient, { templateId } = {}) {
+export async function getServiceTemplateRemote(supabaseClient, churchIdOrOpts, maybeTemplateId = null) {
+  let templateId;
+  if (typeof churchIdOrOpts === 'object' && churchIdOrOpts !== null) {
+    ({ templateId } = churchIdOrOpts);
+  } else if (maybeTemplateId) {
+    templateId = maybeTemplateId;
+  } else {
+    templateId = churchIdOrOpts;
+  }
+
   if (!templateId) {
     return { success: false, template: null, error: 'Parâmetros obrigatórios ausentes.' };
   }
@@ -422,14 +563,36 @@ export async function getServiceTemplateRemote(supabaseClient, { templateId } = 
     if (!row) {
       return { success: false, template: null, error: 'Modelo de culto não encontrado.' };
     }
-    return { success: true, template: toServiceTemplateObject(row), error: null };
+
+    const rawActivities = row.activities ?? row.activities_list;
+    const rawParallel = row.parallel_services ?? row.parallelServices;
+
+    // Problema G: Validar a presença e o formato dos arrays obrigatórios de atividades e serviços paralelos
+    if (!Array.isArray(rawActivities) || !Array.isArray(rawParallel)) {
+      const incompleteTemplate = toServiceTemplateObject({
+        ...row,
+        isComplete: false
+      });
+      return {
+        success: false,
+        template: incompleteTemplate,
+        error: 'Resposta remota incompleta: a estrutura de atividades ou serviços paralelos é inválida ou ausente.',
+        rawError: row
+      };
+    }
+
+    const templateObj = toServiceTemplateObject({
+      ...row,
+      isComplete: true
+    });
+    return { success: true, template: templateObj, error: null };
   } catch (err) {
     return { success: false, template: null, error: serviceTemplateErrorMessage(err), rawError: err };
   }
 }
 
 /**
- * Cadastra modelo de culto no Supabase.
+ * Cadastra modelo de culto no Supabase serializando atributos para snake_case (SQL 022).
  */
 export async function createServiceTemplateRemote(
   supabaseClient,
@@ -467,6 +630,12 @@ export async function createServiceTemplateRemote(
     return { success: false, error: validation.error };
   }
   const cmdId = commandId || generateCommandUuid();
+
+  // Serializa explicitamente para os atributos snake_case exigidos pelo SQL 022
+  const sqlActs = (activities || []).map((a, i) => serializeTemplateActivityForSql(a, i)).filter(Boolean);
+  const sqlServices = (parallelServices || []).map((s, i) => serializeTemplateParallelServiceForSql(s, i)).filter(Boolean);
+
+  // Objetos normalizados para o frontend
   const cleanActs = (activities || []).map((a, i) => toTemplateActivity(a, i)).filter(Boolean);
   const cleanServices = (parallelServices || []).map((s, i) => toTemplateParallelService(s, i)).filter(Boolean);
 
@@ -477,26 +646,35 @@ export async function createServiceTemplateRemote(
       p_name: validation.cleanName,
       p_description: validation.cleanDesc || null,
       p_event_type_id: eventTypeId || null,
-      p_activities: cleanActs,
-      p_parallel_services: cleanServices,
+      p_activities: sqlActs,
+      p_parallel_services: sqlServices,
     });
     if (error) {
       return { success: false, error: serviceTemplateErrorMessage(error), rawError: error };
     }
     const receipt = Array.isArray(data) ? data[0] : data;
-    const createdId = receipt?.result_entity_id || receipt?.result_payload?.template_id || `st-${Date.now()}`;
+    const createdId = receipt?.template_id || receipt?.id || receipt?.result_entity_id || receipt?.result_payload?.template_id;
+    if (!createdId) {
+      return { success: false, error: 'Identificador do modelo de culto não retornado pelo servidor.', rawError: data };
+    }
     const templateObj = {
       id: createdId,
+      churchId,
       name: validation.cleanName,
       description: validation.cleanDesc || '',
       eventTypeId,
       active: true,
       activities: cleanActs,
       parallelServices: cleanServices,
+      activitiesCount: cleanActs.length,
+      parallelServicesCount: cleanServices.length,
+      totalDurationMinutes: cleanActs.reduce((acc, a) => acc + (a.plannedDurationMinutes || 0), 0),
+      usedInHistory: false,
+      isComplete: true,
       createdAt: receipt?.created_at || new Date().toISOString(),
       updatedAt: receipt?.created_at || new Date().toISOString(),
     };
-    return { success: true, template: templateObj, data: templateObj, receipt, error: null };
+    return { success: true, templateId: createdId, template: templateObj, data: templateObj, receipt, error: null };
   } catch (err) {
     return { success: false, error: serviceTemplateErrorMessage(err), rawError: err };
   }
@@ -504,6 +682,7 @@ export async function createServiceTemplateRemote(
 
 /**
  * Atualiza modelo de culto no Supabase.
+ * Regra D: Preserva campos omitidos (undefined -> null no SQL) e não apaga atividades/serviços involuntariamente.
  */
 export async function updateServiceTemplateRemote(
   supabaseClient,
@@ -511,27 +690,29 @@ export async function updateServiceTemplateRemote(
   maybeTemplateId = null,
   maybeData = {}
 ) {
-  let churchId, commandId, templateId, name, description, eventTypeId, activities, parallelServices;
+  let churchId, commandId, templateId, name, description, eventTypeId, activities, parallelServices, existingTemplate;
   if (typeof churchIdOrOpts === 'object' && churchIdOrOpts !== null) {
     ({
       churchId,
       commandId,
       templateId,
       name,
-      description = '',
-      eventTypeId = null,
-      activities = [],
-      parallelServices = [],
+      description,
+      eventTypeId,
+      activities,
+      parallelServices,
+      existingTemplate,
     } = churchIdOrOpts);
   } else {
     churchId = churchIdOrOpts;
     templateId = maybeTemplateId;
     ({
       name,
-      description = '',
-      eventTypeId = null,
-      activities = [],
-      parallelServices = [],
+      description,
+      eventTypeId,
+      activities,
+      parallelServices,
+      existingTemplate,
       commandId,
     } = maybeData || {});
   }
@@ -539,23 +720,60 @@ export async function updateServiceTemplateRemote(
   if (!churchId || !templateId) {
     return { success: false, error: 'Parâmetros obrigatórios ausentes.' };
   }
-  const validation = validateServiceTemplate({ name, description, activities, parallelServices });
+
+  // Resolução de campos escalares com preservação dos valores existentes quando omitidos:
+  const finalName = name !== undefined ? name : existingTemplate?.name;
+
+  let finalDesc;
+  if (description === undefined) {
+    finalDesc = existingTemplate ? (existingTemplate.description ?? null) : null;
+  } else if (description === null || description === '') {
+    finalDesc = null;
+  } else {
+    finalDesc = normalizeNfcText(description);
+  }
+
+  let finalEventTypeId;
+  if (eventTypeId === undefined) {
+    finalEventTypeId = existingTemplate ? (existingTemplate.eventTypeId ?? null) : null;
+  } else if (eventTypeId === null || eventTypeId === '') {
+    finalEventTypeId = null;
+  } else {
+    finalEventTypeId = eventTypeId;
+  }
+
+  const validation = validateServiceTemplate(
+    { name: finalName, description: finalDesc, activities, parallelServices },
+    [],
+    templateId
+  );
   if (!validation.valid) {
     return { success: false, error: validation.error };
   }
   const cmdId = commandId || generateCommandUuid();
-  const cleanActs = (activities || []).map((a, i) => toTemplateActivity(a, i)).filter(Boolean);
-  const cleanServices = (parallelServices || []).map((s, i) => toTemplateParallelService(s, i)).filter(Boolean);
+
+  // Distinguir explicitamente:
+  // - activities === undefined (omitido): enviar null para preservar registros no SQL
+  // - activities é Array ([] ou preenchido): serializar para snake_case com index sequencial
+  let sqlActs = null;
+  if (Array.isArray(activities)) {
+    sqlActs = activities.map((a, i) => serializeTemplateActivityForSql(a, i)).filter(Boolean);
+  }
+
+  let sqlServices = null;
+  if (Array.isArray(parallelServices)) {
+    sqlServices = parallelServices.map((s, i) => serializeTemplateParallelServiceForSql(s, i)).filter(Boolean);
+  }
 
   try {
     const { data, error } = await invokeSupabaseRpc(supabaseClient, 'update_service_template', {
       p_command_id: cmdId,
       p_template_id: templateId,
-      p_event_type_id: eventTypeId || null,
+      p_event_type_id: finalEventTypeId,
       p_name: validation.cleanName,
-      p_description: validation.cleanDesc || null,
-      p_activities: cleanActs,
-      p_parallel_services: cleanServices,
+      p_description: finalDesc,
+      p_activities: sqlActs,
+      p_parallel_services: sqlServices,
     });
     if (error) {
       return { success: false, error: serviceTemplateErrorMessage(error), rawError: error };
@@ -662,4 +880,97 @@ export async function instantiateServiceTemplateRemote(supabaseClient, churchIdO
   } catch (err) {
     return { success: false, error: serviceTemplateErrorMessage(err), rawError: err };
   }
+}
+
+/**
+ * Compara dois timestamps e retorna true se ambos representarem o mesmo instante no tempo,
+ * desconsiderando variações textuais de formatação ISO (como presença de milissegundos ou fuso).
+ */
+export function areTimestampsEqual(t1, t2) {
+  if (t1 === t2) return true;
+  if (!t1 || !t2) return false;
+  const d1 = new Date(t1).getTime();
+  const d2 = new Date(t2).getTime();
+  return !Number.isNaN(d1) && !Number.isNaN(d2) && d1 === d2;
+}
+
+/**
+ * Compara o estado relevante do modelo remoto com a versão/snapshot de origem do formulário.
+ * Retorna true apenas se houver alteração remota efetiva no conteúdo relevante do modelo,
+ * prevenindo bloqueios indevidos por avanço temporal de timestamp técnico ou variação textual
+ * de formatação de data (ex: 2026-10-20T12:00:00Z vs 2026-10-20T12:00:00.000Z).
+ */
+export function hasTemplateChangedRemotely(origin, current) {
+  if (!origin || !current) return false;
+
+  // 1. Campos escalares relevantes
+  if (normalizeNfcText(origin.name || '') !== normalizeNfcText(current.name || '')) {
+    return true;
+  }
+  if (normalizeNfcText(origin.description || '') !== normalizeNfcText(current.description || '')) {
+    return true;
+  }
+  if ((origin.eventTypeId || null) !== (current.eventTypeId || null)) {
+    return true;
+  }
+  const originActive = origin.active !== undefined ? Boolean(origin.active !== false) : null;
+  const currentActive = current.active !== undefined ? Boolean(current.active !== false) : null;
+  if (originActive !== null && currentActive !== null && originActive !== currentActive) {
+    return true;
+  }
+
+  // 3. Contagem de serviços de apoio e atividades
+  const originParallel = Array.isArray(origin.parallelServices) ? origin.parallelServices : [];
+  const currentParallel = Array.isArray(current.parallelServices) ? current.parallelServices : [];
+  const originParallelCount = typeof origin.parallelServicesCount === 'number' ? origin.parallelServicesCount : originParallel.length;
+  const currentParallelCount = typeof current.parallelServicesCount === 'number' ? current.parallelServicesCount : currentParallel.length;
+
+  if (originParallelCount !== currentParallelCount) {
+    return true;
+  }
+
+  const originActivities = Array.isArray(origin.activities) ? origin.activities : [];
+  const currentActivities = Array.isArray(current.activities) ? current.activities : [];
+  const originActsCount = typeof origin.activitiesCount === 'number' ? origin.activitiesCount : originActivities.length;
+  const currentActsCount = typeof current.activitiesCount === 'number' ? current.activitiesCount : currentActivities.length;
+
+  if (originActsCount !== currentActsCount) {
+    return true;
+  }
+
+  // 4. Detalhes de serviços paralelos (se ambos tiverem os arrays detalhados)
+  if (originParallel.length > 0 && currentParallel.length > 0) {
+    if (originParallel.length !== currentParallel.length) return true;
+    for (let i = 0; i < originParallel.length; i++) {
+      const p1 = originParallel[i];
+      const p2 = currentParallel[i];
+      if (!p1 || !p2) return true;
+      if (normalizeNfcText(p1.teamId || '') !== normalizeNfcText(p2.teamId || '')) return true;
+      if (normalizeNfcText(p1.serviceName || '') !== normalizeNfcText(p2.serviceName || '')) return true;
+      const order1 = typeof (p1.displayOrder ?? p1.display_order) === 'number' ? (p1.displayOrder ?? p1.display_order) : (i + 1);
+      const order2 = typeof (p2.displayOrder ?? p2.display_order) === 'number' ? (p2.displayOrder ?? p2.display_order) : (i + 1);
+      if (Number(order1) !== Number(order2)) return true;
+      if (Number(p1.prepRequiredMinutes || 0) !== Number(p2.prepRequiredMinutes || 0)) return true;
+      if (Boolean(p1.isDefaultActive !== false) !== Boolean(p2.isDefaultActive !== false)) return true;
+    }
+  }
+
+  // 5. Detalhes de atividades (se ambos tiverem os arrays detalhados)
+  if (originActivities.length > 0 && currentActivities.length > 0) {
+    if (originActivities.length !== currentActivities.length) return true;
+    for (let i = 0; i < originActivities.length; i++) {
+      const a1 = originActivities[i];
+      const a2 = currentActivities[i];
+      if (!a1 || !a2) return true;
+      if ((a1.standardActivityId || null) !== (a2.standardActivityId || null)) return true;
+      if (normalizeNfcText(a1.title || '') !== normalizeNfcText(a2.title || '')) return true;
+      if (normalizeNfcText(a1.category || '') !== normalizeNfcText(a2.category || '')) return true;
+      if (Number(a1.plannedDurationMinutes || 0) !== Number(a2.plannedDurationMinutes || 0)) return true;
+      if (Number(a1.displayOrder || 0) !== Number(a2.displayOrder || 0)) return true;
+      if (Boolean(a1.requiresPlayback) !== Boolean(a2.requiresPlayback)) return true;
+      if (normalizeNfcText(a1.notes || '') !== normalizeNfcText(a2.notes || '')) return true;
+    }
+  }
+
+  return false;
 }
