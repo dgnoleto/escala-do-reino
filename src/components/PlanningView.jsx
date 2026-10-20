@@ -5,6 +5,7 @@ import {
   Plus,
   Clock,
   AlertTriangle,
+  AlertCircle,
   Music,
   Users,
   Check,
@@ -239,13 +240,40 @@ export default function PlanningView({ onBack } = {}) {
     addAuditLog("Voluntário Escalado", `Membro escalado como '${role}' na atividade.`);
   };
 
-  const handleApplyTemplate = () => {
+  const handleApplyTemplate = async () => {
     if (!selectedTemplateId) return;
-    const res = applyServiceTemplateToEvent(selectedTemplateId);
-    if (res.success) {
+    setTemplateFeedback(null);
+    try {
+      const res = await Promise.resolve(applyServiceTemplateToEvent(selectedTemplateId));
+      if (!res.success) {
+        setTemplateFeedback({
+          type: 'error',
+          message: res.error || 'Falha ao aplicar o modelo de culto.'
+        });
+        return;
+      }
+
       const tpl = serviceTemplates.find(t => t.id === selectedTemplateId);
-      setTemplateFeedback(`Modelo "${tpl?.name || ''}" aplicado com sucesso! Atividades litúrgicas e apoios configurados sem pessoas escaladas (CA03).`);
-      setTimeout(() => setTemplateFeedback(''), 5000);
+      const templateName = tpl?.name || 'Modelo';
+
+      if (res.persisted === false) {
+        // Prévia em memória carregada (Issue #27 / #29)
+        setTemplateFeedback({
+          type: 'warning',
+          title: `Prévia do modelo "${templateName}" carregada em memória`,
+          message: res.warning || 'As atividades litúrgicas e serviços de apoio foram carregados como prévia local nesta sessão. A gravação durável no banco de dados para esta edição de culto depende da issue #29.'
+        });
+      } else {
+        setTemplateFeedback({
+          type: 'success',
+          message: `Modelo "${templateName}" aplicado e gravado com sucesso!`
+        });
+      }
+    } catch (err) {
+      setTemplateFeedback({
+        type: 'error',
+        message: err.message || 'Erro inesperado ao aplicar modelo ao culto.'
+      });
     }
   };
 
@@ -632,9 +660,52 @@ export default function PlanningView({ onBack } = {}) {
         </div>
 
         {templateFeedback && (
-          <div style={{ marginTop: '10px', padding: '8px 12px', background: 'rgba(16, 185, 129, 0.12)', border: '1px solid rgba(16, 185, 129, 0.3)', borderRadius: 'var(--radius-sm)', color: '#10b981', fontSize: '12px', fontWeight: 600 }}>
-            <Check size={14} style={{ display: 'inline', marginRight: '6px', verticalAlign: 'middle' }} />
-            {templateFeedback}
+          <div
+            id="template-feedback-banner"
+            style={{
+              marginTop: '10px',
+              padding: '10px 14px',
+              borderRadius: 'var(--radius-sm)',
+              fontSize: '12px',
+              fontWeight: 500,
+              background: typeof templateFeedback === 'object' && templateFeedback?.type === 'warning'
+                ? '#fffbeb'
+                : typeof templateFeedback === 'object' && templateFeedback?.type === 'error'
+                  ? 'rgba(239, 68, 68, 0.12)'
+                  : 'rgba(16, 185, 129, 0.12)',
+              border: `1px solid ${
+                typeof templateFeedback === 'object' && templateFeedback?.type === 'warning'
+                  ? '#fcd34d'
+                  : typeof templateFeedback === 'object' && templateFeedback?.type === 'error'
+                    ? 'rgba(239, 68, 68, 0.3)'
+                    : 'rgba(16, 185, 129, 0.3)'
+              }`,
+              color: typeof templateFeedback === 'object' && templateFeedback?.type === 'warning'
+                ? '#92400e'
+                : typeof templateFeedback === 'object' && templateFeedback?.type === 'error'
+                  ? '#ef4444'
+                  : '#10b981'
+            }}
+          >
+            {typeof templateFeedback === 'object' && templateFeedback?.type === 'warning' ? (
+              <div style={{ display: 'flex', alignItems: 'flex-start', gap: '8px' }}>
+                <AlertTriangle size={16} color="#b45309" style={{ flexShrink: 0, marginTop: '2px' }} />
+                <div>
+                  {templateFeedback.title && <div style={{ fontWeight: 700, marginBottom: '2px' }}>{templateFeedback.title}</div>}
+                  <div>{templateFeedback.message}</div>
+                </div>
+              </div>
+            ) : typeof templateFeedback === 'object' && templateFeedback?.type === 'error' ? (
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <AlertCircle size={16} color="#ef4444" style={{ flexShrink: 0 }} />
+                <div>{templateFeedback.message}</div>
+              </div>
+            ) : (
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <Check size={14} color="#10b981" style={{ flexShrink: 0 }} />
+                <div>{typeof templateFeedback === 'string' ? templateFeedback : templateFeedback?.message}</div>
+              </div>
+            )}
           </div>
         )}
       </div>

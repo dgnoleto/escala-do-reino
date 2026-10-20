@@ -392,9 +392,15 @@ export async function fetchEventTypesRemote(supabaseClient, churchId, includeIna
     if (error) {
       return { success: false, data: [], error: eventTypeActivityErrorMessage(error), rawError: error };
     }
-    const list = Array.isArray(data)
-      ? data.map((item, idx) => toEventTypeObject(item, idx)).filter(Boolean)
-      : [];
+    if (!Array.isArray(data)) {
+      return {
+        success: false,
+        data: [],
+        error: 'Resposta remota estruturalmente inválida: esperava-se um array de tipos de evento.',
+        rawError: data
+      };
+    }
+    const list = data.map((item, idx) => toEventTypeObject(item, idx)).filter(Boolean);
     return { success: true, data: list, error: null };
   } catch (err) {
     return { success: false, data: [], error: eventTypeActivityErrorMessage(err), rawError: err };
@@ -571,9 +577,15 @@ export async function fetchStandardActivitiesRemote(supabaseClient, churchId, in
     if (error) {
       return { success: false, data: [], error: eventTypeActivityErrorMessage(error), rawError: error };
     }
-    const list = Array.isArray(data)
-      ? data.map((item, idx) => toStandardActivityObject(item, idx)).filter(Boolean)
-      : [];
+    if (!Array.isArray(data)) {
+      return {
+        success: false,
+        data: [],
+        error: 'Resposta remota estruturalmente inválida: esperava-se um array de atividades padrão.',
+        rawError: data
+      };
+    }
+    const list = data.map((item, idx) => toStandardActivityObject(item, idx)).filter(Boolean);
     return { success: true, data: list, error: null };
   } catch (err) {
     return { success: false, data: [], error: eventTypeActivityErrorMessage(err), rawError: err };
