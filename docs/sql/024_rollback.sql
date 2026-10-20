@@ -3,17 +3,53 @@
 -- Reversão para a Definição de Referência Original (SQL 022)
 -- Issue #27 / Parecer do Codex / Homologação
 --
--- ATENÇÃO CRÍTICA DE SEGURANÇA:
--- A restauração desta função reabre a vulnerabilidade de autorização que permite a
--- usuários autenticados instanciar modelos de cultos pertencentes a outras igrejas
--- sem checagem de vínculo com a igreja (cross-church leakage).
--- O rollback SOMENTE deve ser executado em ambiente de laboratório para testes ou
--- sob decisão expressa e controlada da equipe técnica.
--- Em ensaios de laboratório, executar de forma transacional (BEGIN ... ROLLBACK)
--- para não deixar o ambiente em estado vulnerável.
+-- CONTROLE TRANSACIONAL E POLÍTICA DE SEGURANÇA:
+-- Este script NÃO possui comandos BEGIN ou COMMIT internos.
+--
+-- AVISO CRÍTICO DE SEGURANÇA (VULNERABILIDADE CROSS-CHURCH):
+-- A restauração desta definição do SQL 022 reabre a vulnerabilidade de autorização
+-- que permite a usuários autenticados instanciar modelos de culto de outras igrejas
+-- sem verificação de vínculo associativo (cross-church leakage).
+-- Portanto, a aplicação definitiva deste rollback é ESTRITAMENTE EXCEPCIONAL e
+-- PROIBIDA sem formalização prévia de risco e aprovação expressa da governança.
+--
+-- PROCEDIMENTO DE CONTENÇÃO MAIS SEGURO PARA EMERGÊNCIAS (RECOMENDADO / SUJEITO A AUTORIZAÇÃO):
+-- Em caso de incidente operacional na RPC após a aplicação da 024, a alternativa
+-- de contenção recomendada — em vez de reinstalar a função vulnerável do SQL 022 — é:
+--   REVOKE EXECUTE ON FUNCTION public.instantiate_service_template(uuid, uuid, uuid) FROM authenticated, anon, public;
+-- Isso suspende temporariamente a execução da RPC sem reabrir vazamento entre
+-- igrejas (cross-church leakage), enquanto a correção é homologada.
+--
+-- ------------------------------------------------------------------------------
+-- 1. PROCEDIMENTO DE ENSAIO REVERSÍVEL DE LABORATÓRIO (NÃO PERSISTE NO BANCO)
+-- ------------------------------------------------------------------------------
+-- Qualquer ensaio DEVE OBRIGATORIAMENTE operar na mesma conexão e sob transação
+-- explícita encerrada com ROLLBACK, impedindo a restauração permanente da vulnerabilidade.
+--
+-- A. VIA SUPABASE STUDIO SQL EDITOR (WEB / SEM METARECURSOS \i):
+--    Copiar e colar o bloco encapsulado em transação não-persistente:
+--      BEGIN;
+--      -- <colar o conteúdo deste script 024_rollback.sql>
+--      -- <asserções opcionais de teste>
+--      ROLLBACK;
+--
+-- B. VIA POWERSHELL + DOCKER (LOCAL NO WINDOWS):
+--    Garantir que BEGIN, o script e o ROLLBACK sejam enviados na MESMA chamada e conexão psql:
+--      $rehearsal = "BEGIN;`n" + (Get-Content docs\sql\024_rollback.sql -Raw) + "`nROLLBACK;"
+--      $rehearsal | docker exec -i supabase_db_escala-convites-http-lab psql -U postgres -d postgres -v ON_ERROR_STOP=1
+--
+-- ------------------------------------------------------------------------------
+-- 2. PROCEDIMENTO DE REVERSÃO DEFINITIVA EXCEPCIONAL (APENAS COM AUTORIZAÇÃO FORMAL DE RISCO)
+-- ------------------------------------------------------------------------------
+-- Se e somente se houver aprovação expressa da governança técnica:
+--    BEGIN;
+--    -- <colar o conteúdo deste script 024_rollback.sql>
+--    COMMIT;
+--
+-- AVISO DE COMPATIBILIDADE DE EXECUTOR (PowerShell vs Docker vs Supabase Studio):
+-- Comandos com barra invertida (\i, \set, \c) são metacomandos específicos do binário
+-- psql e falham se colados no editor web do Supabase Studio.
 -- ==============================================================================
-
-begin;
 
 set local lock_timeout = '2s';
 set local statement_timeout = '5s';
@@ -95,5 +131,3 @@ grant execute on function public.instantiate_service_template(uuid, uuid, uuid) 
 alter function public.instantiate_service_template(uuid, uuid, uuid) owner to postgres;
 
 notify pgrst, 'reload schema';
-
-commit;

@@ -3,6 +3,33 @@
 -- Incremento Estrito de Segurança: Autorização na RPC public.instantiate_service_template
 -- Issue #27 / Parecer do Codex / Homologação
 --
+-- GUIA DE EXECUÇÃO E CONTROLE TRANSACIONAL:
+-- Este script NÃO embute comandos COMMIT ou BEGIN internos, permitindo que o
+-- executor controle integralmente a transação para ensaios reversíveis ou
+-- eventual aplicação definitiva em produção.
+--
+-- AVISO DE COMPATIBILIDADE DE EXECUTOR (PowerShell / Windows / Supabase Studio):
+-- Comandos com barra invertida (\i, \set) são específicos do executável psql e NÃO
+-- funcionam se colados no SQL Editor web do Supabase Studio.
+--
+-- 1. PROCEDIMENTO DE ENSAIO REVERSÍVEL DE LABORATÓRIO:
+--    A. VIA SUPABASE SQL EDITOR (WEB / SEM \i):
+--       Copiar e colar o arquivo consolidado autônomo:
+--       -> docs/sql/024_rehearsal_consolidated.sql
+--       Ele executa Preflight, DDL, Verify e Rehearsal em transação estrita terminando em ROLLBACK;
+--    B. VIA POWERSHELL + DOCKER (LOCAL NO WINDOWS):
+--       Get-Content docs\sql\024_rehearsal_consolidated.sql -Raw | docker exec -i supabase_db_escala-convites-http-lab psql -U postgres -d postgres -v ON_ERROR_STOP=1
+--    C. VIA CLI PSQL NATIVO:
+--       psql -v ON_ERROR_STOP=1 -f docs/sql/024_rehearsal_consolidated.sql
+--
+-- 2. PROCEDIMENTO DE APLICAÇÃO PERMANENTE (SUJEITO A APROVAÇÃO EXPRESSA):
+--    BEGIN;
+--    -- Executar 024_preflight.sql
+--    -- Executar 024_service_template_instantiation_security.sql
+--    -- Executar 024_verify.sql
+--    COMMIT;
+--    (Somente se 100% dos passos anteriores tiverem sucesso comprovado)
+--
 -- OBJETIVO:
 -- Corrigir a lacuna de autorização na RPC `public.instantiate_service_template`
 -- adicionando a validação de vínculo legítimo com a igreja via:
@@ -20,8 +47,6 @@
 --
 -- ATENÇÃO: NÃO EXECUTAR EM PRODUÇÃO SEM AUTORIZAÇÃO EXPRESSA.
 -- ==============================================================================
-
-begin;
 
 set local lock_timeout = '2s';
 set local statement_timeout = '5s';
@@ -46,6 +71,7 @@ begin
   end if;
 
   -- 2. Verificação estrita de autorização de vínculo com a igreja (PRD §3.2 & #27)
+  -- Consulta app_private.church_access e app_private.members para confirmar vínculo ativo
   -- Permite administradores e líderes da liturgia/membros autorizados (false = não exige admin)
   if not app_private.has_church_settings_access(p_church_id, false) then
     raise exception 'Acesso negado à igreja especificada.' using errcode = '42501';
@@ -114,5 +140,3 @@ grant execute on function public.instantiate_service_template(uuid, uuid, uuid) 
 alter function public.instantiate_service_template(uuid, uuid, uuid) owner to postgres;
 
 notify pgrst, 'reload schema';
-
-commit;
