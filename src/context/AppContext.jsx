@@ -59,6 +59,7 @@ import {
   deleteServiceTemplateRemote,
   instantiateServiceTemplateRemote,
   serviceTemplateErrorMessage,
+  hasTemplateChangedRemotely,
 } from '../utils/serviceTemplateService';
 import {
   createEventEditionObject,
@@ -233,6 +234,17 @@ export function AppProvider({
       if (templatesRes.success) {
         setServiceTemplates(templatesRes.data);
         setIsTemplatesStale(false);
+
+        // Se houver rascunhos em edição, atualiza a referência de origem se os dados remotos forem idênticos
+        if (editingDraftsRef.current && editingDraftsRef.current.size > 0 && Array.isArray(templatesRes.data)) {
+          for (const [draftId, draftOrigin] of editingDraftsRef.current.entries()) {
+            const remoteTpl = templatesRes.data.find(t => t.id === draftId);
+            if (remoteTpl && !hasTemplateChangedRemotely(draftOrigin, remoteTpl)) {
+              draftOrigin.syncSeq = currentSeq;
+              draftOrigin.updatedAt = remoteTpl.updatedAt || draftOrigin.updatedAt;
+            }
+          }
+        }
       } else {
         setIsTemplatesStale(true);
         setServiceTemplates(prev => prev.map(t => ({ ...t, isStale: true })));
@@ -407,9 +419,15 @@ export function AppProvider({
     const origin = {
       id,
       syncSeq: loadRequestSeqRef.current,
+      name: tpl.name,
+      description: tpl.description || '',
+      eventTypeId: tpl.eventTypeId || null,
+      active: tpl.active !== false,
       updatedAt: tpl.updatedAt || null,
       parallelServicesCount: tpl.parallelServices?.length ?? tpl.parallelServicesCount ?? 0,
-      activitiesCount: tpl.activities?.length ?? tpl.activitiesCount ?? 0
+      activitiesCount: tpl.activities?.length ?? tpl.activitiesCount ?? 0,
+      parallelServices: (tpl.parallelServices || []).map(s => ({ ...s })),
+      activities: (tpl.activities || []).map(a => ({ ...a }))
     };
     editingDraftsRef.current.set(id, origin);
     return origin;
@@ -976,6 +994,13 @@ export function AppProvider({
   // ADMINISTRAÇÃO (PRD 3.2: Exclusivo Admin Web)
   const addCancelReason = (reasonText) => {
     if (!isAdmin) return { success: false, error: "Apenas administradores podem cadastrar motivos de cancelamento." };
+    if (isDataStale || isReasonsStale) {
+      const detail = remoteError ? `: ${remoteError}` : '. Reconcilie a conexão antes de cadastrar.';
+      return {
+        success: false,
+        error: `Falha de sincronização: os dados de motivos de cancelamento estão desatualizados${detail}`
+      };
+    }
     const validation = validateCancellationReason(reasonText, cancelReasons);
     if (!validation.valid) {
       return { success: false, error: validation.error };
@@ -1004,13 +1029,6 @@ export function AppProvider({
           return { success: false, error: err.message || "Falha na comunicação com o servidor." };
         }
       })();
-    }
-
-    if (isDataStale || isReasonsStale) {
-      return {
-        success: false,
-        error: "Não é possível cadastrar motivos de cancelamento enquanto os dados estiverem desatualizados. Reconcilie a conexão antes de cadastrar."
-      };
     }
 
     const newReason = {
@@ -1156,6 +1174,13 @@ export function AppProvider({
   // Gerenciamento de Tipos de Evento (PRD §5 - Issue #25)
   const addEventType = (name, description = '') => {
     if (!isAdmin) return { success: false, error: "Apenas administradores podem cadastrar tipos de evento." };
+    if (isDataStale || isEventTypesStale) {
+      const detail = remoteError ? `: ${remoteError}` : '. Reconcilie a conexão antes de cadastrar.';
+      return {
+        success: false,
+        error: `Falha de conexão ou sincronização: os dados de tipos de evento estão desatualizados${detail}`
+      };
+    }
     const validation = validateEventType(name, description, eventTypes);
     if (!validation.valid) {
       return { success: false, error: validation.error };
@@ -1189,13 +1214,6 @@ export function AppProvider({
           return { success: false, error: err.message || "Falha na comunicação com o servidor." };
         }
       })();
-    }
-
-    if (isDataStale || isEventTypesStale) {
-      return {
-        success: false,
-        error: "Não é possível cadastrar novos tipos de evento enquanto os dados estiverem desatualizados. Reconcilie a conexão antes de cadastrar."
-      };
     }
 
     const newType = {
@@ -1352,6 +1370,13 @@ export function AppProvider({
   // Gerenciamento de Atividades Padrão com Duração (PRD §5 - Issue #25)
   const addStandardActivity = (name, defaultDurationMinutes, category = 'Liturgia', description = '') => {
     if (!isAdmin) return { success: false, error: "Apenas administradores podem cadastrar atividades padrão." };
+    if (isDataStale || isActivitiesStale) {
+      const detail = remoteError ? `: ${remoteError}` : '. Reconcilie a conexão antes de cadastrar.';
+      return {
+        success: false,
+        error: `Falha de sincronização: os dados de atividades padrão estão desatualizados${detail}`
+      };
+    }
     const validation = validateStandardActivity(name, defaultDurationMinutes, category, description, standardActivities);
     if (!validation.valid) {
       return { success: false, error: validation.error };
@@ -1399,13 +1424,6 @@ export function AppProvider({
       })();
     }
 
-    if (isDataStale || isActivitiesStale) {
-      return {
-        success: false,
-        error: "Não é possível cadastrar novas atividades padrão enquanto os dados estiverem desatualizados. Reconcilie a conexão antes de cadastrar."
-      };
-    }
-
     const newActivity = {
       id: `sa-${Date.now()}`,
       name: validation.cleanName,
@@ -1426,6 +1444,14 @@ export function AppProvider({
 
   const updateStandardActivity = (id, newName, newDurationMinutes, newCategory = 'Liturgia', newDescription = '') => {
     if (!isAdmin) return { success: false, error: "Apenas administradores podem alterar atividades padrão." };
+    const target = standardActivities.find(a => a.id === id);
+    if (isDataStale || isActivitiesStale || target?.isStale) {
+      const detail = remoteError ? `: ${remoteError}` : '. Reconcilie a conexão antes de alterar a atividade.';
+      return {
+        success: false,
+        error: `Falha de sincronização: os dados de atividades padrão estão desatualizados${detail}`
+      };
+    }
     const authCheck = ensureAuthorizedContext();
     if (!authCheck.allowed) return { success: false, error: authCheck.error };
 
@@ -1436,7 +1462,6 @@ export function AppProvider({
       };
     }
 
-    const target = standardActivities.find(a => a.id === id);
     if (!target) return { success: false, error: "Atividade padrão não encontrada." };
     const validation = validateStandardActivity(newName, newDurationMinutes, newCategory, newDescription, standardActivities, id);
     if (!validation.valid) {
@@ -1698,28 +1723,26 @@ export function AppProvider({
       };
     }
 
-    // Problema A2: Proteção de integridade contra salvamento de formulário antigo após reconciliação / alteração remota
-    const draftOrigin = editingDraftsRef.current.get(id);
-    if (draftOrigin && lastSuccessfulSyncSeqRef.current > draftOrigin.syncSeq) {
-      return {
-        success: false,
-        conflict: true,
-        error: "Os dados deste modelo foram sincronizados com o servidor enquanto o formulário estava aberto. Reabra o modelo com os dados atualizados antes de salvar."
-      };
-    }
-
-    const originUpdatedAt = options.originUpdatedAt || draftOrigin?.updatedAt;
-    if (originUpdatedAt && target.updatedAt && originUpdatedAt !== target.updatedAt) {
-      return {
-        success: false,
-        conflict: true,
-        error: "Os dados deste modelo foram atualizados no servidor por outra sessão ou sincronização. Reabra o modelo para carregar as alterações mais recentes antes de salvar."
-      };
+    // Problema A2: Proteção de integridade contra salvamento de formulário antigo após alteração remota real
+    const draftOrigin = options?.originSnapshot || editingDraftsRef.current.get(id);
+    if (draftOrigin) {
+      const hasChanged = hasTemplateChangedRemotely(draftOrigin, target);
+      if (hasChanged) {
+        return {
+          success: false,
+          conflict: true,
+          error: "Os dados deste modelo foram atualizados no servidor por outra sessão ou sincronização. Reabra o modelo para carregar as alterações mais recentes antes de salvar."
+        };
+      } else {
+        // Se não houve alteração remota efetiva, atualizar a referência de origem do rascunho e permitir o salvamento, preservando as alterações locais.
+        draftOrigin.syncSeq = lastSuccessfulSyncSeqRef.current;
+        draftOrigin.updatedAt = target.updatedAt || draftOrigin.updatedAt;
+      }
     }
 
     const originParallelCount = typeof options.originParallelServicesCount === 'number'
       ? options.originParallelServicesCount
-      : draftOrigin?.parallelServicesCount;
+      : undefined;
     if (typeof originParallelCount === 'number') {
       const currentParallelCount = target.parallelServices?.length ?? target.parallelServicesCount ?? 0;
       if (currentParallelCount !== originParallelCount) {
@@ -1733,7 +1756,7 @@ export function AppProvider({
 
     const originActsCount = typeof options.originActivitiesCount === 'number'
       ? options.originActivitiesCount
-      : draftOrigin?.activitiesCount;
+      : undefined;
     if (typeof originActsCount === 'number') {
       const currentActsCount = target.activities?.length ?? target.activitiesCount ?? 0;
       if (currentActsCount !== originActsCount) {

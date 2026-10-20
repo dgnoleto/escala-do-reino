@@ -28,7 +28,8 @@ import {
 } from '../utils/eventTypeActivityService';
 import {
   isTemplateUsedInEvents,
-  canDeleteServiceTemplate
+  canDeleteServiceTemplate,
+  hasTemplateChangedRemotely
 } from '../utils/serviceTemplateService';
 
 const VALID_ADMIN_TABS = ['event_types', 'templates', 'activities', 'reasons', 'invites', 'liturgy', 'members'];
@@ -468,28 +469,13 @@ export default function AdminView({ onBack, initialTab = 'event_types' } = {}) {
     if (!editingTemplateId || !editingTemplateOrigin) return false;
     if (!currentTemplateInStore) return true;
 
-    // Se houve falha de sincronização enquanto o formulário estava aberto e foi reconciliado
-    if (hadSyncFailureWhileEditing && !isDataStale && !isTemplatesStale) {
-      return true;
-    }
-
-    // Se o updatedAt remoto divergir do momento da abertura
-    if (editingTemplateOrigin.updatedAt && currentTemplateInStore.updatedAt && editingTemplateOrigin.updatedAt !== currentTemplateInStore.updatedAt) {
-      return true;
-    }
-
-    // Se a contagem de apoios ou atividades divergir do momento da abertura
-    const currentServicesCount = currentTemplateInStore.parallelServices?.length ?? currentTemplateInStore.parallelServicesCount ?? 0;
-    if (currentServicesCount !== editingTemplateOrigin.parallelServicesCount) {
-      return true;
-    }
-    const currentActsCount = currentTemplateInStore.activities?.length ?? currentTemplateInStore.activitiesCount ?? 0;
-    if (currentActsCount !== editingTemplateOrigin.activitiesCount) {
+    // Se houve alteração remota efetiva em relação ao snapshot de origem:
+    if (hasTemplateChangedRemotely(editingTemplateOrigin, currentTemplateInStore)) {
       return true;
     }
 
     return false;
-  }, [editingTemplateId, editingTemplateOrigin, hadSyncFailureWhileEditing, isDataStale, isTemplatesStale, currentTemplateInStore]);
+  }, [editingTemplateId, editingTemplateOrigin, currentTemplateInStore]);
 
   const handleReloadFormFromCurrent = () => {
     if (!currentTemplateInStore) return;
@@ -498,16 +484,20 @@ export default function AdminView({ onBack, initialTab = 'event_types' } = {}) {
     setTemplateEventTypeId(currentTemplateInStore.eventTypeId || '');
     setTemplateActivities(currentTemplateInStore.activities && currentTemplateInStore.activities.length > 0 ? [...currentTemplateInStore.activities].map((a, i) => ({ ...a, displayOrder: i + 1 })) : []);
     setTemplateParallelServices(currentTemplateInStore.parallelServices && currentTemplateInStore.parallelServices.length > 0 ? [...currentTemplateInStore.parallelServices] : []);
-    setEditingTemplateOrigin({
+    const origin = beginEditingTemplate ? beginEditingTemplate(currentTemplateInStore.id) : null;
+    setEditingTemplateOrigin(origin || {
       id: currentTemplateInStore.id,
+      name: currentTemplateInStore.name,
+      description: currentTemplateInStore.description || '',
+      eventTypeId: currentTemplateInStore.eventTypeId || null,
+      active: currentTemplateInStore.active !== false,
       updatedAt: currentTemplateInStore.updatedAt || null,
       parallelServicesCount: currentTemplateInStore.parallelServices?.length ?? currentTemplateInStore.parallelServicesCount ?? 0,
-      activitiesCount: currentTemplateInStore.activities?.length ?? currentTemplateInStore.activitiesCount ?? 0
+      activitiesCount: currentTemplateInStore.activities?.length ?? currentTemplateInStore.activitiesCount ?? 0,
+      parallelServices: (currentTemplateInStore.parallelServices || []).map(s => ({ ...s })),
+      activities: (currentTemplateInStore.activities || []).map(a => ({ ...a }))
     });
     setHadSyncFailureWhileEditing(false);
-    if (beginEditingTemplate) {
-      beginEditingTemplate(currentTemplateInStore.id);
-    }
     setTemplateError('');
   };
 
@@ -542,6 +532,7 @@ export default function AdminView({ onBack, initialTab = 'event_types' } = {}) {
 
     if (editingTemplateId) {
       const options = {
+        originSnapshot: editingTemplateOrigin,
         originUpdatedAt: editingTemplateOrigin?.updatedAt,
         originParallelServicesCount: editingTemplateOrigin?.parallelServicesCount,
         originActivitiesCount: editingTemplateOrigin?.activitiesCount
@@ -586,17 +577,21 @@ export default function AdminView({ onBack, initialTab = 'event_types' } = {}) {
       setTemplateError(`Não é possível editar o modelo "${tpl.name}" porque seus detalhes completos não foram carregados do servidor. Tente recarregar os dados da igreja.`);
       return;
     }
+    const origin = beginEditingTemplate ? beginEditingTemplate(tpl.id) : null;
     setEditingTemplateId(tpl.id);
-    setEditingTemplateOrigin({
+    setEditingTemplateOrigin(origin || {
       id: tpl.id,
+      name: tpl.name,
+      description: tpl.description || '',
+      eventTypeId: tpl.eventTypeId || null,
+      active: tpl.active !== false,
       updatedAt: tpl.updatedAt || null,
       parallelServicesCount: Array.isArray(tpl.parallelServices) ? tpl.parallelServices.length : (tpl.parallelServicesCount || 0),
-      activitiesCount: Array.isArray(tpl.activities) ? tpl.activities.length : (tpl.activitiesCount || 0)
+      activitiesCount: Array.isArray(tpl.activities) ? tpl.activities.length : (tpl.activitiesCount || 0),
+      parallelServices: (tpl.parallelServices || []).map(s => ({ ...s })),
+      activities: (tpl.activities || []).map(a => ({ ...a }))
     });
     setHadSyncFailureWhileEditing(false);
-    if (beginEditingTemplate) {
-      beginEditingTemplate(tpl.id);
-    }
     setTemplateName(tpl.name);
     setTemplateDesc(tpl.description || '');
     setTemplateEventTypeId(tpl.eventTypeId || '');

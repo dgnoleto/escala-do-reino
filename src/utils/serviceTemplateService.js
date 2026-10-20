@@ -881,3 +881,96 @@ export async function instantiateServiceTemplateRemote(supabaseClient, churchIdO
     return { success: false, error: serviceTemplateErrorMessage(err), rawError: err };
   }
 }
+
+/**
+ * Compara dois timestamps e retorna true se ambos representarem o mesmo instante no tempo,
+ * desconsiderando variações textuais de formatação ISO (como presença de milissegundos ou fuso).
+ */
+export function areTimestampsEqual(t1, t2) {
+  if (t1 === t2) return true;
+  if (!t1 || !t2) return false;
+  const d1 = new Date(t1).getTime();
+  const d2 = new Date(t2).getTime();
+  return !Number.isNaN(d1) && !Number.isNaN(d2) && d1 === d2;
+}
+
+/**
+ * Compara o estado relevante do modelo remoto com a versão/snapshot de origem do formulário.
+ * Retorna true apenas se houver alteração remota efetiva no conteúdo relevante do modelo,
+ * prevenindo bloqueios indevidos por avanço temporal de timestamp técnico ou variação textual
+ * de formatação de data (ex: 2026-10-20T12:00:00Z vs 2026-10-20T12:00:00.000Z).
+ */
+export function hasTemplateChangedRemotely(origin, current) {
+  if (!origin || !current) return false;
+
+  // 1. Campos escalares relevantes
+  if (normalizeNfcText(origin.name || '') !== normalizeNfcText(current.name || '')) {
+    return true;
+  }
+  if (normalizeNfcText(origin.description || '') !== normalizeNfcText(current.description || '')) {
+    return true;
+  }
+  if ((origin.eventTypeId || null) !== (current.eventTypeId || null)) {
+    return true;
+  }
+  const originActive = origin.active !== undefined ? Boolean(origin.active !== false) : null;
+  const currentActive = current.active !== undefined ? Boolean(current.active !== false) : null;
+  if (originActive !== null && currentActive !== null && originActive !== currentActive) {
+    return true;
+  }
+
+  // 3. Contagem de serviços de apoio e atividades
+  const originParallel = Array.isArray(origin.parallelServices) ? origin.parallelServices : [];
+  const currentParallel = Array.isArray(current.parallelServices) ? current.parallelServices : [];
+  const originParallelCount = typeof origin.parallelServicesCount === 'number' ? origin.parallelServicesCount : originParallel.length;
+  const currentParallelCount = typeof current.parallelServicesCount === 'number' ? current.parallelServicesCount : currentParallel.length;
+
+  if (originParallelCount !== currentParallelCount) {
+    return true;
+  }
+
+  const originActivities = Array.isArray(origin.activities) ? origin.activities : [];
+  const currentActivities = Array.isArray(current.activities) ? current.activities : [];
+  const originActsCount = typeof origin.activitiesCount === 'number' ? origin.activitiesCount : originActivities.length;
+  const currentActsCount = typeof current.activitiesCount === 'number' ? current.activitiesCount : currentActivities.length;
+
+  if (originActsCount !== currentActsCount) {
+    return true;
+  }
+
+  // 4. Detalhes de serviços paralelos (se ambos tiverem os arrays detalhados)
+  if (originParallel.length > 0 && currentParallel.length > 0) {
+    if (originParallel.length !== currentParallel.length) return true;
+    for (let i = 0; i < originParallel.length; i++) {
+      const p1 = originParallel[i];
+      const p2 = currentParallel[i];
+      if (!p1 || !p2) return true;
+      if (normalizeNfcText(p1.teamId || '') !== normalizeNfcText(p2.teamId || '')) return true;
+      if (normalizeNfcText(p1.serviceName || '') !== normalizeNfcText(p2.serviceName || '')) return true;
+      const order1 = typeof (p1.displayOrder ?? p1.display_order) === 'number' ? (p1.displayOrder ?? p1.display_order) : (i + 1);
+      const order2 = typeof (p2.displayOrder ?? p2.display_order) === 'number' ? (p2.displayOrder ?? p2.display_order) : (i + 1);
+      if (Number(order1) !== Number(order2)) return true;
+      if (Number(p1.prepRequiredMinutes || 0) !== Number(p2.prepRequiredMinutes || 0)) return true;
+      if (Boolean(p1.isDefaultActive !== false) !== Boolean(p2.isDefaultActive !== false)) return true;
+    }
+  }
+
+  // 5. Detalhes de atividades (se ambos tiverem os arrays detalhados)
+  if (originActivities.length > 0 && currentActivities.length > 0) {
+    if (originActivities.length !== currentActivities.length) return true;
+    for (let i = 0; i < originActivities.length; i++) {
+      const a1 = originActivities[i];
+      const a2 = currentActivities[i];
+      if (!a1 || !a2) return true;
+      if ((a1.standardActivityId || null) !== (a2.standardActivityId || null)) return true;
+      if (normalizeNfcText(a1.title || '') !== normalizeNfcText(a2.title || '')) return true;
+      if (normalizeNfcText(a1.category || '') !== normalizeNfcText(a2.category || '')) return true;
+      if (Number(a1.plannedDurationMinutes || 0) !== Number(a2.plannedDurationMinutes || 0)) return true;
+      if (Number(a1.displayOrder || 0) !== Number(a2.displayOrder || 0)) return true;
+      if (Boolean(a1.requiresPlayback) !== Boolean(a2.requiresPlayback)) return true;
+      if (normalizeNfcText(a1.notes || '') !== normalizeNfcText(a2.notes || '')) return true;
+    }
+  }
+
+  return false;
+}
