@@ -4,7 +4,7 @@ Versão 2 (06/10/2026) · Contextualização histórica e entrega consolidada em
 
 **Incremento:** Convites de acesso vinculados a membros existentes, fluxo de primeiro acesso (confirmação ou proposta de outro nome), análise administrativa de solicitações, ciclo de recibos idempotente e integração com a seleção explícita de contexto de igreja.
 
-**Nota de contextualização documental:** Este documento registra a especificação normativa original e as propostas técnicas formuladas durante a preparação da etapa de convites (Seções 1 a 10), bem como a **implementação factual da interface e os limites contratuais vigentes** consolidados na **Seção 11** após a integração de código e testes via PR #8 (`04be37e`, head `de97085`) e PR #9 (`84bf20f`, head `ba85259`). As propostas técnicas iniciais (Seção 2.2) permanecem identificadas em sua origem de engenharia, sem conversão retroativa em decisões normativas amplas além do código e dos contratos efetivamente verificados. Para a visão vigente do projeto, consultar também o [Índice da documentação](README.md) e o [Estado atual](ESTADO-ATUAL.md).
+**Nota de contextualização documental:** Este documento registra a especificação normativa original e as propostas técnicas formuladas durante a preparação da etapa de convites (Seções 1 a 10), bem como a **implementação factual da interface e os limites contratuais vigentes** consolidados na **Seção 11** após a integração de código e testes via PR #8 (`04be37e`, head `de97085`) e PR #9 (`84bf20f`, head `ba85259`). As propostas técnicas iniciais (Seção 2.2) permanecem identificadas em sua origem de engenharia, sem conversão retroativa em decisões normativas amplas além do código e dos contratos efetivamente verificados. Para a visão vigente do projeto, consultar também o [Índice da documentação](../README.md) e o [Estado atual](../ESTADO-ATUAL.md).
 
 ---
 
@@ -19,7 +19,7 @@ Versão 2 (06/10/2026) · Contextualização histórica e entrega consolidada em
 
 ## 2. Classificação Rigorosa do Escopo
 
-Para clareza de governança e alinhamento com o [PRD](PRD.md) e a [Arquitetura do Banco](ARQUITETURA-BANCO.md), o incremento é dividido em quatro blocos rigorosos:
+Para clareza de governança e alinhamento com o [PRD](../PRD.md) e a [Arquitetura do Banco](../arquitetura/ARQUITETURA-BANCO.md), o incremento é dividido em quatro blocos rigorosos:
 
 ### 2.1 Regras Aprovadas (Consolidadas pelo Responsável)
 1. **Vínculo Obrigatório a Membro Existente e Ativo:** Todo convite é emitido para uma pessoa já cadastrada na tabela `app_private.members` da igreja, com situação `status = 'active'`. Não há convite para membro inexistente ou inativo.

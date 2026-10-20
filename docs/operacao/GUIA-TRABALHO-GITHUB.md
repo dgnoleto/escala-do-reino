@@ -9,10 +9,10 @@ Preparado em 11/10/2026 para consolidar a organização do Project aprovada pelo
 | [Plataforma do Reino](https://github.com/users/dgnoleto/projects/2) | Acompanhar etapas, responsáveis e prioridades dos módulos em um Project principal. |
 | [Issues do repositório](https://github.com/dgnoleto/escala-do-reino/issues) | Registrar tarefas, defeitos, dúvidas, critérios, decisões relacionadas e resultados. |
 | Pull requests (PRs) | Propor e revisar alterações de código ou documentação, mostrando o que será incorporado. |
-| [PRD](PRD.md) e contratos | Consultar requisitos e regras aprovados. Uma issue não os altera por inferência. |
-| [Estado atual](ESTADO-ATUAL.md) | Saber o que foi entregue, o que está pendente e quais limites de validação existem. |
-| [Histórico](historico/2026-10-11-preparacao-qa.md) e evidências selecionadas | Preservar o que foi observado em uma data, versão e ambiente. |
-| [Evolução futura](EVOLUCAO-FUTURA.md) | Guardar ideias e decisões futuras, distinguindo decidido, proposto e pendente. |
+| [PRD](../PRD.md) e contratos | Consultar requisitos e regras aprovados. Uma issue não os altera por inferência. |
+| [Estado atual](../ESTADO-ATUAL.md) | Saber o que foi entregue, o que está pendente e quais limites de validação existem. |
+| [Histórico](../historico/2026-10-11-preparacao-qa.md) e evidências selecionadas | Preservar o que foi observado em uma data, versão e ambiente. |
+| [Evolução futura](../produto/EVOLUCAO-FUTURA.md) | Guardar ideias e decisões futuras, distinguindo decidido, proposto e pendente. |
 
 O repositório atual continua chamado escala-do-reino. O Project principal se chama Plataforma do Reino; seu primeiro módulo é Escala do Reino. A organização de outros módulos não implica implementação ou compromisso de entrega.
 
@@ -51,7 +51,7 @@ Evidências ou referências existentes:
 Dependências, dúvidas e próximo passo:
 ```
 
-Para defeitos, usar o [modelo de achado de QA](qa/ROTEIRO-QA-E-REGISTRO.md), que inclui reprodução, esperado, observado, impacto, evidência e limites. Distinguir hipótese de causa de causa comprovada.
+Para defeitos, usar o [modelo de achado de QA](../qa/ROTEIRO-QA-E-REGISTRO.md), que inclui reprodução, esperado, observado, impacto, evidência e limites. Distinguir hipótese de causa de causa comprovada.
 
 Para dúvidas de produto, registrar a pergunta e as alternativas. Após decisão, registrar responsável, data e conclusão; atualizar os documentos normativos afetados dentro do incremento autorizado. A IA não escolhe uma regra nova para resolver uma divergência sozinha.
 
@@ -192,8 +192,8 @@ Exemplos de referência: [issue #10](https://github.com/dgnoleto/escala-do-reino
 
 Não publicar senhas, tokens, sessões, links reais de convite/recuperação, configurações reais ou dados pessoais desnecessários. Preferir referências portáveis e dados fictícios. Senhas são inseridas pela pessoa diretamente no destino; não pedir ou copiar valores para a conversa.
 
-Antes de teste, identificar a interface e seu backend. Localhost pode apontar para o piloto. Preservar contas, dados, prazos, serviços e evidências existentes; [consultar o mapa de ambientes](ambientes/LABORATORIOS.md).
+Antes de teste, identificar a interface e seu backend. Localhost pode apontar para o piloto. Preservar contas, dados, prazos, serviços e evidências existentes; [consultar o mapa de ambientes](../ambientes/LABORATORIOS.md).
 
-Para continuar com uma IA, começar pelo [índice documental](README.md), este guia, estado atual e issue selecionada. Consultar os demais detalhes somente quando necessários. Ao passar o trabalho, informar versão, resultado comprovado, limites, pendências e próximo passo exato.
+Para continuar com uma IA, começar pelo [índice documental](../README.md), este guia, estado atual e issue selecionada. Consultar os demais detalhes somente quando necessários. Ao passar o trabalho, informar versão, resultado comprovado, limites, pendências e próximo passo exato.
 
 Fontes técnicas de referência: [Projects](https://docs.github.com/en/issues/planning-and-tracking-with-projects/learning-about-projects/about-projects) e [vínculos entre PR e issue](https://docs.github.com/en/issues/tracking-your-work-with-issues/using-issues/linking-a-pull-request-to-an-issue). As opções do GitHub podem mudar; reconferir a configuração antes de alterá-la.

@@ -12,7 +12,7 @@
 
 ## 0. Como interpretar esta visão — escopo, backlog e responsabilidade humana
 
-**Esclarecimentos do responsável registrados em 12/10/2026:** o MVP permanece o recorte do módulo **Escala do Reino** já acordado no [PRD](PRD.md) e nos contratos. As propostas adicionais deste ecossistema compõem um **backlog estratégico** e só poderão entrar em desenvolvimento depois da conclusão do escopo acordado para o Escala do Reino, mediante priorização e autorização específicas do responsável. A visão não amplia o MVP nem autoriza frentes paralelas.
+**Esclarecimentos do responsável registrados em 12/10/2026:** o MVP permanece o recorte do módulo **Escala do Reino** já acordado no [PRD](../PRD.md) e nos contratos. As propostas adicionais deste ecossistema compõem um **backlog estratégico** e só poderão entrar em desenvolvimento depois da conclusão do escopo acordado para o Escala do Reino, mediante priorização e autorização específicas do responsável. A visão não amplia o MVP nem autoriza frentes paralelas.
 
 Ideias podem ser registradas e esclarecidas documentalmente antes dessa conclusão, como ocorre neste manifesto. Esse registro não inicia implementação, integração ou preparação técnica dos módulos futuros.
 
@@ -24,7 +24,7 @@ Concluir o Escala do Reino significa atender e conferir os critérios acordados 
 
 O sistema não pontuará pessoas, classificará candidatos à consagração nem iniciará alertas pastorais com base em limiares presumidos. Ausência de registro não comprova ausência da pessoa. Os exemplos de consultas, inclusive três faltas, não são gatilhos automáticos nem critérios obrigatórios aprovados. Contato, acolhimento, interpretação e decisões pastorais permanecem humanos. Qualquer automação adicional precisará de proposta, regras, avaliação e autorização próprias.
 
-**Referências para pessoas e IAs:** este manifesto explica a direção; [Evolução futura](EVOLUCAO-FUTURA.md) preserva ideias, decisões futuras e pendências; o [PRD](PRD.md) e os contratos definem o escopo aprovado; [Estado atual](ESTADO-ATUAL.md) e evidências delimitam o que foi demonstrado; o [Guia de trabalho no GitHub](GUIA-TRABALHO-GITHUB.md) define a rotina operacional. Se houver divergência, não transformar a visão em regra de implementação: registrar a dúvida e consultar o responsável.
+**Referências para pessoas e IAs:** este manifesto explica a direção; [Evolução futura](EVOLUCAO-FUTURA.md) preserva ideias, decisões futuras e pendências; o [PRD](../PRD.md) e os contratos definem o escopo aprovado; [Estado atual](../ESTADO-ATUAL.md) e evidências delimitam o que foi demonstrado; o [Guia de trabalho no GitHub](../operacao/GUIA-TRABALHO-GITHUB.md) define a rotina operacional. Se houver divergência, não transformar a visão em regra de implementação: registrar a dúvida e consultar o responsável.
 
 ---
 
@@ -214,7 +214,7 @@ Os agrupamentos acima não são fases com compromisso de prazo ou sequência apr
 
 ## 5. Governança de Produto: GitHub Projects & Gestão de Issues
 
-A rotina vigente está no [Guia de trabalho no GitHub](GUIA-TRABALHO-GITHUB.md). Esta seção resume o processo; alterações operacionais devem manter esse guia e o resumo do Project coerentes.
+A rotina vigente está no [Guia de trabalho no GitHub](../operacao/GUIA-TRABALHO-GITHUB.md). Esta seção resume o processo; alterações operacionais devem manter esse guia e o resumo do Project coerentes.
 
 * **Um Project Principal — Plataforma do Reino:**
   * O acompanhamento usa o Project principal, com labels para módulos e trabalho compartilhado. Os pilares não criam automaticamente Projects separados;

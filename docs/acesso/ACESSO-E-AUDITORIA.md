@@ -2,7 +2,7 @@
 
 Versão 4 · 3 de outubro de 2026
 
-**Situação:** regras de produto confirmadas e preparação dos contratos de convites de acesso e aprovação de nome para revisão. As quatro tabelas iniciais e o incremento de solicitação/auditoria já foram criados e verificados no Supabase; os fluxos de criação de nova igreja ("Criar minha igreja"), administração em no máximo uma igreja por conta Auth e salvaguardas de continuidade do último administrador foram implementados na aplicação, instalados no piloto (scripts 009/010) e integrados na branch main via PR #7. Este documento detalha os contratos para convites e aprovação de outro nome. Complementa o [PRD](PRD.md), a [arquitetura](ARQUITETURA-BANCO.md), o [schema de acesso](SCHEMA-ACESSO.md) e o [schema de solicitação e auditoria](SCHEMA-APROVACAO-AUDITORIA.md).
+**Situação:** regras de produto confirmadas e preparação dos contratos de convites de acesso e aprovação de nome para revisão. As quatro tabelas iniciais e o incremento de solicitação/auditoria já foram criados e verificados no Supabase; os fluxos de criação de nova igreja ("Criar minha igreja"), administração em no máximo uma igreja por conta Auth e salvaguardas de continuidade do último administrador foram implementados na aplicação, instalados no piloto (scripts 009/010) e integrados na branch main via PR #7. Este documento detalha os contratos para convites e aprovação de outro nome. Complementa o [PRD](../PRD.md), a [arquitetura](../arquitetura/ARQUITETURA-BANCO.md), o [schema de acesso](../arquitetura/SCHEMA-ACESSO.md) e o [schema de solicitação e auditoria](../arquitetura/SCHEMA-APROVACAO-AUDITORIA.md).
 
 ## 1. Decisões confirmadas
 
@@ -78,7 +78,7 @@ As novas entidades ficam fora da Data API, com RLS e acesso direto bloqueado com
 
 Estado técnico da decisão: `pending`, `approved`, `rejected`, `cancelled` ou `expired`; a situação efetiva também considera o prazo. O estado persistido `expired` é opcional para finalização e não exige um decisor humano fictício. Um registro pendente vencido é exibido como expirado e não aceita aprovação. Regras para solicitações simultâneas e sua substituição devem acompanhar a migração e os comandos; índice parcial com `now()` não resolve a expiração.
 
-Essas duas tabelas e as restrições adicionais foram aplicadas pelo responsável em 02/10/2026. O [detalhamento físico e as evidências do segundo incremento](SCHEMA-APROVACAO-AUDITORIA.md) registram o alcance da verificação; os comandos descritos neste fluxo continuam pendentes. Não repetir os scripts de criação já aplicados.
+Essas duas tabelas e as restrições adicionais foram aplicadas pelo responsável em 02/10/2026. O [detalhamento físico e as evidências do segundo incremento](../arquitetura/SCHEMA-APROVACAO-AUDITORIA.md) registram o alcance da verificação; os comandos descritos neste fluxo continuam pendentes. Não repetir os scripts de criação já aplicados.
 
 ## 7. Auditoria e autorização
 

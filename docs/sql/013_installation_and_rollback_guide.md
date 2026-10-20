@@ -2,7 +2,7 @@
 
 **Incremento:** 013 / 014 — Ciclo de Vida de Membros (Listagem Administrativa com Filtros, Restauração Elegível, Recibos Idempotentes e Trava Litúrgica P0021)
 **Documento Normativo:** `docs/sql/013_installation_and_rollback_guide.md`
-**Referência Metodológica:** `docs/sql/013_concurrency_rehearsal_guide.md` e `docs/CADASTRO-MEMBROS.md`
+**Referência Metodológica:** `docs/sql/013_concurrency_rehearsal_guide.md` e `docs/produto/CADASTRO-MEMBROS.md`
 
 ---
 

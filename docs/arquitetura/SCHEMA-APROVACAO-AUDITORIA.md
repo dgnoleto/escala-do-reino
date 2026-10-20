@@ -2,7 +2,7 @@
 
 Versão 3 · 3 de outubro de 2026
 
-**Situação:** segundo incremento aplicado pelo responsável no Supabase em 02/10/2026 (solicitação de nome e auditoria). Em etapa subsequente informada pelo responsável, o script `007_member_management.sql` adicionou `app_private.command_receipts` (totalizando sete tabelas internas em `app_private`) e as três RPCs de membros (totalizando quatro RPCs públicas em `public`). Complementa o [fluxo de acesso](ACESSO-E-AUDITORIA.md), o [schema inicial](SCHEMA-ACESSO.md), o [cadastro de membros](CADASTRO-MEMBROS.md) e as decisões de produto de 03/10/2026 (criação atômica de igreja, administração única por conta, continuidade do último admin, seleção de contexto e exclusão lógica recuperável). Não repetir os scripts de criação no projeto existente.
+**Situação:** segundo incremento aplicado pelo responsável no Supabase em 02/10/2026 (solicitação de nome e auditoria). Em etapa subsequente informada pelo responsável, o script `007_member_management.sql` adicionou `app_private.command_receipts` (totalizando sete tabelas internas em `app_private`) e as três RPCs de membros (totalizando quatro RPCs públicas em `public`). Complementa o [fluxo de acesso](../acesso/ACESSO-E-AUDITORIA.md), o [schema inicial](SCHEMA-ACESSO.md), o [cadastro de membros](../produto/CADASTRO-MEMBROS.md) e as decisões de produto de 03/10/2026 (criação atômica de igreja, administração única por conta, continuidade do último admin, seleção de contexto e exclusão lógica recuperável). Não repetir os scripts de criação no projeto existente.
 
 ## 1. Regras e limites
 
@@ -77,10 +77,10 @@ Não registrar senha, segredo, token completo ou link de recuperação. O limite
 
 ## 5. Arquivos e validação
 
-1. [Pré-verificação somente leitura](sql/003_preflight_access_requests.sql): todos os campos devem ser `true`.
-2. [Ensaio transacional](sql/003_validate_access_requests_and_audit.sql): executa a estrutura, verifica RLS/privilégios, auditoria com ator e formato válidos e rejeição de aprovação no vencimento/depois; termina em `ROLLBACK`.
-3. [Criação permanente](sql/003_access_requests_and_audit.sql): apenas após validar o ensaio, uma vez; termina em `COMMIT`.
-4. [Verificação posterior somente leitura](sql/004_verify_access_requests_and_audit.sql): seis tabelas, RLS habilitada, privilégios diretos bloqueados e índice/FK presentes.
+1. [Pré-verificação somente leitura](../sql/003_preflight_access_requests.sql): todos os campos devem ser `true`.
+2. [Ensaio transacional](../sql/003_validate_access_requests_and_audit.sql): executa a estrutura, verifica RLS/privilégios, auditoria com ator e formato válidos e rejeição de aprovação no vencimento/depois; termina em `ROLLBACK`.
+3. [Criação permanente](../sql/003_access_requests_and_audit.sql): apenas após validar o ensaio, uma vez; termina em `COMMIT`.
+4. [Verificação posterior somente leitura](../sql/004_verify_access_requests_and_audit.sql): seis tabelas, RLS habilitada, privilégios diretos bloqueados e índice/FK presentes.
 
 O ensaio usa apenas dados temporários da aplicação, sem inserir usuários no Auth. Os UUIDs fictícios aparecem em entradas que precisam falhar em CHECKs específicos, antes das FKs. Não testa uma aprovação válida com identidade real, autorização de admin, emissão/resgate concorrentes ou API.
 

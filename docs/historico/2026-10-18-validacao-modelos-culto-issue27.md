@@ -21,7 +21,7 @@
 ## 2. Modificações no Código de Produção
 
 1. **Documento Normativo:**
-   - [`docs/CADASTRO-MODELOS-CULTO.md`](../CADASTRO-MODELOS-CULTO.md): Contrato técnico de domínio definindo ciclo de vida, invariantes litúrgicas, regras de isolamento e critérios CA01–CA04.
+   - [`docs/produto/CADASTRO-MODELOS-CULTO.md`](../produto/CADASTRO-MODELOS-CULTO.md): Contrato técnico de domínio definindo ciclo de vida, invariantes litúrgicas, regras de isolamento e critérios CA01–CA04.
 
 2. **Migração SQL e Ensaio Transacional:**
    - [`docs/sql/022_service_templates.sql`](../sql/022_service_templates.sql):

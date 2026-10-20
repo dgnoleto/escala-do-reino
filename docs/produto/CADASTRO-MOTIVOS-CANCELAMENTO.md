@@ -1,7 +1,7 @@
 # Cadastro e Manutenção de Motivos de Cancelamento de Atividades
 
 Documento normativo e contratual da funcionalidade de motivos de cancelamento na web (Issue #26).
-Alinhado ao [PRD do Escala do Reino](PRD.md) (§4, §7.3; Cenários M11 e M12) e ao [Documento de Arquitetura do Banco](ARQUITETURA-BANCO.md) (§4.2).
+Alinhado ao [PRD do Escala do Reino](../PRD.md) (§4, §7.3; Cenários M11 e M12) e ao [Documento de Arquitetura do Banco](../arquitetura/ARQUITETURA-BANCO.md) (§4.2).
 
 ---
 
