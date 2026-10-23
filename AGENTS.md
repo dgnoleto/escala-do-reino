@@ -93,7 +93,19 @@ A revisão técnica independente pelo Codex não é obrigatória para todo e qua
 
 ---
 
-## 6. Referências Documentais do Projeto
+## 6. Rastreabilidade por Issue e Decomposição de Trabalho
+
+1. **Vínculo obrigatório:** antes de iniciar uma intervenção autorizada, identificar a issue ou subissue que representa o resultado. Na ausência de item adequado, pesquisar duplicatas e propor a criação ou divisão; não executar trabalho órfão de rastreabilidade. O vínculo não substitui a autorização para alterar código, arquivos, dados ou ambientes.
+2. **Registro por agente:** ao concluir cada entrega significativa, descoberta bloqueante, revisão independente ou mudança de estado, registrar na issue vinculada o papel e a identidade funcional do agente, por exemplo **Antigravity (implementação)**, **Codex (auditoria)** ou **ChatGPT (especificação/coordenação)**. Descrever o que foi realmente feito, arquivos afetados, resultados, evidências, limitações e próximo passo. Quem publica o comentário no GitHub continua identificado pela conta autora; o nome do agente no texto não deve simular identidade ou aprovação de outra pessoa.
+3. **Estado comprovável:** diferenciar proposta, implementação apenas local, revisão estática, teste executado, commit/PR publicado, homologação e aceite humano. Não declarar como publicado, testado ou aprovado algo que ainda não foi comprovado. Vincular commits, PRs, SHAs e documentos somente quando existirem; não expor segredos ou dados pessoais.
+4. **Sem acesso ao GitHub:** quando o agente não tiver permissão ou ferramenta para comentar, apresentar um comentário pronto para publicação e registrar a pendência no relatório ao responsável. Nunca afirmar que sincronizou issue, sprint, status ou subissue nativa sem verificar o resultado.
+5. **Subissues são permitidas e recomendadas:** decompor issues grandes quando houver entregas independentes, critérios distintos, dependências sequenciais, riscos significativos ou necessidade de revisão e aceite separados. Manter relação pai-filhas, critério de conclusão próprio e evitar duplicação. Não criar subissues apenas para fragmentar trabalho simples; propor a divisão e respeitar a decisão do responsável.
+6. **Trabalho em progresso controlado:** pertencer à mesma sprint não autoriza implementar várias issues complexas simultaneamente. Priorizar uma frente complexa de cada vez, salvo paralelismo justificado por independência, capacidade e decisão expressa do responsável. Registrar dependências e bloqueios no board; atualização do campo do Project é separada do texto da issue.
+7. **Encerramento com rastreabilidade:** nenhuma entrega é considerada documentalmente encerrada se a issue não refletir resultados, evidências, revisões exigidas, pendências e referências de publicação aplicáveis. A movimentação para Concluído ou fechamento continua sujeita aos critérios e ao aceite definidos pelo responsável.
+
+---
+
+## 7. Referências Documentais do Projeto
 
 - **Metodologia e Ciclo Operacional:** [`docs/operacao/FLUXO-MULTIAGENTE.md`](docs/operacao/FLUXO-MULTIAGENTE.md)
 - **Estado Atual e Checkpoints de Entrega:** [`docs/ESTADO-ATUAL.md`](docs/ESTADO-ATUAL.md)
