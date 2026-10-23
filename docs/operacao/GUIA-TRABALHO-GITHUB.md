@@ -55,6 +55,30 @@ Para defeitos, usar o [modelo de achado de QA](../qa/ROTEIRO-QA-E-REGISTRO.md), 
 
 Para dúvidas de produto, registrar a pergunta e as alternativas. Após decisão, registrar responsável, data e conclusão; atualizar os documentos normativos afetados dentro do incremento autorizado. A IA não escolhe uma regra nova para resolver uma divergência sozinha.
 
+### Subissues e limite de trabalho simultâneo
+
+**É permitido e recomendado criar subissues** quando a issue pai for grande demais para implementação, auditoria ou aceite seguros em uma única entrega, ou quando houver resultados independentes, critérios de aceite próprios, alto risco e dependências sequenciais. O agente deve examinar itens existentes, propor uma decomposição objetiva, relacionar pai/filhas e preservar os critérios de negócio da história pai. A criação e a alteração de sprint/status seguem as permissões e decisões do responsável; não presumir que o texto cria o vínculo nativo do GitHub.
+
+Uma sprint organiza prioridade, mas não exige executar todas as histórias ao mesmo tempo. Para frentes complexas, preferir **um trabalho principal em andamento por vez**, com paralelismo excepcional e justificado quando as entregas forem independentes, a capacidade permitir e o responsável aprovar. Usar bloqueios e dependências explícitos, em vez de deslocar várias issues pesadas automaticamente para Em andamento.
+
+### Registro mínimo de contribuição por agente
+
+Cada entrega significativa, correção de bloqueio, auditoria ou mudança de estado deve gerar registro na issue correspondente, feito por quem executou a etapa, quando houver acesso e autorização. Não é necessário comentar a cada linha, comando ou teste individual; consolidar o delta relevante por etapa.
+
+```text
+Agente/papel: Antigravity (implementação) | Codex (auditoria) | ChatGPT (especificação)
+Issue/subissue: #NN
+Etapa e situação: proposta | realizado localmente | em revisão | testado | publicado | bloqueado
+O que foi feito/analisado: ...
+Arquivos/contratos afetados: ...
+Evidências e testes: executados, não executados, resultado e ambiente/versão quando aplicável
+Commit/PR/SHA: links verificados quando existirem; caso contrário, informar "não publicado"
+Riscos, ressalvas e dependências: ...
+Próximo passo e decisão/autorização pendente: ...
+```
+
+O nome do agente no comentário informa o **papel técnico declarado**; a identidade real da publicação é a conta GitHub autora. Não publicar como se fosse comentário de outro agente nem usar o parecer de um agente como aprovação final do responsável. Se o agente não puder comentar diretamente, entregar o texto pronto e declarar que o Project/issue permanece sem atualização. Informações sensíveis nunca entram nos comentários.
+
 ## 4. Labels, prioridade e responsável
 
 Labels identificam dimensões diferentes; a etapa de execução fica no campo Status.
@@ -117,14 +141,14 @@ Um PR pode atender parte de uma issue. Nesse caso, registrar quais critérios fo
 
 ## 7. Rotina de uma entrega
 
-1. **Antes de executar:** ler estado atual, issue e documento de regra pertinente; identificar versão, ambiente/backend, escopo, evidência existente e autorização.
-2. **Durante o trabalho:** registrar decisões, achados e evidências úteis, sem repetir preparação ou testes amplos por conveniência.
+1. **Antes de executar:** ler estado atual, issue ou subissue e documento de regra pertinente; conferir status/sprint e dependências no Project, identificar versão, ambiente/backend, escopo, evidência existente e autorização; propor decomposição antes de executar issue complexa.
+2. **Durante o trabalho:** cada agente registra na issue, quando autorizado e com acesso, decisões, ajustes e achados relevantes sob seu papel próprio; distinguir trabalho local de publicação remota, sem repetir preparação ou testes amplos por conveniência.
 3. **Perto do PR:** levantar os documentos afetados e os relatórios úteis; apresentar a seleção ao PM.
 4. **Ao preparar o PR autorizado:** incluir as atualizações e os documentos selecionados, descrever problema, resultado, verificação e limites; referenciar a issue.
 5. **Na revisão:** conferir o head remoto, diff, regras e evidências; verificar que os documentos descrevem o que foi demonstrado.
 6. **Na QA, quando aplicável:** escolher os casos relevantes, registrar versão/ambiente e resultado por caso; um cenário não executado não equivale a aprovado.
 7. **Na integração autorizada:** conferir o merge e a versão resultante, sem tratar integração como deploy, migração ou validação geral do produto.
-8. **No encerramento:** conferir os critérios da issue, registrar resultado e limites, atualizar o estado do cartão e encerrar a issue conforme o escopo combinado.
+8. **No encerramento:** conferir os critérios da issue e das subissues, registrar contribuições individuais dos agentes, resultado e limites, referências verificáveis a commits/PRs e decisões pendentes; atualizar o estado do cartão e encerrar somente conforme o escopo combinado.
 
 A mesma pessoa pode acumular papéis; cada conclusão deve mostrar seu método. Antigravity relatar sucesso não substitui a revisão independente do conteúdo remoto publicado.
 
