@@ -29,6 +29,14 @@ O fluxo de trabalho do projeto segue um modelo baseado em gates de qualidade pro
 [7. Registro de Checkpoint]
 ```
 
+### Regra transversal: issue como trilha oficial
+
+- **Antes de começar:** ler a issue/subissue vinculada, seu status, sprint, dependências, escopo, critérios e decisões. Se uma tarefa grande puder ser entregue em partes verificáveis, propor subissues antes de programar. Ausência de issue adequada é pendência de planejamento, não autorização para abrir uma nova por conta própria ou executar trabalho não vinculado.
+- **Durante a execução:** Antigravity comenta na issue ao completar um incremento significativo ou encontrar bloqueio, informando código/artefato, testes efetivos, evidências e limites. Codex registra sua própria auditoria, achados, severidade, decisão e escopo examinado, sem atribuir aprovação a outro agente. ChatGPT registra especificações e decisões do responsável quando tiver acesso e autorização para atualizar a issue.
+- **Na passagem de etapa:** atualizar status e sprint do **Project** quando autorizado e disponível; texto na issue não substitui campos do board. Distinguir trabalho local de commit/PR remoto e nunca inventar sincronização, execução, aprovação ou conclusão.
+- **Ao concluir:** issue, comentários, referências de commits/PRs e documentos selecionados devem permitir que alguém retome o contexto sem consultar conversas com LLMs. Se faltar acesso ao GitHub, fornecer comentário pronto e informar a pendência.
+- **WIP complexo:** trabalhar preferencialmente em uma frente crítica de cada vez. Paralelismo exige dependências compatíveis, risco controlado e aprovação do responsável; estar na mesma sprint não obriga execução simultânea.
+
 ### Etapa 1: Definição Clara da Tarefa e Escopo
 - O responsável ou o ChatGPT define a meta pontual, os limites operacionais, arquivos autorizados e critérios de aceitação.
 - O escopo deve ser delimitado: tarefas focais produzem resultados mais rápidos, fáceis de auditar e livres de contaminação de contexto.
@@ -92,13 +100,15 @@ Passo 1: Ler AGENTS.md (Governança e limites)
    |
 Passo 2: Ler docs/operacao/FLUXO-MULTIAGENTE.md (Processo de trabalho)
    |
-Passo 3: Ler docs/ESTADO-ATUAL.md (Último checkpoint e pendências)
+Passo 3: Ler a issue/subissue ativa e as decisões, bloqueios, status e sprint no Project
    |
-Passo 4: Conferir ambiente real no Git (git status, branch, últimos commits)
+Passo 4: Ler docs/ESTADO-ATUAL.md (Último checkpoint e pendências)
    |
-Passo 5: Identificar o último gate aprovado e o próximo passo imediato
+Passo 5: Conferir ambiente real no Git (git status, branch, últimos commits)
    |
-Passo 6: Apresentar resumo objetivo ao responsável ANTES de propor execução
+Passo 6: Identificar o último gate aprovado e o próximo passo imediato
+   |
+Passo 7: Apresentar resumo objetivo ao responsável ANTES de propor execução
 ```
 
 ### Roteiro Prático de Inspeção Inicial:
