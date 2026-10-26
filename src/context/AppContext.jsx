@@ -1015,12 +1015,19 @@ export function AppProvider({
           if (!res.success) {
             return { success: false, error: res.error };
           }
+          const createdId = res.data?.id || res.reason?.id;
+          if (!createdId) {
+            return {
+              success: false,
+              error: "Criação não confirmada pelo servidor: identificador persistido ausente. Confira os dados antes de tentar novamente."
+            };
+          }
           const newReason = {
-            id: res.data?.id || `cr-${Date.now()}`,
+            id: createdId,
             name: validation.cleanName,
             active: true,
-            createdAt: res.data?.created_at || new Date().toISOString(),
-            updatedAt: res.data?.updated_at || new Date().toISOString()
+            createdAt: res.data?.createdAt || res.data?.created_at || new Date().toISOString(),
+            updatedAt: res.data?.updatedAt || res.data?.updated_at || new Date().toISOString()
           };
           setCancelReasons(prev => [...prev, newReason]);
           addAuditLog("Cadastro de Motivo", `Novo motivo de cancelamento cadastrado: "${validation.cleanName}".`);

@@ -279,13 +279,21 @@ export async function createCancellationReasonRemote(supabaseClient, churchIdOrO
       return { success: false, error: cancellationReasonErrorMessage(error), rawError: error };
     }
     const receipt = Array.isArray(data) ? data[0] : data;
-    const createdId = receipt?.id || receipt?.result_entity_id || receipt?.result_payload?.reason_id || `cr-${Date.now()}`;
+    const createdId = receipt?.id || receipt?.result_entity_id || receipt?.result_payload?.reason_id;
+    if (!createdId) {
+      return {
+        success: false,
+        error: 'Criação não confirmada pelo servidor: resposta remota não contém identificador persistido. Confira os dados antes de tentar novamente.',
+        rawError: data,
+        receipt,
+      };
+    }
     const reasonObj = {
       id: createdId,
       name: validation.cleanName,
-      active: true,
+      active: receipt?.active !== false,
       createdAt: receipt?.created_at || new Date().toISOString(),
-      updatedAt: receipt?.created_at || new Date().toISOString(),
+      updatedAt: receipt?.updated_at || receipt?.created_at || new Date().toISOString(),
     };
     return { success: true, reason: reasonObj, data: reasonObj, receipt, error: null };
   } catch (err) {

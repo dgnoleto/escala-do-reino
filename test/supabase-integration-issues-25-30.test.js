@@ -60,6 +60,7 @@ await build({
   stdin: {
     contents: `
       export { AppProvider, useApp } from './src/context/AppContext.jsx';
+      export { default as AdminView } from './src/components/AdminView.jsx';
     `,
     resolveDir: process.cwd(),
     loader: 'jsx',
@@ -71,7 +72,7 @@ await build({
   external: ['react', 'react-dom', 'lucide-react'],
 });
 
-const { AppProvider, useApp } = await import(
+const { AppProvider, useApp, AdminView } = await import(
   pathToFileURL(bundlePath).href
 );
 
@@ -603,6 +604,316 @@ describe('Integração Frontend-RPCs Supabase (Issues #25 a #30)', () => {
       assert.equal(appContext.cancelReasons.length, 1);
       assert.equal(appContext.cancelReasons[0].name, 'Motivo Igreja B');
       assert.equal(appContext.cancelReasons.some(r => r.name === 'Motivo Igreja A'), false);
+    });
+  });
+
+  describe('4. Regressão Issue #26: Tratamento de Resposta Remota e Identificador Persistido', () => {
+    test('4.1 Resposta válida conserva o UUID retornado (serviço e AppContext)', async () => {
+      const validUuid = 'c78b40bf-9844-4dd2-8b80-87779d71c4a0';
+      const validClient = {
+        rpc: async (fn, params) => {
+          if (fn === 'list_cancellation_reasons') {
+            return { data: [], error: null };
+          }
+          if (fn === 'create_cancellation_reason') {
+            return {
+              data: [{ id: validUuid, name: params.p_name, active: true, command_id: params.p_command_id }],
+              error: null
+            };
+          }
+          return { data: [], error: null };
+        }
+      };
+
+      // 1. Serviço unitário
+      const svcRes = await createCancellationReasonRemote(validClient, TEST_CHURCH_A, 'Manutenção Emergencial');
+      assert.equal(svcRes.success, true);
+      assert.equal(svcRes.reason.id, validUuid);
+      assert.equal(svcRes.data.id, validUuid);
+      assert.equal(svcRes.reason.id.startsWith('cr-'), false);
+
+      // 2. AppContext remoto
+      let appContext = null;
+      function TestConsumer() {
+        appContext = useApp();
+        return null;
+      }
+
+      await act(async () => {
+        TestRenderer.create(
+          React.createElement(
+            AppProvider,
+            {
+              initialUserId: 'marcos',
+              churchId: TEST_CHURCH_A,
+              supabaseClient: validClient
+            },
+            React.createElement(TestConsumer)
+          )
+        );
+      });
+
+      let ctxRes;
+      await act(async () => {
+        ctxRes = await appContext.addCancelReason('Manutenção Emergencial');
+      });
+
+      assert.equal(ctxRes.success, true);
+      assert.equal(ctxRes.remote, true);
+      assert.equal(ctxRes.reason.id, validUuid);
+      const inState = appContext.cancelReasons.find(r => r.name === 'Manutenção Emergencial');
+      assert.ok(inState);
+      assert.equal(inState.id, validUuid);
+    });
+
+    test('4.2 Resposta vazia não produz sucesso nem item local (serviço e AppContext)', async () => {
+      const emptyArrayClient = {
+        rpc: async (fn) => {
+          if (fn === 'list_cancellation_reasons') {
+            return { data: [{ id: 'cr-initial', name: 'Motivo Existente', active: true }], error: null };
+          }
+          if (fn === 'create_cancellation_reason') {
+            return { data: [], error: null };
+          }
+          return { data: [], error: null };
+        }
+      };
+
+      // 1. Serviço unitário com data: []
+      const svcRes = await createCancellationReasonRemote(emptyArrayClient, TEST_CHURCH_A, 'Queda de Energia');
+      assert.equal(svcRes.success, false);
+      assert.equal(svcRes.reason, undefined);
+      assert.match(svcRes.error, /identificador persistido/i);
+      assert.match(svcRes.error, /confira os dados/i);
+
+      // 2. Serviço unitário com data: null
+      const nullClient = {
+        rpc: async (fn) => {
+          if (fn === 'create_cancellation_reason') {
+            return { data: null, error: null };
+          }
+          return { data: [], error: null };
+        }
+      };
+      const svcResNull = await createCancellationReasonRemote(nullClient, TEST_CHURCH_A, 'Queda de Energia');
+      assert.equal(svcResNull.success, false);
+      assert.equal(svcResNull.reason, undefined);
+      assert.match(svcResNull.error, /identificador persistido/i);
+
+      // 3. AppContext remoto
+      let appContext = null;
+      function TestConsumer() {
+        appContext = useApp();
+        return null;
+      }
+
+      await act(async () => {
+        TestRenderer.create(
+          React.createElement(
+            AppProvider,
+            {
+              initialUserId: 'marcos',
+              churchId: TEST_CHURCH_A,
+              supabaseClient: emptyArrayClient
+            },
+            React.createElement(TestConsumer)
+          )
+        );
+      });
+
+      const initialCount = appContext.cancelReasons.length;
+      assert.equal(initialCount, 1);
+
+      let ctxRes;
+      await act(async () => {
+        ctxRes = await appContext.addCancelReason('Queda de Energia');
+      });
+
+      assert.equal(ctxRes.success, false);
+      assert.match(ctxRes.error, /identificador persistido/i);
+      assert.equal(appContext.cancelReasons.length, initialCount);
+      assert.equal(appContext.cancelReasons.some(r => r.name === 'Queda de Energia'), false);
+    });
+
+    test('4.3 Resposta sem identificador tem o mesmo tratamento (serviço e AppContext)', async () => {
+      const noIdClient = {
+        rpc: async (fn, params) => {
+          if (fn === 'list_cancellation_reasons') {
+            return { data: [{ id: 'cr-initial', name: 'Motivo Existente', active: true }], error: null };
+          }
+          if (fn === 'create_cancellation_reason') {
+            return {
+              data: [{ name: params.p_name, active: true, command_id: params.p_command_id }],
+              error: null
+            };
+          }
+          return { data: [], error: null };
+        }
+      };
+
+      // 1. Serviço unitário
+      const svcRes = await createCancellationReasonRemote(noIdClient, TEST_CHURCH_A, 'Microfone Danificado');
+      assert.equal(svcRes.success, false);
+      assert.equal(svcRes.reason, undefined);
+      assert.match(svcRes.error, /identificador persistido/i);
+
+      // 2. AppContext remoto
+      let appContext = null;
+      function TestConsumer() {
+        appContext = useApp();
+        return null;
+      }
+
+      await act(async () => {
+        TestRenderer.create(
+          React.createElement(
+            AppProvider,
+            {
+              initialUserId: 'marcos',
+              churchId: TEST_CHURCH_A,
+              supabaseClient: noIdClient
+            },
+            React.createElement(TestConsumer)
+          )
+        );
+      });
+
+      const initialCount = appContext.cancelReasons.length;
+      assert.equal(initialCount, 1);
+
+      let ctxRes;
+      await act(async () => {
+        ctxRes = await appContext.addCancelReason('Microfone Danificado');
+      });
+
+      assert.equal(ctxRes.success, false);
+      assert.match(ctxRes.error, /identificador persistido/i);
+      assert.equal(appContext.cancelReasons.length, initialCount);
+      assert.equal(appContext.cancelReasons.some(r => r.name === 'Microfone Danificado'), false);
+    });
+
+    test('4.4 Erro remoto preserva o estado anterior (serviço e AppContext)', async () => {
+      const errorClient = {
+        rpc: async (fn) => {
+          if (fn === 'list_cancellation_reasons') {
+            return { data: [{ id: 'cr-initial', name: 'Motivo Existente', active: true }], error: null };
+          }
+          if (fn === 'create_cancellation_reason') {
+            return {
+              data: null,
+              error: { code: '42501', message: 'Permissão insuficiente' }
+            };
+          }
+          return { data: [], error: null };
+        }
+      };
+
+      // 1. Serviço unitário
+      const svcRes = await createCancellationReasonRemote(errorClient, TEST_CHURCH_A, 'Falta de Água');
+      assert.equal(svcRes.success, false);
+      assert.match(svcRes.error, /Permissão insuficiente/i);
+
+      // 2. AppContext remoto
+      let appContext = null;
+      function TestConsumer() {
+        appContext = useApp();
+        return null;
+      }
+
+      await act(async () => {
+        TestRenderer.create(
+          React.createElement(
+            AppProvider,
+            {
+              initialUserId: 'marcos',
+              churchId: TEST_CHURCH_A,
+              supabaseClient: errorClient
+            },
+            React.createElement(TestConsumer)
+          )
+        );
+      });
+
+      const initialCount = appContext.cancelReasons.length;
+      assert.equal(initialCount, 1);
+
+      let ctxRes;
+      await act(async () => {
+        ctxRes = await appContext.addCancelReason('Falta de Água');
+      });
+
+      assert.equal(ctxRes.success, false);
+      assert.match(ctxRes.error, /Permissão insuficiente/i);
+      assert.equal(appContext.cancelReasons.length, initialCount);
+      assert.equal(appContext.cancelReasons.some(r => r.name === 'Falta de Água'), false);
+    });
+
+    test('4.5 Tratamento de falha no AdminView mantém o formulário preenchido sem exibir sucesso', async () => {
+      const failingEmptyClient = {
+        rpc: async (fn) => {
+          if (fn === 'list_cancellation_reasons') {
+            return { data: [{ id: 'cr-initial', name: 'Motivo Existente', active: true }], error: null };
+          }
+          if (fn === 'create_cancellation_reason') {
+            return { data: [], error: null };
+          }
+          return { data: [], error: null };
+        }
+      };
+
+      let renderer;
+      await act(async () => {
+        renderer = TestRenderer.create(
+          React.createElement(
+            AppProvider,
+            {
+              initialUserId: 'marcos',
+              churchId: TEST_CHURCH_A,
+              supabaseClient: failingEmptyClient
+            },
+            React.createElement(AdminView, { initialTab: 'reasons' })
+          )
+        );
+      });
+
+      const typedReason = 'Chuva torrencial e destelhamento do salão';
+
+      // Localiza input de novo motivo
+      const input = renderer.root.findByProps({ id: 'new-cancel-reason-input' });
+      assert.ok(input);
+
+      // Simula digitação no input
+      await act(async () => {
+        input.props.onChange({ target: { value: typedReason } });
+      });
+
+      // Localiza o formulário de cadastro
+      const form = renderer.root.findByType('form');
+      assert.ok(form);
+
+      // Submete o formulário com o mock retornando resposta vazia
+      await act(async () => {
+        await form.props.onSubmit({ preventDefault: () => {} });
+      });
+
+      // 1. Formulário permanece preenchido com o texto digitado
+      const inputAfter = renderer.root.findByProps({ id: 'new-cancel-reason-input' });
+      assert.equal(inputAfter.props.value, typedReason);
+
+      // 2. Mensagem de erro exibida orientando conferência
+      const errorAlerts = renderer.root.findAllByProps({ className: 'alert alert-danger' });
+      assert.ok(errorAlerts.length > 0);
+      const errorSpan = errorAlerts[0].findByType('span');
+      const errorText = errorSpan.children.join('');
+      assert.match(errorText, /identificador persistido/i);
+
+      // 3. Nenhuma mensagem de sucesso é exibida
+      const successAlerts = renderer.root.findAllByProps({ className: 'alert alert-success' });
+      assert.equal(successAlerts.length, 0);
+
+      // 4. Lista de motivos continua apenas com o motivo inicial, nenhum item espúrio incluído
+      const itemRows = renderer.root.findAllByProps({ className: 'reason-item-row' });
+      assert.equal(itemRows.length, 1);
     });
   });
 });
