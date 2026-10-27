@@ -27,7 +27,7 @@ const bundlePath = path.join(cacheDir, 'cancellation-reasons-components.bundle.m
 await build({
   stdin: {
     contents: `
-      export { AppProvider, useApp } from './src/context/AppContext.jsx';
+      export { AppProvider, useApp, AppContext } from './src/context/AppContext.jsx';
       export { default as AdminView } from './src/components/AdminView.jsx';
       export { default as LiveConsole } from './src/components/LiveConsole.jsx';
       export { default as ScheduleView } from './src/components/ScheduleView.jsx';
@@ -42,7 +42,7 @@ await build({
   external: ['react', 'react-dom', 'lucide-react'],
 });
 
-const { AppProvider, useApp, AdminView, LiveConsole, ScheduleView } = await import(
+const { AppProvider, useApp, AppContext, AdminView, LiveConsole, ScheduleView } = await import(
   pathToFileURL(bundlePath).href
 );
 
@@ -514,6 +514,290 @@ describe('Issue #26: Manter motivos de cancelamento de atividades', () => {
       assert.ok(editBtn);
       assert.ok(toggleBtn);
       assert.ok(deleteBtn);
+    });
+
+    function createAdminContextValue(overrides = {}) {
+      return {
+        church: { id: 'church-1', name: 'Igreja Teste' },
+        currentUser: { id: 'admin-1', name: 'Admin Fictício', role: 'admin' },
+        isAdmin: true,
+        cancelReasons: [],
+        standardActivities: [],
+        serviceTemplates: [],
+        eventTypes: [],
+        events: [],
+        event: null,
+        accessInvites: [],
+        auditLogs: [],
+        members: [],
+        teams: [],
+        isOnline: true,
+        isDataStale: false,
+        isTemplatesStale: false,
+        isEventTypesStale: false,
+        isActivitiesStale: false,
+        isReasonsStale: false,
+        remoteLoading: false,
+        remoteError: null,
+        addCancelReason: async () => ({ success: true }),
+        updateCancelReason: async () => ({ success: true }),
+        toggleCancelReasonStatus: async () => ({ success: true, active: true }),
+        deleteCancelReason: async () => ({ success: true }),
+        reloadRemoteData: async () => {},
+        ...overrides,
+      };
+    }
+
+    test('5.2 Lista preenchida com evento nulo renderiza sem erro e exibe motivos persistidos', () => {
+      const reasonItem = {
+        id: 'be3223b6-75c9-45dc-8b35-789082c5a8ba',
+        name: 'Homologação CA01 Codex 20261027-0638-e7c4',
+        active: true,
+      };
+      const mockCtx = createAdminContextValue({
+        event: null,
+        events: [],
+        cancelReasons: [reasonItem],
+      });
+
+      let renderer;
+      assert.doesNotThrow(() => {
+        act(() => {
+          renderer = TestRenderer.create(
+            React.createElement(
+              AppContext.Provider,
+              { value: mockCtx },
+              React.createElement(AdminView, { initialTab: 'reasons' })
+            )
+          );
+        });
+      }, 'Renderização com event nulo não pode lançar TypeError');
+
+      const row = renderer.root.findByProps({ id: 'reason-item-0' });
+      assert.ok(row, 'Linha do motivo deve ser renderizada');
+
+      const nameSpan = row.find(node => node.type === 'span' && node.children && node.children.includes(reasonItem.name));
+      assert.ok(nameSpan, 'Span com o nome do motivo deve existir');
+      assert.equal(nameSpan.children[0], reasonItem.name);
+
+      const badges = row.findAllByProps({ className: 'badge badge-primary' });
+      assert.ok(badges.length > 0, 'Deve exibir badge Ativo');
+
+      const historyBadges = row.findAllByProps({ className: 'badge badge-live' });
+      assert.equal(historyBadges.length, 0, 'Não deve exibir badge Em Histórico sem evidência');
+
+      act(() => renderer.unmount());
+    });
+
+    test('5.3 Renderização normal com evento identifica motivo utilizado em histórico e bloqueia no botão e no handler', async () => {
+      let deleteCalled = false;
+      const reasonItem = {
+        id: 'cr-used-1',
+        name: 'Falta de Energia Elétrica',
+        active: true,
+      };
+      const mockCtx = createAdminContextValue({
+        event: {
+          id: 'ev-1',
+          activities: [
+            {
+              id: 'act-1',
+              name: 'Abertura e Boas Vindas',
+              status: 'cancelada',
+              cancellationReasonId: 'cr-used-1',
+              cancellationReason: 'Falta de Energia Elétrica',
+            },
+          ],
+        },
+        events: [],
+        cancelReasons: [reasonItem],
+        deleteCancelReason: async () => {
+          deleteCalled = true;
+          return { success: true };
+        },
+      });
+
+      let renderer;
+      act(() => {
+        renderer = TestRenderer.create(
+          React.createElement(
+            AppContext.Provider,
+            { value: mockCtx },
+            React.createElement(AdminView, { initialTab: 'reasons' })
+          )
+        );
+      });
+
+      const row = renderer.root.findByProps({ id: 'reason-item-0' });
+      assert.ok(row);
+
+      const historyBadges = row.findAllByProps({ className: 'badge badge-live' });
+      assert.equal(historyBadges.length, 1, 'Deve exibir badge Em Histórico');
+      assert.equal(historyBadges[0].children[0], 'Em Histórico');
+
+      const deleteBtn = renderer.root.findByProps({ id: 'btn-delete-reason-0' });
+      assert.equal(deleteBtn.props.disabled, true);
+      assert.match(deleteBtn.props.title, /utilizado em histórico não pode ser excluído/i);
+
+      // Invocação direta do callback: deve impedir a solicitação e emitir alerta de histórico
+      await act(async () => {
+        await deleteBtn.props.onClick();
+      });
+
+      assert.equal(deleteCalled, false, 'deleteCancelReason não pode ser acionado quando motivo tem uso conhecido');
+
+      const alertError = renderer.root.findAllByProps({ className: 'alert alert-danger' });
+      assert.ok(alertError.length > 0, 'Deve exibir alerta indicando motivo já utilizado em histórico');
+      assert.match(alertError[0].findByType('span').children[0], /utilizado em cancelamentos históricos/i);
+
+      act(() => renderer.unmount());
+    });
+
+    test('5.4 Preservação da decisão de exclusão quando faltam informações de histórico', async () => {
+      let deleteCalled = false;
+      const reasonItem = {
+        id: 'cr-safe-1',
+        name: 'Motivo Sem Histórico Carregado',
+        active: true,
+      };
+      const mockCtx = createAdminContextValue({
+        event: null,
+        events: [],
+        cancelReasons: [reasonItem],
+        deleteCancelReason: async () => {
+          deleteCalled = true;
+          return { success: true };
+        },
+      });
+
+      let renderer;
+      act(() => {
+        renderer = TestRenderer.create(
+          React.createElement(
+            AppContext.Provider,
+            { value: mockCtx },
+            React.createElement(AdminView, { initialTab: 'reasons' })
+          )
+        );
+      });
+
+      const deleteBtn = renderer.root.findByProps({ id: 'btn-delete-reason-0' });
+
+      assert.notEqual(deleteBtn.props.title, 'Excluir motivo não utilizado');
+      assert.match(deleteBtn.props.title, /histórico de atividades indisponível/i);
+      assert.equal(deleteBtn.props.disabled, true, 'Botão de exclusão deve estar desabilitado');
+      assert.equal(deleteBtn.props.style.color, 'var(--text-muted)');
+      assert.equal(deleteBtn.props.style.opacity, 0.5);
+
+      await act(async () => {
+        await deleteBtn.props.onClick();
+      });
+
+      assert.equal(deleteCalled, false, 'deleteCancelReason não pode ser acionado quando histórico está ausente');
+
+      const alertError = renderer.root.findAllByProps({ className: 'alert alert-danger' });
+      assert.ok(alertError.length > 0, 'Deve exibir alerta de histórico indisponível');
+      assert.match(alertError[0].findByType('span').children[0], /histórico de atividades indisponível/i);
+
+      act(() => renderer.unmount());
+    });
+
+    test('5.5 Metadados sem atividades e página parcial de evento não comprovam desuso global e impedem exclusão', async () => {
+      let deleteCalledMeta = false;
+      let deleteCalledPartial = false;
+
+      // Subcenário A: Metadados paginados de eventos sem atividades (RPC retorna items ausente, activities: [])
+      const reasonMeta = {
+        id: 'cr-meta-1',
+        name: 'Motivo com Metadados de Eventos Sem Atividades',
+        active: true,
+      };
+      const mockCtxMeta = createAdminContextValue({
+        event: null,
+        events: [
+          { id: 'ev-meta-1', title: 'Culto de Domingo', activities: [] },
+          { id: 'ev-meta-2', title: 'Culto de Oração', activities: [] },
+        ],
+        cancelReasons: [reasonMeta],
+        deleteCancelReason: async () => {
+          deleteCalledMeta = true;
+          return { success: true };
+        },
+      });
+
+      let rendererMeta;
+      act(() => {
+        rendererMeta = TestRenderer.create(
+          React.createElement(
+            AppContext.Provider,
+            { value: mockCtxMeta },
+            React.createElement(AdminView, { initialTab: 'reasons' })
+          )
+        );
+      });
+
+      const deleteBtnMeta = rendererMeta.root.findByProps({ id: 'btn-delete-reason-0' });
+      assert.equal(deleteBtnMeta.props.disabled, true, 'Metadados sem atividades não autorizam exclusão');
+      assert.match(deleteBtnMeta.props.title, /histórico de atividades indisponível/i);
+
+      await act(async () => {
+        await deleteBtnMeta.props.onClick();
+      });
+      assert.equal(deleteCalledMeta, false, 'Handler deve bloquear exclusão com metadados sem atividades');
+      act(() => rendererMeta.unmount());
+
+      // Subcenário B: Página parcial com atividades de um evento não comprova desuso no histórico global da igreja
+      const reasonPartial = {
+        id: 'cr-partial-1',
+        name: 'Motivo Ausente Apenas no Evento Selecionado',
+        active: true,
+      };
+      const mockCtxPartial = createAdminContextValue({
+        event: {
+          id: 'ev-1',
+          activities: [
+            {
+              id: 'act-1',
+              name: 'Louvor',
+              status: 'concluida',
+            },
+          ],
+        },
+        events: [],
+        cancelReasons: [reasonPartial],
+        deleteCancelReason: async () => {
+          deleteCalledPartial = true;
+          return { success: true };
+        },
+      });
+
+      let rendererPartial;
+      act(() => {
+        rendererPartial = TestRenderer.create(
+          React.createElement(
+            AppContext.Provider,
+            { value: mockCtxPartial },
+            React.createElement(AdminView, { initialTab: 'reasons' })
+          )
+        );
+      });
+
+      const deleteBtnPartial = rendererPartial.root.findByProps({ id: 'btn-delete-reason-0' });
+      assert.equal(deleteBtnPartial.props.disabled, true, 'Atividades de um único evento não comprovam desuso global');
+      assert.match(deleteBtnPartial.props.title, /histórico de atividades indisponível/i);
+      assert.equal(deleteBtnPartial.props.style.color, 'var(--text-muted)');
+      assert.equal(deleteBtnPartial.props.style.opacity, 0.5);
+
+      await act(async () => {
+        await deleteBtnPartial.props.onClick();
+      });
+      assert.equal(deleteCalledPartial, false, 'Handler deve bloquear exclusão com cobertura parcial');
+
+      const alertErrorPartial = rendererPartial.root.findAllByProps({ className: 'alert alert-danger' });
+      assert.ok(alertErrorPartial.length > 0, 'Deve exibir alerta de histórico indisponível');
+      assert.match(alertErrorPartial[0].findByType('span').children[0], /histórico de atividades indisponível/i);
+
+      act(() => rendererPartial.unmount());
     });
   });
 
