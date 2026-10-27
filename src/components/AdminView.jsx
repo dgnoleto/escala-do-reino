@@ -213,6 +213,26 @@ export default function AdminView({ onBack, initialTab = 'event_types' } = {}) {
   const [liturgySuccess, setLiturgySuccess] = useState('');
   const [liturgyError, setLiturgyError] = useState('');
 
+  // Histórico de atividades conhecidas da igreja para integridade cadastral de motivos (Issue #26)
+  const knownActivities = React.useMemo(() => {
+    const list = [];
+    if (Array.isArray(events) && events.length > 0) {
+      for (const ev of events) {
+        if (Array.isArray(ev?.activities)) {
+          list.push(...ev.activities);
+        }
+      }
+    }
+    if (Array.isArray(event?.activities)) {
+      for (const act of event.activities) {
+        if (!list.includes(act)) {
+          list.push(act);
+        }
+      }
+    }
+    return list;
+  }, [events, event]);
+
   // Proteção de Acesso (PRD 3.2 & Cenário M40)
   if (!isAdmin) {
     return (
@@ -309,13 +329,18 @@ export default function AdminView({ onBack, initialTab = 'event_types' } = {}) {
   const handleDeleteReason = async (id) => {
     setReasonError('');
     setReasonSuccess('');
-    const res = await deleteCancelReason(id);
-    if (!res.success) {
-      setReasonError(res.error);
-    } else {
-      setReasonSuccess('Motivo excluído com sucesso.');
-      setTimeout(() => setReasonSuccess(''), 3000);
+
+    const targetReason = cancelReasons.find(r => r.id === id);
+    const isKnownUsed = isReasonUsedInActivities(targetReason || id, knownActivities);
+
+    if (isKnownUsed) {
+      setReasonError('Este motivo já foi utilizado em cancelamentos históricos e não pode ser excluído. Desative-o em vez de excluir.');
+      return;
     }
+
+    // A informação disponível no cliente (metadados paginados ou evento pontual) é insuficiente
+    // para comprovar desuso no histórico global da igreja. A exclusão física permanece contida.
+    setReasonError('Histórico de atividades indisponível para comprovar que o motivo não foi utilizado. Desative o motivo em vez de excluí-lo.');
   };
 
   // Handlers para Tipos de Evento (Issue #25)
@@ -1244,7 +1269,10 @@ export default function AdminView({ onBack, initialTab = 'event_types' } = {}) {
               <div className="reasons-list">
                 {cancelReasons.map((reason, idx) => {
                   const isEditing = editingReasonId === reason.id;
-                  const isUsed = isReasonUsedInActivities(reason, event.activities);
+                  const isUsed = isReasonUsedInActivities(reason, knownActivities);
+                  const deleteTitle = isUsed
+                    ? 'Motivo utilizado em histórico não pode ser excluído; desative-o em vez de excluir'
+                    : 'Histórico de atividades indisponível para verificar utilização; desative o motivo em vez de excluí-lo';
                   const isActive = reason.active !== false;
 
                   return (
@@ -1360,15 +1388,11 @@ export default function AdminView({ onBack, initialTab = 'event_types' } = {}) {
                               style={{
                                 padding: '4px 8px',
                                 fontSize: '11px',
-                                color: isUsed ? 'var(--text-muted)' : '#ef4444',
-                                opacity: isUsed ? 0.5 : 1
+                                color: 'var(--text-muted)',
+                                opacity: 0.5
                               }}
-                              title={
-                                isUsed
-                                  ? 'Motivo utilizado em histórico não pode ser excluído; desative-o em vez de excluir'
-                                  : 'Excluir motivo não utilizado'
-                              }
-                              disabled={isControlsDisabled}
+                              title={deleteTitle}
+                              disabled
                             >
                               <Trash2 size={12} />
                             </button>
