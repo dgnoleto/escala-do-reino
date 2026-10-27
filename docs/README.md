@@ -49,6 +49,8 @@ Este índice organiza regras, orientação operacional, arquitetura e histórico
 
 - [Fluxo Operacional Multiagente](operacao/FLUXO-MULTIAGENTE.md): ciclo em 7 etapas, critérios de revisão independente e protocolo de retomada.
 - [Guia de Trabalho no GitHub](operacao/GUIA-TRABALHO-GITHUB.md): fluxo de branches, issues, projetos Kanban e pull requests.
+- [Sprints e encerramentos](sprints/README.md): acompanhamento por período, alertas de planning e passagem de contexto.
+- [Modelos reutilizáveis](modelos/README.md): modelos de planning/encerramento e base de governança para outros repositórios.
 
 ---
 

@@ -2,6 +2,8 @@
 
 Preparado em 11/10/2026 para consolidar a organização do Project aprovada pelo responsável e a diretriz de seleção documental por PR. Este guia foi aprovado para publicação pelo responsável em 11/10/2026. Ele descreve o processo de trabalho; regras de produto continuam no PRD e nos contratos aprovados.
 
+Atualização documental autorizada em **25/10/2026**: controle de capacidade, sprints, planning, subissues, falhas de atualização do quadro e encerramento. Esta rodada altera arquivos locais; não implica publicação no GitHub nem mudança automática do Project.
+
 ## 1. Onde cada informação fica
 
 | Local | Uso |
@@ -194,6 +196,78 @@ Não publicar senhas, tokens, sessões, links reais de convite/recuperação, co
 
 Antes de teste, identificar a interface e seu backend. Localhost pode apontar para o piloto. Preservar contas, dados, prazos, serviços e evidências existentes; [consultar o mapa de ambientes](../ambientes/LABORATORIOS.md).
 
-Para continuar com uma IA, começar pelo [índice documental](../README.md), este guia, estado atual e issue selecionada. Consultar os demais detalhes somente quando necessários. Ao passar o trabalho, informar versão, resultado comprovado, limites, pendências e próximo passo exato.
+Antes de executar um prompt de continuidade, aplicar a [verificação de identidade do destinatário](../../AGENTS.md#11-verificação-obrigatória-da-identidade-do-agente-destinatário): agente ou LLM diferente do indicado bloqueia a tarefa sem execução; identidade exigida não confirmada requer esclarecimento.
+
+Para continuar com uma IA, começar pelo [índice documental](../README.md), este guia, estado atual e issue selecionada. Consultar os demais detalhes somente quando necessários. Ao passar o trabalho, informar versão, resultado comprovado, limites, pendências e próximo passo exato, usando o [bloco obrigatório de repasse](FLUXO-MULTIAGENTE.md#43-bloco-obrigatório-para-novos-prompts-operacionais).
+
+Aplicar a [Validação de Continuidade Contextual (VCC)](../../AGENTS.md#12-validação-de-continuidade-contextual-vcc-obrigatória) a cada retorno: não encaixar respostas vazias ou fora de contexto; explicitar a divergência e suspender o avanço dependente até esclarecimento. Mudanças materiais de escopo ficam barradas até decisão expressa do responsável, registrada com data e novos limites no documento ou item autorizado. Retorno de agente, status no Project ou silêncio não substituem autorização. Estas regras foram determinadas pelo responsável em 24/10/2026; sua documentação local não implica publicação ou atualização do Project.
 
 Fontes técnicas de referência: [Projects](https://docs.github.com/en/issues/planning-and-tracking-with-projects/learning-about-projects/about-projects) e [vínculos entre PR e issue](https://docs.github.com/en/issues/tracking-your-work-with-issues/using-issues/linking-a-pull-request-to-an-issue). As opções do GitHub podem mudar; reconferir a configuração antes de alterá-la.
+
+## 11. Cadência, capacidade e sprints
+
+Esta seção é a referência principal das decisões do PO/PM de **25/10/2026** para calendário, planning e encerramento. O PO/PM usa preferencialmente o Kanban geral. O campo **Sprint**, do tipo iteração, define períodos e associação dos itens; uma aba filtrada é somente uma visualização. Status e Sprint são campos independentes.
+
+### 11.1 Contexto temporal antes de assumir trabalho
+
+Ao iniciar ou retomar uma tarefa, e antes de propor ampliação de escopo, consultar no [Project Plataforma do Reino](https://github.com/users/dgnoleto/projects/2): sprint vigente, início, duração/término, objetivo registrado, item em execução, dependências e capacidade conhecida. As sprints normalmente têm duas semanas, mas usar as datas reais. Distinguir período da sprint de data/horário da reunião de planning; não inventar calendário, estimativa ou capacidade.
+
+Convenção aprovada para a rotina: dias corridos no fuso **America/Sao_Paulo**, incluindo a data final exibida. Na ausência de horário específico, tratar o encerramento como o fim dessa data. A janela de alerta compreende os dois últimos dias do período; a transição de conversa passa a ser recomendada no dia seguinte ao fim. Não confundir duração em dias com dias úteis disponíveis para trabalho.
+
+Se não houver acesso ao campo ou ao calendário, informar a limitação e pedir ao PO/PM somente as informações necessárias. Não preencher datas por inferência nem afirmar que existe uma sprint futura sem conferência. As referências em [docs/sprints/](../sprints/README.md) são snapshots datados, não substituem a consulta atual.
+
+### 11.2 Demanda nova, compromisso e Backlog
+
+Avaliar o tempo de implementação, testes, revisão, QA/aceite e dependências. Se não houver base para estimar, declarar a incerteza.
+
+| Demanda | Encaminhamento ao PO/PM |
+|---|---|
+| Necessária para critério já aprovado | Explicar dependência e impacto; propor ajuste do compromisso quando necessário. |
+| Bloqueio da entrega ou risco crítico de segurança/privacidade | Alertar e propor tratamento ou troca de escopo. Não adiar automaticamente porque o prazo está curto. |
+| Melhoria dispensável para os critérios atuais | Recomendar Backlog e avaliação na próxima planning, especialmente quando não houver capacidade. |
+| Ideia sem resultado definido | Manter em análise/evolução futura até existir trabalho acompanhável. |
+
+Criar uma issue registra uma necessidade, não concede autorização para executá-la. **Candidata à próxima sprint** não significa **comprometida**. Por decisão do PO/PM, uma demanda adiada pode permanecer aberta, em Backlog e sem associação à sprint atual. Não criar sprint futura ou atribuir datas automaticamente.
+
+O prazo pode motivar redução, divisão ou renegociação de escopo aprovada pelo PO/PM. Não autoriza enfraquecer qualidade, segurança, privacidade ou verificações obrigatórias, nem encerrar item com critérios pendentes. Prioridades e capacidade não substituem as autorizações de operação.
+
+### 11.3 Subissues, comentários e atualização verificável
+
+- Criar subissues somente quando existirem resultados verificáveis com escopo próprio, vínculo claro e divisão autorizada. Não criar subtarefa para cada ação trivial nem ocultar ampliação de escopo na decomposição.
+- Informar quais critérios ficam na principal e quais são atendidos pelas filhas. A principal não é concluída enquanto seus critérios obrigatórios continuarem pendentes. Mudança de critério exige decisão explícita do PO/PM.
+- Registrar comentários úteis sobre decisões, bloqueios, evidências, mudança de escopo e passagem de responsabilidade; não comentar cada comando ou repetir o mesmo relatório.
+- Criação, comentários, edição, associação e movimentação seguem a autorização concedida. Conhecer esta rotina não autoriza publicar mensagens em nome do responsável.
+- Depois de alteração autorizada, conferir o resultado. Estado aberto/fechado, labels, Status e Sprint são dimensões distintas. Não presumir que mudar uma atualizou as outras.
+- Se a ferramenta não permitir uma alteração, não adivinhar comandos nem ampliar acesso: comunicar ao PO/PM a pendência manual, preservando o estado conhecido.
+
+Formato da pendência manual: **issue/link; campo; valor atual se conferido; valor desejado; decisão que o autoriza; motivo da limitação; o que foi e não foi aplicado**. Oferecer orientação objetiva para o ajuste e confirmar depois quando houver acesso. Não declarar o trabalho de organização concluído enquanto a pendência persistir.
+
+### 11.4 Alerta de planning e registro de sua realização
+
+Nos dois últimos dias corridos da sprint, na primeira interação pertinente, o orquestrador verifica se existe planning da próxima sprint realizada ou agendada. Se não houver registro, inclui aviso breve no final da resposta, separado da execução da issue: nome da sprint, data final, necessidade da planning e recomendação de chat separado, preferencialmente Work. Não inventar horário nem afirmar que a reunião ocorreu só porque o chat foi aberto.
+
+O aviso não interrompe trabalho autorizado, não inicia a planning no chat de execução e não cria conversa, evento de calendário ou automação. Avisos fora de conversas ativas exigem mecanismo separado e autorizado.
+
+Registrar o alerta no acompanhamento da sprint quando houver autorização documental. Evitar repetição: um alerta inicial por sprint; renovar apenas com mudança relevante, vencimento sem planning registrada ou pedido do PO/PM. Em novas sessões, conferir o registro antes de avisar; se não puder fazê-lo, declarar a limitação em vez de afirmar que nunca houve aviso.
+
+Conduzir a planning em conversa própria, com o [modelo de planning](../modelos/sprints/PLANNING.md). Registrar objetivo, período, capacidade conhecida/hipóteses, itens selecionados, dependências, critérios e decisões do PO/PM. Registrar o destino dos itens não concluídos sem transferi-los automaticamente. Só alterar o Project conforme a decisão autorizada e conferir os campos depois.
+
+### 11.5 Encerramento e recomendação de nova conversa
+
+A partir do dia seguinte ao término, na primeira interação pertinente, conferir o registro de encerramento. Se faltar ou estiver incompleto, sinalizar e preparar a consolidação no escopo autorizado. O fim do período não muda sozinho o estado das issues nem comprova entrega.
+
+Usar o [modelo de encerramento](../modelos/sprints/ENCERRAMENTO.md) para registrar objetivo/período, entregas comprovadas, pendências e motivos, verificações e limites, decisões, versões/ambientes relevantes e próximo passo. Referenciar evidências em vez de copiar todos os logs, comentários e commits. Identificar rascunho, revisão e aceite; não inventar resultados ou aprovações. Correções posteriores ficam datadas sem apagar o retrato original.
+
+Depois de disponibilizar o registro e um resumo confiável, recomendar uma nova conversa de orquestração para o próximo ciclo, preferencialmente Work. O PO/PM decide criar, arquivar ou encerrar chats. Preservar tarefas técnicas em andamento até um ponto seguro; a conversa de execução é delimitada por issue/resultado e pode atravessar o calendário.
+
+Na retomada, ler AGENTS.md e aplicar identidade/VCC, estado atual, passagem de contexto e issue pertinente; consultar outros contratos/arquivos somente conforme a necessidade. Não reler todo o repositório por rotina nem economizar tokens omitindo verificações essenciais. Novo chat e resumo não transferem autorizações nem comprovam que o estado histórico continua atual.
+
+### 11.6 Organização e fonte de referência
+
+- [docs/sprints/](../sprints/README.md): acompanhamentos e fechamentos por período.
+- [docs/modelos/sprints/](../modelos/README.md): modelos vazios de planning e encerramento.
+- [Modelo reutilizável de governança](../modelos/governanca/MODELO-GOVERNANCA-IA-REPOSITORIOS.md): base para outros repositórios, sujeita a adaptação/aprovação local; não altera as regras deste projeto automaticamente.
+- [AGENTS.md](../../AGENTS.md): autoridade, papéis, princípios e limites.
+- [Fluxo multiagente](FLUXO-MULTIAGENTE.md): procedimento de decisão, diagnóstico, contraponto, risco e evidências.
+
+O README do Project deve apontar para estas referências quando sua atualização estiver autorizada. Se não for possível editá-lo, registrar a pendência para o PO/PM; não duplicar a política integral em cada issue, sprint ou quadro.
