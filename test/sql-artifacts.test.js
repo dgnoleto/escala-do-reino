@@ -1082,5 +1082,221 @@ describe('Validação Estática e Proteção contra Recorrência (Incremento 011
     );
   });
 
+  test('35. Regressão Issue #25 (CA03): Contenção explícita de exclusão no servidor para tipos e atividades', () => {
+    const sql021 = fs.readFileSync(path.join(rootDir, 'docs', 'sql', '021_event_types_and_activities.sql'), 'utf8');
+
+    // 1. Helpers: busca de uso demonstrado por UUID em modelos e nomes históricos em auditoria
+    assert.ok(
+      sql021.includes('create or replace function app_private.is_event_type_used'),
+      '021 deve definir app_private.is_event_type_used'
+    );
+    assert.ok(
+      sql021.includes('app_private.service_templates') && sql021.includes('st.event_type_id'),
+      'is_event_type_used deve verificar referência direta por UUID em service_templates'
+    );
+    assert.ok(
+      sql021.includes("a.action in ('create_event_type', 'update_event_type', 'deactivate_event_type', 'activate_event_type')") &&
+      sql021.includes("a.details->>'previous_name'") && sql021.includes("a.details->>'new_name'"),
+      'is_event_type_used deve buscar nomes históricos em audit_entries para cruzar com eventos'
+    );
+
+    assert.ok(
+      sql021.includes('create or replace function app_private.is_standard_activity_used'),
+      '021 deve definir app_private.is_standard_activity_used'
+    );
+    assert.ok(
+      sql021.includes('app_private.service_template_activities') && sql021.includes('sta.standard_activity_id'),
+      'is_standard_activity_used deve verificar referência direta por UUID em service_template_activities'
+    );
+    assert.ok(
+      sql021.includes("a.action in ('create_standard_activity', 'update_standard_activity', 'deactivate_standard_activity', 'activate_standard_activity')") &&
+      sql021.includes("a.details->>'previous_name'") && sql021.includes("a.details->>'new_name'"),
+      'is_standard_activity_used deve buscar nomes históricos em audit_entries para cruzar com itens'
+    );
+
+    // 2. Ausência de heurísticas temporais ou tentativas de completude rejeitadas no código executável
+    assert.equal(
+      sql021.includes('v_updated_at > v_created_at'),
+      false,
+      '021 não deve conter heurística temporal v_updated_at > v_created_at no código executável'
+    );
+    assert.equal(
+      sql021.includes('v_has_create_audit'),
+      false,
+      '021 não deve conter flags especulativas de completude de auditoria'
+    );
+
+    // 3. Exame separado dos corpos das duas RPCs de exclusão (sem parser genérico)
+    function extractRpcBody(sqlText, rpcName) {
+      const startMarker = `create or replace function public.${rpcName}`;
+      const startIdx = sqlText.indexOf(startMarker);
+      if (startIdx === -1) throw new Error(`Início de public.${rpcName} não encontrado`);
+
+      const asIdx = sqlText.indexOf('as $function$', startIdx);
+      if (asIdx === -1) throw new Error(`'as $function$' não encontrado para public.${rpcName}`);
+
+      const bodyStart = asIdx + 'as $function$'.length;
+      const endMarker = '$function$;';
+      const endIdx = sqlText.indexOf(endMarker, bodyStart);
+      if (endIdx === -1) throw new Error(`'$function$;' não encontrado para public.${rpcName}`);
+
+      return sqlText.slice(bodyStart, endIdx);
+    }
+
+    function validateDeleteRpcIntegrity(body, rpcName, targetTable, targetParam) {
+      const errors = [];
+
+      const beginIdx = body.indexOf('begin');
+      const endIdx = body.lastIndexOf('end;');
+      if (beginIdx === -1 || endIdx === -1 || beginIdx >= endIdx) {
+        return { valid: false, errors: [`${rpcName}: Bloco begin...end; não identificado no corpo da função`] };
+      }
+      const execBlock = body.slice(beginIdx + 5, endIdx).trim();
+
+      const authIdx = execBlock.indexOf('app_private.has_church_settings_access(p_church_id, true)');
+      const receiptQueryIdx = execBlock.indexOf('from app_private.event_type_activity_receipts');
+      const targetQueryIdx = execBlock.indexOf(`from app_private.${targetTable}`);
+      const helperName = targetParam === 'type_id' ? 'is_event_type_used' : 'is_standard_activity_used';
+      const helperCallIdx = execBlock.indexOf(`app_private.${helperName}`);
+      const containmentIdx = execBlock.indexOf('Não é possível comprovar ausência de uso histórico');
+
+      // Autorização administrativa obrigatória e deve preceder consulta e retorno de recibos
+      if (authIdx === -1) {
+        errors.push(`${rpcName}: Guarda de autorização has_church_settings_access ausente.`);
+      }
+      if (receiptQueryIdx === -1) {
+        errors.push(`${rpcName}: Consulta de recibos ausente.`);
+      }
+      if (authIdx !== -1 && receiptQueryIdx !== -1 && authIdx > receiptQueryIdx) {
+        errors.push(`${rpcName}: Autorização administrativa deve preceder a consulta e retorno de recibos.`);
+      }
+
+      // Retorno antecipado antes da autorização é proibido
+      const firstReturnIdx = execBlock.indexOf('return ');
+      if (firstReturnIdx !== -1 && (authIdx === -1 || firstReturnIdx < authIdx)) {
+        errors.push(`${rpcName}: Retorno antecipado detectado antes da verificação de autorização administrativa.`);
+      }
+
+      // Validação estrita de replay do recibo
+      if (!execBlock.includes('v_receipt.church_id = p_church_id')) {
+        errors.push(`${rpcName}: Replay deve validar matching de church_id.`);
+      }
+      if (!execBlock.includes(`v_receipt.action = '${rpcName}'`)) {
+        errors.push(`${rpcName}: Replay deve validar action = '${rpcName}'.`);
+      }
+      if (!execBlock.includes(`v_receipt.params->>'${targetParam}'`)) {
+        errors.push(`${rpcName}: Replay deve validar parâmetro do alvo '${targetParam}'.`);
+      }
+      if (!execBlock.includes("v_receipt.result->>'status' = 'ok'") || !execBlock.includes("'deleted'")) {
+        errors.push(`${rpcName}: Replay deve validar resultado de exclusão concluída (status ok e deleted true).`);
+      }
+      if (!execBlock.includes("errcode = '23505'")) {
+        errors.push(`${rpcName}: Conflito de command_id incompatível deve lançar 23505.`);
+      }
+
+      // Busca de existência do alvo ocorre após o tratamento de replay e antes do helper
+      if (targetQueryIdx === -1 || (receiptQueryIdx !== -1 && targetQueryIdx < receiptQueryIdx)) {
+        errors.push(`${rpcName}: Busca de existência do alvo na tabela ${targetTable} deve ocorrer após tratamento de replay.`);
+      }
+      if (!execBlock.includes("errcode = 'P0002'")) {
+        errors.push(`${rpcName}: Registro não encontrado deve lançar P0002.`);
+      }
+
+      // Verificação de histórico via helper específico
+      if (helperCallIdx === -1 || (targetQueryIdx !== -1 && helperCallIdx < targetQueryIdx)) {
+        errors.push(`${rpcName}: Helper de histórico ${helperName} deve ser verificado após confirmação de existência do alvo.`);
+      }
+      if (!execBlock.includes('já foi utilizad') || !execBlock.includes("errcode = '23503'")) {
+        errors.push(`${rpcName}: Recusa de registro em uso histórico com 23503 ausente.`);
+      }
+
+      // Contenção explícita no servidor com mensagem instrutiva ao final do fluxo
+      if (containmentIdx === -1 || (helperCallIdx !== -1 && containmentIdx < helperCallIdx)) {
+        errors.push(`${rpcName}: Contenção explícita no servidor deve estar presente no término do fluxo.`);
+      }
+
+      // Proibição de exclusão física em comandos novos
+      if (execBlock.toLowerCase().includes(`delete from app_private.${targetTable}`)) {
+        errors.push(`${rpcName}: Exclusão física (DELETE FROM ${targetTable}) proibida sob contenção.`);
+      }
+
+      // Proibição de retornos não autorizados no fluxo (apenas return v_receipt.result sob replay estrito é permitido)
+      const allReturns = [...execBlock.matchAll(/return\s+([^;]+);/g)];
+      for (const ret of allReturns) {
+        const retStmt = ret[0].trim();
+        if (retStmt !== 'return v_receipt.result;') {
+          errors.push(`${rpcName}: Retorno não autorizado detectado no fluxo: '${retStmt}'. Exclusão nova não pode retornar sucesso.`);
+        }
+      }
+
+      return { valid: errors.length === 0, errors };
+    }
+
+    // 4. Verificação canônica dos corpos extraídos
+    const bodyEventType = extractRpcBody(sql021, 'delete_event_type');
+    const resCanonEventType = validateDeleteRpcIntegrity(bodyEventType, 'delete_event_type', 'event_types', 'type_id');
+    assert.equal(resCanonEventType.valid, true, `delete_event_type canônico deve ser válido: ${resCanonEventType.errors.join('; ')}`);
+
+    const bodyStandardAct = extractRpcBody(sql021, 'delete_standard_activity');
+    const resCanonStandardAct = validateDeleteRpcIntegrity(bodyStandardAct, 'delete_standard_activity', 'standard_activities', 'activity_id');
+    assert.equal(resCanonStandardAct.valid, true, `delete_standard_activity canônico deve ser válido: ${resCanonStandardAct.errors.join('; ')}`);
+
+    // 5. Contraprovas em memória (reprodução estrita do parecer Codex sem tocar arquivos em disco nem executar PostgreSQL)
+    // Contraprova 5.1: Injeção de retorno incondicional de sucesso no início de delete_event_type
+    const mutBypassEventType = bodyEventType.replace('begin', "begin\n  return jsonb_build_object('status','ok','deleted',true);");
+    const resMutBypassEvent = validateDeleteRpcIntegrity(mutBypassEventType, 'delete_event_type', 'event_types', 'type_id');
+    assert.equal(resMutBypassEvent.valid, false, 'Contraprova: retorno antecipado em delete_event_type DEVE falhar a validação');
+    assert.ok(resMutBypassEvent.errors.some(e => e.includes('Retorno antecipado') || e.includes('Retorno não autorizado')), 'Deve diagnosticar retorno indevido');
+
+    // Contraprova 5.2: Injeção de retorno incondicional de sucesso no início de delete_standard_activity
+    const mutBypassStandardAct = bodyStandardAct.replace('begin', "begin\n  return jsonb_build_object('status','ok','deleted',true);");
+    const resMutBypassAct = validateDeleteRpcIntegrity(mutBypassStandardAct, 'delete_standard_activity', 'standard_activities', 'activity_id');
+    assert.equal(resMutBypassAct.valid, false, 'Contraprova: retorno antecipado em delete_standard_activity DEVE falhar a validação');
+    assert.ok(resMutBypassAct.errors.some(e => e.includes('Retorno antecipado') || e.includes('Retorno não autorizado')), 'Deve diagnosticar retorno indevido');
+
+    // Contraprova 5.3: Autorização administrativa posicionada após consulta de recibo em delete_event_type
+    const authSnippetEvent = `if not app_private.has_church_settings_access(p_church_id, true) then
+    raise exception 'Permissão insuficiente. Apenas administradores podem excluir tipos de evento.' using errcode = '42501';
+  end if;`;
+    const mutAuthOrderEvent = bodyEventType.replace(authSnippetEvent, '').replace('end;', `${authSnippetEvent}\nend;`);
+    const resMutAuthOrder = validateDeleteRpcIntegrity(mutAuthOrderEvent, 'delete_event_type', 'event_types', 'type_id');
+    assert.equal(resMutAuthOrder.valid, false, 'Contraprova: autorização após recibos DEVE falhar a validação');
+    assert.ok(resMutAuthOrder.errors.some(e => e.includes('Autorização administrativa deve preceder')), 'Deve diagnosticar inversão de autorização');
+
+    // Contraprova 5.4: Replay sem conferência de action em delete_standard_activity
+    const mutReplayAction = bodyStandardAct.replace("and v_receipt.action = 'delete_standard_activity'", '');
+    const resMutReplayAction = validateDeleteRpcIntegrity(mutReplayAction, 'delete_standard_activity', 'standard_activities', 'activity_id');
+    assert.equal(resMutReplayAction.valid, false, 'Contraprova: replay sem validação de action DEVE falhar a validação');
+    assert.ok(resMutReplayAction.errors.some(e => e.includes('action')), 'Deve diagnosticar omissão de matching de action');
+
+    // 6. Casos de ensaio transacional em 021_rehearsal_cases.sql com identidade exata de fixtures
+    const rehearsal021 = fs.readFileSync(path.join(rootDir, 'docs', 'sql', '021_rehearsal_cases.sql'), 'utf8');
+    assert.ok(!rehearsal021.includes('limit 1'), '021_rehearsal_cases.sql não deve conter seleções arbitrárias por limit 1');
+    assert.ok(rehearsal021.includes('expected_msg text default null'), 'eta_as deve suportar validação explícita de mensagem esperada');
+    assert.ok(
+      rehearsal021.includes('in_use_event_id') && rehearsal021.includes('in_use_item_id'),
+      'Fixtures de ensaio devem capturar e auditar os UUIDs exatos do evento e item criados'
+    );
+    assert.ok(rehearsal021.includes('T09') && rehearsal021.includes('T18'), '021_rehearsal_cases.sql deve cobrir T09 e T18 sob contenção');
+    assert.ok(rehearsal021.includes('T10b'), '021_rehearsal_cases.sql deve conter caso T10b (usar -> renomear -> tentar excluir tipo)');
+    assert.ok(rehearsal021.includes('T10c'), '021_rehearsal_cases.sql deve conter caso T10c (informação insuficiente de tipo sob contenção)');
+    assert.ok(rehearsal021.includes('T10d'), '021_rehearsal_cases.sql deve conter caso T10d (referência estável em service_templates)');
+    assert.ok(rehearsal021.includes('T10e'), '021_rehearsal_cases.sql deve conter caso T10e (isolamento por igreja e autorização)');
+    assert.ok(rehearsal021.includes('T10f'), '021_rehearsal_cases.sql deve conter caso T10f (recibo compatível/incompatível e autorização de replay para tipo)');
+    assert.ok(rehearsal021.includes('T19b'), '021_rehearsal_cases.sql deve conter caso T19b (usar -> renomear -> tentar excluir atividade)');
+    assert.ok(rehearsal021.includes('T19c'), '021_rehearsal_cases.sql deve conter caso T19c (informação insuficiente de atividade sob contenção)');
+    assert.ok(rehearsal021.includes('T19d'), '021_rehearsal_cases.sql deve conter caso T19d (referência estável em service_template_activities)');
+    assert.ok(rehearsal021.includes('T19e'), '021_rehearsal_cases.sql deve conter caso T19e (isolamento por igreja e autorização)');
+    assert.ok(rehearsal021.includes('T19f'), '021_rehearsal_cases.sql deve conter caso T19f (recibo compatível/incompatível e autorização de replay para atividade)');
+    assert.ok(
+      rehearsal021.includes('T10d: Cenário condicional de modelos 022 NÃO EXECUTADO'),
+      '021_rehearsal_cases.sql deve sinalizar explicitamente como não executado quando faltar 022 em T10d'
+    );
+    assert.ok(
+      rehearsal021.includes('T19d: Cenário condicional de modelos 022 NÃO EXECUTADO'),
+      '021_rehearsal_cases.sql deve sinalizar explicitamente como não executado quando faltar 022 em T19d'
+    );
+  });
+
 });
 
