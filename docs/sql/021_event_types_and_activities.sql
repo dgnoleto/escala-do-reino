@@ -99,22 +99,87 @@ create table app_private.event_type_activity_receipts (
 alter table app_private.event_type_activity_receipts enable row level security;
 revoke all on app_private.event_type_activity_receipts from public, anon, authenticated, service_role;
 
--- 4. Funções auxiliares para verificar referências históricas antes de exclusão física
+-- 4. Funções auxiliares para verificar referências históricas demonstradas (CA03)
 create or replace function app_private.is_event_type_used(p_church_id uuid, p_type_id uuid, p_type_name text)
 returns boolean
 language plpgsql stable security definer set search_path = '' set statement_timeout = '5s'
 as $function$
 declare
   v_used boolean := false;
+  v_current_name text;
 begin
-  if to_regclass('app_private.events') is not null then
-    select exists (
-      select 1 from app_private.events e
-      where e.church_id = p_church_id
-        and (lower(btrim(e.event_type)) = lower(btrim(p_type_name))
-             or lower(btrim(e.title)) = lower(btrim(p_type_name)))
-    ) into v_used;
+  -- 1. Referência estável direta por UUID (ex.: modelos de culto de 022, se instalados)
+  if to_regclass('app_private.service_templates') is not null then
+    execute 'select exists (
+      select 1 from app_private.service_templates st
+      where st.church_id = $1 and st.event_type_id = $2
+    )' into v_used using p_church_id, p_type_id;
     if v_used then return true; end if;
+  end if;
+
+  -- 2. Obter nome atual do cadastro
+  select et.name
+  into v_current_name
+  from app_private.event_types et
+  where et.id = p_type_id and et.church_id = p_church_id;
+
+  if v_current_name is null then
+    v_current_name := p_type_name;
+  end if;
+
+  -- 3. Verificação de eventos históricos (cobre nome atual e nomes anteriores demonstrados em auditoria)
+  if to_regclass('app_private.events') is not null then
+    if to_regclass('app_private.audit_entries') is not null then
+      select exists (
+        select 1
+        from app_private.events e
+        join (
+          select lower(btrim(coalesce(v_current_name, p_type_name))) as name_clean
+          union
+          select lower(btrim(a.details->>'name'))
+          from app_private.audit_entries a
+          where a.church_id = p_church_id
+            and a.target_type = 'event_type'
+            and a.target_id = p_type_id
+            and a.action in ('create_event_type', 'update_event_type', 'deactivate_event_type', 'activate_event_type')
+            and a.details->>'name' is not null
+            and btrim(a.details->>'name') <> ''
+          union
+          select lower(btrim(a.details->>'previous_name'))
+          from app_private.audit_entries a
+          where a.church_id = p_church_id
+            and a.target_type = 'event_type'
+            and a.target_id = p_type_id
+            and a.action = 'update_event_type'
+            and a.details->>'previous_name' is not null
+            and btrim(a.details->>'previous_name') <> ''
+          union
+          select lower(btrim(a.details->>'new_name'))
+          from app_private.audit_entries a
+          where a.church_id = p_church_id
+            and a.target_type = 'event_type'
+            and a.target_id = p_type_id
+            and a.action = 'update_event_type'
+            and a.details->>'new_name' is not null
+            and btrim(a.details->>'new_name') <> ''
+        ) n on (
+          lower(btrim(e.event_type)) = n.name_clean
+          or lower(btrim(e.title)) = n.name_clean
+        )
+        where e.church_id = p_church_id
+      ) into v_used;
+      if v_used then return true; end if;
+    else
+      select exists (
+        select 1 from app_private.events e
+        where e.church_id = p_church_id
+          and (
+            lower(btrim(e.event_type)) = lower(btrim(coalesce(v_current_name, p_type_name)))
+            or lower(btrim(e.title)) = lower(btrim(coalesce(v_current_name, p_type_name)))
+          )
+      ) into v_used;
+      if v_used then return true; end if;
+    end if;
   end if;
 
   return false;
@@ -128,14 +193,74 @@ language plpgsql stable security definer set search_path = '' set statement_time
 as $function$
 declare
   v_used boolean := false;
+  v_current_name text;
 begin
-  if to_regclass('app_private.event_items') is not null then
-    select exists (
-      select 1 from app_private.event_items ei
-      where ei.church_id = p_church_id
-        and lower(btrim(ei.title)) = lower(btrim(p_activity_name))
-    ) into v_used;
+  -- 1. Referência estável direta por UUID (ex.: atividades de modelos de culto de 022, se instaladas)
+  if to_regclass('app_private.service_template_activities') is not null then
+    execute 'select exists (
+      select 1 from app_private.service_template_activities sta
+      where sta.church_id = $1 and sta.standard_activity_id = $2
+    )' into v_used using p_church_id, p_activity_id;
     if v_used then return true; end if;
+  end if;
+
+  -- 2. Obter nome atual do cadastro
+  select sa.name
+  into v_current_name
+  from app_private.standard_activities sa
+  where sa.id = p_activity_id and sa.church_id = p_church_id;
+
+  if v_current_name is null then
+    v_current_name := p_activity_name;
+  end if;
+
+  -- 3. Verificação de itens de cronograma históricos (cobre nome atual e nomes anteriores demonstrados em auditoria)
+  if to_regclass('app_private.event_items') is not null then
+    if to_regclass('app_private.audit_entries') is not null then
+      select exists (
+        select 1
+        from app_private.event_items ei
+        join (
+          select lower(btrim(coalesce(v_current_name, p_activity_name))) as name_clean
+          union
+          select lower(btrim(a.details->>'name'))
+          from app_private.audit_entries a
+          where a.church_id = p_church_id
+            and a.target_type = 'standard_activity'
+            and a.target_id = p_activity_id
+            and a.action in ('create_standard_activity', 'update_standard_activity', 'deactivate_standard_activity', 'activate_standard_activity')
+            and a.details->>'name' is not null
+            and btrim(a.details->>'name') <> ''
+          union
+          select lower(btrim(a.details->>'previous_name'))
+          from app_private.audit_entries a
+          where a.church_id = p_church_id
+            and a.target_type = 'standard_activity'
+            and a.target_id = p_activity_id
+            and a.action = 'update_standard_activity'
+            and a.details->>'previous_name' is not null
+            and btrim(a.details->>'previous_name') <> ''
+          union
+          select lower(btrim(a.details->>'new_name'))
+          from app_private.audit_entries a
+          where a.church_id = p_church_id
+            and a.target_type = 'standard_activity'
+            and a.target_id = p_activity_id
+            and a.action = 'update_standard_activity'
+            and a.details->>'new_name' is not null
+            and btrim(a.details->>'new_name') <> ''
+        ) n on lower(btrim(ei.title)) = n.name_clean
+        where ei.church_id = p_church_id
+      ) into v_used;
+      if v_used then return true; end if;
+    else
+      select exists (
+        select 1 from app_private.event_items ei
+        where ei.church_id = p_church_id
+          and lower(btrim(ei.title)) = lower(btrim(coalesce(v_current_name, p_activity_name)))
+      ) into v_used;
+      if v_used then return true; end if;
+    end if;
   end if;
 
   return false;
@@ -477,14 +602,26 @@ begin
     raise exception 'command_id e type_id obrigatórios.' using errcode = '22023';
   end if;
 
+  if not app_private.has_church_settings_access(p_church_id, true) then
+    raise exception 'Permissão insuficiente. Apenas administradores podem excluir tipos de evento.' using errcode = '42501';
+  end if;
+
   select * into v_receipt from app_private.event_type_activity_receipts
   where user_id = v_uid and command_id = p_command_id;
   if found then
-    return v_receipt.result;
-  end if;
+    -- Aceita replay somente se corresponder à mesma igreja, ação e alvo, com parâmetros compatíveis
+    -- e resultado coerente de exclusão concluída. Recibos de criação, edição, outra igreja ou outro
+    -- alvo não podem produzir sucesso de exclusão.
+    if v_receipt.church_id = p_church_id
+       and v_receipt.action = 'delete_event_type'
+       and (v_receipt.params->>'type_id')::uuid = p_type_id
+       and v_receipt.result->>'status' = 'ok'
+       and (v_receipt.result->>'deleted')::boolean is true
+    then
+      return v_receipt.result;
+    end if;
 
-  if not app_private.has_church_settings_access(p_church_id, true) then
-    raise exception 'Permissão insuficiente. Apenas administradores podem excluir tipos de evento.' using errcode = '42501';
+    raise exception 'Conflito de command_id: identificador já utilizado para outra operação.' using errcode = '23505';
   end if;
 
   select name into v_name
@@ -499,37 +636,9 @@ begin
     raise exception 'Este tipo de evento já foi utilizado em cultos históricos e não pode ser excluído fisicamente. Desative-o para que não seja mais selecionado em novos planejamentos.' using errcode = '23503';
   end if;
 
-  delete from app_private.event_types
-  where id = p_type_id and church_id = p_church_id;
-
-  insert into app_private.audit_entries (church_id, action, actor_user_id, actor_source, target_type, target_id, details)
-  values (
-    p_church_id,
-    'delete_event_type',
-    v_uid,
-    'application',
-    'event_type',
-    p_type_id,
-    jsonb_build_object('event_type_id', p_type_id, 'name', v_name)
-  );
-
-  v_result := jsonb_build_object(
-    'status', 'ok',
-    'id', p_type_id,
-    'deleted', true
-  );
-
-  insert into app_private.event_type_activity_receipts (user_id, command_id, church_id, action, params, result)
-  values (
-    v_uid,
-    p_command_id,
-    p_church_id,
-    'delete_event_type',
-    jsonb_build_object('type_id', p_type_id),
-    v_result
-  );
-
-  return v_result;
+  -- Contenção explícita no servidor: enquanto os dados existentes não permitirem
+  -- comprovar desuso global, a exclusão física fica contida no servidor; a desativação permanece disponível.
+  raise exception 'Não é possível comprovar ausência de uso histórico para exclusão física deste tipo de evento. Desative-o para que não seja mais selecionado em novos planejamentos.' using errcode = '23503';
 end;
 $function$;
 
@@ -945,14 +1054,26 @@ begin
     raise exception 'command_id e activity_id obrigatórios.' using errcode = '22023';
   end if;
 
+  if not app_private.has_church_settings_access(p_church_id, true) then
+    raise exception 'Permissão insuficiente. Apenas administradores podem excluir atividades padrão.' using errcode = '42501';
+  end if;
+
   select * into v_receipt from app_private.event_type_activity_receipts
   where user_id = v_uid and command_id = p_command_id;
   if found then
-    return v_receipt.result;
-  end if;
+    -- Aceita replay somente se corresponder à mesma igreja, ação e alvo, com parâmetros compatíveis
+    -- e resultado coerente de exclusão concluída. Recibos de criação, edição, outra igreja ou outro
+    -- alvo não podem produzir sucesso de exclusão.
+    if v_receipt.church_id = p_church_id
+       and v_receipt.action = 'delete_standard_activity'
+       and (v_receipt.params->>'activity_id')::uuid = p_activity_id
+       and v_receipt.result->>'status' = 'ok'
+       and (v_receipt.result->>'deleted')::boolean is true
+    then
+      return v_receipt.result;
+    end if;
 
-  if not app_private.has_church_settings_access(p_church_id, true) then
-    raise exception 'Permissão insuficiente. Apenas administradores podem excluir atividades padrão.' using errcode = '42501';
+    raise exception 'Conflito de command_id: identificador já utilizado para outra operação.' using errcode = '23505';
   end if;
 
   select name into v_name
@@ -967,37 +1088,9 @@ begin
     raise exception 'Esta atividade padrão já foi utilizada em cultos históricos e não pode ser excluída fisicamente. Desative-a para que não seja mais selecionada em novos planejamentos.' using errcode = '23503';
   end if;
 
-  delete from app_private.standard_activities
-  where id = p_activity_id and church_id = p_church_id;
-
-  insert into app_private.audit_entries (church_id, action, actor_user_id, actor_source, target_type, target_id, details)
-  values (
-    p_church_id,
-    'delete_standard_activity',
-    v_uid,
-    'application',
-    'standard_activity',
-    p_activity_id,
-    jsonb_build_object('activity_id', p_activity_id, 'name', v_name)
-  );
-
-  v_result := jsonb_build_object(
-    'status', 'ok',
-    'id', p_activity_id,
-    'deleted', true
-  );
-
-  insert into app_private.event_type_activity_receipts (user_id, command_id, church_id, action, params, result)
-  values (
-    v_uid,
-    p_command_id,
-    p_church_id,
-    'delete_standard_activity',
-    jsonb_build_object('activity_id', p_activity_id),
-    v_result
-  );
-
-  return v_result;
+  -- Contenção explícita no servidor: enquanto os dados existentes não permitirem
+  -- comprovar desuso global, a exclusão física fica contida no servidor; a desativação permanece disponível.
+  raise exception 'Não é possível comprovar ausência de uso histórico para exclusão física desta atividade padrão. Desative-a para que não seja mais selecionada em novos planejamentos.' using errcode = '23503';
 end;
 $function$;
 
