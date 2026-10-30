@@ -229,6 +229,10 @@ begin
     raise exception 'Modelo de culto não encontrado na igreja especificada.' using errcode = 'P0002';
   end if;
 
+  if v_st.active is not true then
+    raise exception 'Modelo de culto desativado não pode ser aplicado a novos planejamentos.' using errcode = '23514';
+  end if;
+
   -- 4. Atividades como cópia independente e sem alocação nominal de pessoas (CA03)
   -- Contrato fiel ao SQL 022
   select coalesce(jsonb_agg(
@@ -375,6 +379,11 @@ begin
 
   if not v_has_active_filter then
     raise exception 'VERIFY FALHOU: Filtro de apoios ativos "is_default_active = true" ausente ou modificado na RPC.'
+      using errcode = 'P0003';
+  end if;
+
+  if (v_func_def like '%v\_st.active is not true%' escape '\') is not true then
+    raise exception 'VERIFY FALHOU: Guarda contra instanciação de modelo desativado (v_st.active is not true) ausente na RPC.'
       using errcode = 'P0003';
   end if;
 
@@ -536,6 +545,7 @@ on conflict (id) do nothing;
 
 insert into app_private.service_templates(id, church_id, event_type_id, name, description, active) values
   (pg_temp.st024_id(70), pg_temp.st024_id(100), pg_temp.st024_id(50), 'Modelo Domingo 024', 'Descrição teste', true),
+  (pg_temp.st024_id(78), pg_temp.st024_id(100), pg_temp.st024_id(50), 'Modelo Inativo 024', 'Descrição inativo', false),
   (pg_temp.st024_id(79), pg_temp.st024_id(200), pg_temp.st024_id(60), 'Modelo Bairro 024', 'Descrição bairro', true)
 on conflict (id) do nothing;
 
@@ -632,6 +642,14 @@ begin
   q := format('select public.instantiate_service_template(%L, %L, %L)',
     pg_temp.st024_id(909), pg_temp.st024_id(100), pg_temp.st024_id(999));
   perform pg_temp.st024_as(1, q, 'P0002');
+
+  -- C08C: Modelo desativado (active = false) na mesma igreja (Modelo 78 na Igreja 100)
+  -- Rejeição esperada: 23514 ('Modelo de culto desativado não pode ser aplicado a novos planejamentos.')
+  q := format('select public.instantiate_service_template(%L, %L, %L)',
+    pg_temp.st024_id(910), pg_temp.st024_id(100), pg_temp.st024_id(78));
+  perform pg_temp.st024_as(1, q, '23514');
+  perform pg_temp.st024_as(2, q, '23514');
+  perform pg_temp.st024_as(6, q, '23514');
 
   -- ==========================================================================
   -- C09: Verificação Integral e Comportamental do Contrato SQL 022

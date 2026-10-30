@@ -311,6 +311,12 @@ export function validateServiceTemplate(data = {}, existingTemplates = [], curre
 export function instantiateTemplateForEvent(template, targetEvent = {}) {
   if (!template) return targetEvent;
 
+  if (template.active === false) {
+    throw new Error(
+      `Não é possível aplicar o modelo "${template.name || 'desconhecido'}" porque ele está desativado.`
+    );
+  }
+
   if (
     template.isComplete === false ||
     (template.activitiesCount > 0 && (!template.activities || template.activities.length === 0))
@@ -394,9 +400,15 @@ export function addParallelServiceToEvent(event, service) {
 }
 
 /**
- * Verifica se um modelo está referenciado em eventos existentes (CA04).
+ * Verifica se um modelo está referenciado em eventos existentes na sessão ou sinalizado em histórico (CA04).
  */
-export function isTemplateUsedInEvents(templateId, events = []) {
+export function isTemplateUsedInEvents(templateOrId, events = []) {
+  if (!templateOrId) return false;
+  const isObj = typeof templateOrId === 'object' && templateOrId !== null;
+  if (isObj && templateOrId.usedInHistory === true) {
+    return true;
+  }
+  const templateId = isObj ? templateOrId.id : templateOrId;
   if (!templateId) return false;
   const eventList = Array.isArray(events) ? events : [events];
   return eventList.some(e => {
@@ -407,16 +419,20 @@ export function isTemplateUsedInEvents(templateId, events = []) {
 
 /**
  * Determina se um modelo pode ser excluído fisicamente com segurança ou se deve ser desativado (CA04).
+ * Contenção: o evento corrente em memória, nome atual ou auditoria local não comprovam ausência global de uso histórico.
  */
 export function canDeleteServiceTemplate(template, events = []) {
   if (!template) return { canDelete: false, reason: 'Modelo inválido.' };
-  if (isTemplateUsedInEvents(template.id, events)) {
+  if (isTemplateUsedInEvents(template, events)) {
     return {
       canDelete: false,
       reason: 'Este modelo já foi utilizado no planejamento de eventos existentes. Para preservar o histórico, desative-o em vez de excluí-lo.',
     };
   }
-  return { canDelete: true, reason: null };
+  return {
+    canDelete: false,
+    reason: 'Não é possível comprovar ausência de uso histórico para exclusão física deste modelo de culto. Desative-o para que não seja mais selecionado em novos planejamentos.',
+  };
 }
 
 /**
@@ -448,10 +464,19 @@ export function serviceTemplateErrorMessage(error) {
     return 'Permissão insuficiente. Apenas administradores autorizados podem gerenciar modelos de culto.';
   }
   if (code === '23505' || code === 'duplicate') {
+    if (lower.includes('conflito de command_id')) {
+      return 'Conflito de comando detectado: este identificador já foi utilizado para outra operação.';
+    }
     return 'Já existe um modelo de culto cadastrado com este nome nesta igreja.';
   }
   if (code === '23503' || error.code === 'template_in_use') {
+    if (lower.includes('não é possível comprovar ausência de uso histórico')) {
+      return 'Não é possível comprovar ausência de uso histórico para exclusão física deste modelo de culto. Recomenda-se desativá-lo para que não seja mais selecionado em novos planejamentos.';
+    }
     return 'Este modelo já foi utilizado em eventos históricos e não pode ser excluído. Desative-o em vez de excluir.';
+  }
+  if (lower.includes('desativado')) {
+    return 'Não é possível aplicar um modelo de culto desativado em novos planejamentos.';
   }
   if (code === '23514' || code === '22023') {
     return 'Dados do modelo de culto inválidos. Verifique os campos e durações preenchidos.';
@@ -844,6 +869,26 @@ export async function deleteServiceTemplateRemote(supabaseClient, churchIdOrOpts
       return { success: false, error: serviceTemplateErrorMessage(error), rawError: error };
     }
     const receipt = Array.isArray(data) ? data[0] : data;
+    const requestedId = typeof templateId === 'string' ? templateId.trim().toLowerCase() : String(templateId).trim().toLowerCase();
+    const resultTemplateId = typeof receipt?.template_id === 'string' ? receipt.template_id.trim().toLowerCase() : '';
+    if (
+      !receipt ||
+      typeof receipt !== 'object' ||
+      Array.isArray(receipt) ||
+      receipt.success !== true ||
+      receipt.deleted !== true ||
+      !resultTemplateId ||
+      resultTemplateId !== requestedId
+    ) {
+      return {
+        success: false,
+        error:
+          typeof receipt?.error === 'string' && receipt.error.trim()
+            ? receipt.error
+            : 'Não foi possível comprovar a exclusão física do modelo de culto.',
+        rawError: data
+      };
+    }
     return { success: true, receipt, error: null };
   } catch (err) {
     return { success: false, error: serviceTemplateErrorMessage(err), rawError: err };

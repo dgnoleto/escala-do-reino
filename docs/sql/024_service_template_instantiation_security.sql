@@ -85,6 +85,10 @@ begin
     raise exception 'Modelo de culto não encontrado na igreja especificada.' using errcode = 'P0002';
   end if;
 
+  if v_st.active is not true then
+    raise exception 'Modelo de culto desativado não pode ser aplicado a novos planejamentos.' using errcode = '23514';
+  end if;
+
   -- 4. Atividades como cópia independente e sem alocação nominal de pessoas (CA03)
   -- Contrato fiel ao SQL 022
   select coalesce(jsonb_agg(

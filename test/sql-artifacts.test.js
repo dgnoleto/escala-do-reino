@@ -1298,5 +1298,164 @@ describe('Validação Estática e Proteção contra Recorrência (Incremento 011
     );
   });
 
+  test('36. [Verificação Estática] Regressão Issue #27 (CA04): Contenção de exclusão física e rejeição de modelo desativado em SQL 022 e SQL 024', () => {
+    const sql022 = fs.readFileSync(path.join(rootDir, 'docs', 'sql', '022_service_templates.sql'), 'utf8');
+    const rehearsal022 = fs.readFileSync(path.join(rootDir, 'docs', 'sql', '022_rehearsal_cases.sql'), 'utf8');
+    const sql024 = fs.readFileSync(path.join(rootDir, 'docs', 'sql', '024_service_template_instantiation_security.sql'), 'utf8');
+    const verify024 = fs.readFileSync(path.join(rootDir, 'docs', 'sql', '024_verify.sql'), 'utf8');
+    const cases024 = fs.readFileSync(path.join(rootDir, 'docs', 'sql', '024_rehearsal_cases.sql'), 'utf8');
+    const consolidated024 = fs.readFileSync(path.join(rootDir, 'docs', 'sql', '024_rehearsal_consolidated.sql'), 'utf8');
+
+    function extractRpcBody(sqlText, rpcName) {
+      const startMarker = `create or replace function public.${rpcName}`;
+      const startIdx = sqlText.indexOf(startMarker);
+      if (startIdx === -1) throw new Error(`Início de public.${rpcName} não encontrado`);
+      const asIdx = sqlText.indexOf('as $function$', startIdx);
+      if (asIdx === -1) throw new Error(`'as $function$' não encontrado para public.${rpcName}`);
+      const bodyStart = asIdx + 'as $function$'.length;
+      const endMarker = '$function$;';
+      const endIdx = sqlText.indexOf(endMarker, bodyStart);
+      if (endIdx === -1) throw new Error(`'$function$;' não encontrado para public.${rpcName}`);
+      return sqlText.slice(bodyStart, endIdx);
+    }
+
+    function validateDeleteServiceTemplateIntegrity(body) {
+      const errors = [];
+      const beginIdx = body.indexOf('begin');
+      const endIdx = body.lastIndexOf('end;');
+      if (beginIdx === -1 || endIdx === -1 || beginIdx >= endIdx) {
+        return { valid: false, errors: ['delete_service_template: Bloco begin...end; não identificado'] };
+      }
+      const execBlock = body.slice(beginIdx + 5, endIdx).trim();
+
+      const targetQueryIdx = execBlock.indexOf('from app_private.service_templates');
+      const authTargetIdx = execBlock.indexOf('app_private.has_church_settings_access(v_st.church_id, true)');
+      const receiptQueryIdx = execBlock.indexOf('from app_private.service_template_receipts');
+      const helperCallIdx = execBlock.indexOf('app_private.is_service_template_used');
+      const containmentIdx = execBlock.indexOf('Não é possível comprovar ausência de uso histórico');
+
+      if (authTargetIdx === -1) {
+        errors.push('delete_service_template: Guarda de autorização has_church_settings_access(v_st.church_id, true) ausente.');
+      }
+      if (receiptQueryIdx === -1) {
+        errors.push('delete_service_template: Consulta de recibos ausente.');
+      }
+      if (authTargetIdx !== -1 && receiptQueryIdx !== -1 && authTargetIdx > receiptQueryIdx) {
+        errors.push('delete_service_template: Autorização administrativa sobre o alvo deve preceder a consulta e retorno de recibos.');
+      }
+
+      const firstReturnIdx = execBlock.indexOf('return ');
+      if (firstReturnIdx !== -1 && (authTargetIdx === -1 || firstReturnIdx < authTargetIdx)) {
+        errors.push('delete_service_template: Retorno antecipado antes da verificação de autorização administrativa.');
+      }
+
+      if (!execBlock.includes("v_receipt.action = 'delete_service_template'")) {
+        errors.push("delete_service_template: Replay deve validar action = 'delete_service_template'.");
+      }
+      if (
+        !execBlock.includes("jsonb_typeof(v_receipt.params) = 'object'") ||
+        !execBlock.includes("jsonb_typeof(v_receipt.params->'template_id') = 'string'") ||
+        !execBlock.includes("lower(v_receipt.params->>'template_id') = lower(p_template_id::text)")
+      ) {
+        errors.push('delete_service_template: Replay deve validar estrutura, tipo string e igualdade de params.template_id sem cast ::uuid.');
+      }
+      if (
+        !execBlock.includes("jsonb_typeof(v_receipt.result) = 'object'") ||
+        !execBlock.includes("jsonb_typeof(v_receipt.result->'template_id') = 'string'") ||
+        !execBlock.includes("lower(v_receipt.result->>'template_id') = lower(p_template_id::text)")
+      ) {
+        errors.push('delete_service_template: Replay deve validar estrutura, tipo string e igualdade de result.template_id com p_template_id.');
+      }
+      if (
+        !execBlock.includes("jsonb_typeof(v_receipt.result->'success') = 'boolean'") ||
+        !execBlock.includes("v_receipt.result->'success' = 'true'::jsonb") ||
+        !execBlock.includes("jsonb_typeof(v_receipt.result->'deleted') = 'boolean'") ||
+        !execBlock.includes("v_receipt.result->'deleted' = 'true'::jsonb")
+      ) {
+        errors.push('delete_service_template: Replay deve exigir success e deleted como booleanos JSON verdadeiros.');
+      }
+      if (/v_receipt\.(params|result)[^;]*::\s*(uuid|boolean)/i.test(execBlock)) {
+        errors.push('delete_service_template: Replay não deve usar cast ::uuid ou ::boolean em v_receipt.params/result que escape de 23505 com 22P02 ou aceite string.');
+      }
+      if (!execBlock.includes("errcode = '23505'")) {
+        errors.push('delete_service_template: Conflito de command_id incompatível deve lançar 23505.');
+      }
+      if (helperCallIdx === -1 || (targetQueryIdx !== -1 && helperCallIdx < targetQueryIdx)) {
+        errors.push('delete_service_template: Helper is_service_template_used deve ser verificado.');
+      }
+      if (containmentIdx === -1 || (helperCallIdx !== -1 && containmentIdx < helperCallIdx)) {
+        errors.push('delete_service_template: Contenção explícita no servidor deve estar presente ao final do fluxo.');
+      }
+      if (execBlock.toLowerCase().includes('delete from app_private.service_templates')) {
+        errors.push('delete_service_template: Exclusão física (DELETE FROM service_templates) proibida sob contenção.');
+      }
+
+      const allReturns = [...execBlock.matchAll(/return\s+([^;]+);/g)];
+      for (const ret of allReturns) {
+        const retStmt = ret[0].trim();
+        if (retStmt !== 'return v_receipt.result;') {
+          errors.push(`delete_service_template: Retorno não autorizado detectado: '${retStmt}'.`);
+        }
+      }
+
+      return { valid: errors.length === 0, errors };
+    }
+
+    // 1. Validação canônica de delete_service_template e is_service_template_used (sem expansão heurística por nomes históricos)
+    assert.equal(
+      sql022.includes("a.action in ('create_service_template', 'update_service_template', 'deactivate_service_template', 'reactivate_service_template')"),
+      false,
+      'is_service_template_used não deve incluir expansão dispensável por nomes históricos em audit_entries'
+    );
+
+    const bodyDelete022 = extractRpcBody(sql022, 'delete_service_template');
+    const resCanonDelete = validateDeleteServiceTemplateIntegrity(bodyDelete022);
+    assert.equal(resCanonDelete.valid, true, `delete_service_template canônico deve ser válido: ${resCanonDelete.errors.join('; ')}`);
+
+    // Contraprovas em memória para delete_service_template
+    const mutDeleteWithSqlDelete = bodyDelete022.replace(
+      "raise exception 'Não é possível comprovar ausência de uso histórico",
+      "delete from app_private.service_templates where id = p_template_id;\n  raise exception 'Não é possível comprovar ausência de uso histórico"
+    );
+    assert.equal(validateDeleteServiceTemplateIntegrity(mutDeleteWithSqlDelete).valid, false, 'Contraprova: DELETE físico DEVE ser rejeitado');
+
+    const mutDeleteWithoutActionCheck = bodyDelete022.replace("and v_receipt.action = 'delete_service_template'", '');
+    assert.equal(validateDeleteServiceTemplateIntegrity(mutDeleteWithoutActionCheck).valid, false, 'Contraprova: Replay sem action DEVE ser rejeitado');
+
+    const mutDeleteWithoutResultTemplateId = bodyDelete022.replace("and lower(v_receipt.result->>'template_id') = lower(p_template_id::text)", '');
+    assert.equal(validateDeleteServiceTemplateIntegrity(mutDeleteWithoutResultTemplateId).valid, false, 'Contraprova: Replay sem vínculo de result.template_id DEVE ser rejeitado');
+
+    const mutDeleteWithDirectUuidCast = bodyDelete022.replace(
+      "and lower(v_receipt.params->>'template_id') = lower(p_template_id::text)",
+      "and (v_receipt.params->>'template_id')::uuid = p_template_id"
+    );
+    assert.equal(validateDeleteServiceTemplateIntegrity(mutDeleteWithDirectUuidCast).valid, false, 'Contraprova: Cast direto ::uuid em recibo DEVE ser rejeitado');
+
+    // 2. Validação coerente de instantiate_service_template entre SQL 022 e SQL 024
+    for (const [label, sqlText] of [
+      ['022_service_templates.sql', sql022],
+      ['024_service_template_instantiation_security.sql', sql024],
+      ['024_rehearsal_consolidated.sql', consolidated024]
+    ]) {
+      const instBody = extractRpcBody(sqlText, 'instantiate_service_template');
+      assert.ok(
+        instBody.includes('if v_st.active is not true then') &&
+        instBody.includes("errcode = '23514'"),
+        `[${label}] instantiate_service_template deve rejeitar modelo desativado (v_st.active is not true) com 23514`
+      );
+    }
+
+    assert.ok(verify024.includes("v\\_st.active is not true"), '024_verify.sql deve exigir a guarda v_st.active is not true');
+    assert.ok(
+      rehearsal022.includes('S08b') &&
+      rehearsal022.includes('S13b') &&
+      rehearsal022.includes('S14b') &&
+      rehearsal022.includes('9201') &&
+      rehearsal022.includes('9209'),
+      '022_rehearsal_cases.sql deve cobrir S08b, S13b e a matriz completa de recibos em S14b (9201 a 9209)'
+    );
+    assert.ok(cases024.includes('C08C') && consolidated024.includes('C08C'), '024_rehearsal_cases.sql e 024_rehearsal_consolidated.sql devem cobrir C08C (modelo desativado)');
+  });
+
 });
 

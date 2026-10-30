@@ -2574,7 +2574,7 @@ export default function AdminView({ onBack, initialTab = 'event_types' } = {}) {
                 {serviceTemplates.map((tpl, idx) => {
                   const evType = eventTypes.find(t => t.id === tpl.eventTypeId);
                   const totalDur = (tpl.activities || []).reduce((s, a) => s + (parseInt(a.plannedDurationMinutes) || 0), 0);
-                  const isUsed = isTemplateUsedInEvents(tpl.id, [event]);
+                  const isUsed = isTemplateUsedInEvents(tpl, [event]);
                   const activeServices = (tpl.parallelServices || []).filter(s => s.isDefaultActive !== false);
 
                   return (

@@ -1927,7 +1927,10 @@ export function AppProvider({
       };
     }
 
-    const deleteCheck = canDeleteServiceTemplate(target, [event]);
+    const deleteCheck = canDeleteServiceTemplate(
+      target,
+      Array.isArray(events) ? [event, ...events] : [event]
+    );
     if (!deleteCheck.canDelete) {
       return { success: false, error: deleteCheck.reason };
     }
@@ -1962,6 +1965,13 @@ export function AppProvider({
     const template = serviceTemplates.find(t => t.id === templateId);
     if (!template) {
       return { success: false, error: "Modelo de culto não encontrado." };
+    }
+
+    if (template.active === false) {
+      return {
+        success: false,
+        error: "Não é possível aplicar um modelo de culto desativado em novos planejamentos."
+      };
     }
 
     // Problema B & A3: Proteção contra escrita desatualizada
