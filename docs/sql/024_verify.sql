@@ -152,6 +152,11 @@ begin
       using errcode = 'P0003';
   end if;
 
+  if (v_func_def like '%v\_st.active is not true%' escape '\') is not true then
+    raise exception 'VERIFY FALHOU: Guarda contra instanciação de modelo desativado (v_st.active is not true) ausente na RPC.'
+      using errcode = 'P0003';
+  end if;
+
   if (v_func_def like '%plannedDurationMinutes%') is not true then
     raise exception 'VERIFY FALHOU: Campo plannedDurationMinutes ausente ou renomeado no contrato da RPC.'
       using errcode = 'P0003';
@@ -244,6 +249,7 @@ select
     and p.func_def like '%''parallelServices''%'
     and p.func_def not like '%''parallel\_services''%' escape '\'
     and p.func_def like '%where stps.template\_id = p\_template\_id and stps.is\_default\_active = true%' escape '\'
+    and p.func_def like '%v\_st.active is not true%' escape '\'
     and p.func_def like '%plannedDurationMinutes%'
     and p.func_def like '%roster%'
     and p.func_def like '%musics%'

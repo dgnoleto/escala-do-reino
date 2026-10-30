@@ -118,6 +118,7 @@ on conflict (id) do nothing;
 -- Modelos de culto (Igreja 100 e Igreja 200)
 insert into app_private.service_templates(id, church_id, event_type_id, name, description, active) values
   (pg_temp.st024_id(70), pg_temp.st024_id(100), pg_temp.st024_id(50), 'Modelo Domingo 024', 'Descrição teste', true),
+  (pg_temp.st024_id(78), pg_temp.st024_id(100), pg_temp.st024_id(50), 'Modelo Inativo 024', 'Descrição inativo', false),
   (pg_temp.st024_id(79), pg_temp.st024_id(200), pg_temp.st024_id(60), 'Modelo Bairro 024', 'Descrição bairro', true)
 on conflict (id) do nothing;
 
@@ -244,6 +245,14 @@ begin
   q := format('select public.instantiate_service_template(%L, %L, %L)',
     pg_temp.st024_id(909), pg_temp.st024_id(100), pg_temp.st024_id(999));
   perform pg_temp.st024_as(1, q, 'P0002');
+
+  -- C08C: Modelo desativado (active = false) na mesma igreja (Modelo 78 na Igreja 100)
+  -- Rejeição esperada: 23514 ('Modelo de culto desativado não pode ser aplicado a novos planejamentos.')
+  q := format('select public.instantiate_service_template(%L, %L, %L)',
+    pg_temp.st024_id(910), pg_temp.st024_id(100), pg_temp.st024_id(78));
+  perform pg_temp.st024_as(1, q, '23514');
+  perform pg_temp.st024_as(2, q, '23514');
+  perform pg_temp.st024_as(6, q, '23514');
 
   -- ==========================================================================
   -- C09: Verificação Integral e Comportamental do Contrato SQL 022

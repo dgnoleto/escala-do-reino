@@ -4,12 +4,17 @@
 create function pg_temp.st_id(n integer) returns uuid language sql immutable as
 $$ select ('02200000-0000-4000-8000-' || lpad(n::text,12,'0'))::uuid $$;
 
-create function pg_temp.st_as(n integer, q text, expected text default '00000') returns jsonb
+create function pg_temp.st_as(
+  n integer,
+  q text,
+  expected text default '00000',
+  expected_msg text default null
+) returns jsonb
 language plpgsql security invoker as $$
 declare
   payload jsonb;
   code text := '00000';
-  message text;
+  message text := '';
 begin
   perform set_config('request.jwt.claim.sub', coalesce(pg_temp.st_id(n)::text, ''), true);
   begin
@@ -22,6 +27,9 @@ begin
   end;
   if code <> expected then
     raise exception 'Esperado %, recebido %: %', expected, code, message;
+  end if;
+  if expected_msg is not null and position(lower(expected_msg) in lower(coalesce(message, ''))) = 0 then
+    raise exception 'Mensagem esperada contendo "%" não encontrada em "%"', expected_msg, message;
   end if;
   return payload;
 end $$;
@@ -117,6 +125,11 @@ begin
     raise exception 'S08 toggle deactivation falhou';
   end if;
 
+  -- S08b: Modelo desativado (active = false) NÃO pode ser instanciado para novos planejamentos (CA04)
+  q := format('select public.instantiate_service_template(%L, %L, %L)',
+    pg_temp.st_id(9081), pg_temp.st_id(100), created_template_id);
+  perform pg_temp.st_as(1, q, '23514', 'desativado');
+
   -- S09: Admin reativa modelo (active = true)
   q := format('select public.toggle_service_template_status(%L, %L, true)',
     pg_temp.st_id(909), created_template_id);
@@ -153,26 +166,161 @@ begin
     end if;
   end if;
 
-  -- S13: Exclusão com proteção histórica se em uso (CA04)
-  -- Simulando template em uso inserindo evento com referência
-  insert into app_private.service_templates(id, church_id, name, active) values
-    (pg_temp.st_id(88), pg_temp.st_id(100), 'Modelo Em Uso Histórico', true);
-  
+  -- S13: Exclusão com proteção histórica se em uso (CA04), inclusive após renomeação do modelo
+  q := format('select public.create_service_template(%L, %L, %L, %L, %L, %L::jsonb, %L::jsonb)',
+    pg_temp.st_id(913), pg_temp.st_id(100), pg_temp.st_id(50), 'Modelo Em Uso Histórico', 'Desc', '[]', '[]');
+  result := pg_temp.st_as(1, q, '00000');
+  in_use_template_id := (result->>'template_id')::uuid;
+
   if to_regclass('app_private.events') is not null then
     insert into app_private.events(id, church_id, title, event_type, timezone, planned_start_at, planned_end_at) values
       (pg_temp.st_id(880), pg_temp.st_id(100), 'Modelo Em Uso Histórico', 'Celebração', 'America/Sao_Paulo',
        now() - interval '1 day', now() - interval '1 day' + interval '2 hours');
+
+    q := format('select public.delete_service_template(%L, %L)', pg_temp.st_id(914), in_use_template_id);
+    perform pg_temp.st_as(1, q, '23503', 'já foi utilizado');
+
+    -- S13b: Renomear o modelo NÃO libera exclusão física: a RPC recusa com 23503 e preserva o modelo (CA04)
+    q := format('select public.update_service_template(%L, %L, %L, %L, %L, %L::jsonb, %L::jsonb)',
+      pg_temp.st_id(9141), in_use_template_id, pg_temp.st_id(50), 'Modelo Em Uso Renomeado', 'Desc', '[]', '[]');
+    perform pg_temp.st_as(1, q, '00000');
+
+    q := format('select public.delete_service_template(%L, %L)', pg_temp.st_id(9142), in_use_template_id);
+    perform pg_temp.st_as(1, q, '23503');
+
+    if not exists (select 1 from app_private.service_templates where id = in_use_template_id) then
+      raise exception 'S13b falhou: modelo renomeado foi excluído fisicamente';
+    end if;
   end if;
 
-  q := format('select public.delete_service_template(%L, %L)', pg_temp.st_id(914), pg_temp.st_id(88));
-  perform pg_temp.st_as(1, q, '23503');
-
-  -- S14: Exclusão física permitida quando NÃO está em uso
+  -- S14: Contenção explícita no servidor quando não há prova global de desuso (CA04)
   q := format('select public.delete_service_template(%L, %L)', pg_temp.st_id(915), created_template_id);
-  result := pg_temp.st_as(1, q, '00000');
-  if (result->>'deleted')::boolean is not true then
-    raise exception 'S14 exclusão física falhou';
+  perform pg_temp.st_as(1, q, '23503', 'Não é possível comprovar ausência de uso histórico');
+
+  if not exists (select 1 from app_private.service_templates where id = created_template_id) then
+    raise exception 'S14 falhou: modelo foi excluído fisicamente apesar da contenção server-side';
   end if;
+
+  -- S14b: Matriz de autorização e compatibilidade estrita de replay em delete_service_template
+  -- 1. Membro não-admin (2) e Admin de outra igreja (3) são barrados com 42501
+  q := format('select public.delete_service_template(%L, %L)', pg_temp.st_id(9151), created_template_id);
+  perform pg_temp.st_as(2, q, '42501');
+  perform pg_temp.st_as(3, q, '42501');
+
+  -- 2. Reuso de command_id de create_service_template (903) deve lançar 23505 (e não retornar falso sucesso)
+  q := format('select public.delete_service_template(%L, %L)', pg_temp.st_id(903), created_template_id);
+  perform pg_temp.st_as(1, q, '23505', 'Conflito de command_id');
+
+  -- 3. Recibos malformados, incompletos ou divergentes devem todos resultar em 23505 (sem escapar com 22P02):
+  -- 3a. result.template_id ausente
+  insert into app_private.service_template_receipts (user_id, command_id, church_id, action, params, result)
+  values (
+    pg_temp.st_id(1), pg_temp.st_id(9201), pg_temp.st_id(100), 'delete_service_template',
+    jsonb_build_object('template_id', created_template_id),
+    jsonb_build_object('success', true, 'deleted', true)
+  );
+  q := format('select public.delete_service_template(%L, %L)', pg_temp.st_id(9201), created_template_id);
+  perform pg_temp.st_as(1, q, '23505', 'Conflito de command_id');
+
+  -- 3b. result.template_id nulo
+  insert into app_private.service_template_receipts (user_id, command_id, church_id, action, params, result)
+  values (
+    pg_temp.st_id(1), pg_temp.st_id(9202), pg_temp.st_id(100), 'delete_service_template',
+    jsonb_build_object('template_id', created_template_id),
+    jsonb_build_object('success', true, 'deleted', true, 'template_id', null)
+  );
+  q := format('select public.delete_service_template(%L, %L)', pg_temp.st_id(9202), created_template_id);
+  perform pg_temp.st_as(1, q, '23505', 'Conflito de command_id');
+
+  -- 3c. result.template_id inválido (não-UUID)
+  insert into app_private.service_template_receipts (user_id, command_id, church_id, action, params, result)
+  values (
+    pg_temp.st_id(1), pg_temp.st_id(9203), pg_temp.st_id(100), 'delete_service_template',
+    jsonb_build_object('template_id', created_template_id),
+    jsonb_build_object('success', true, 'deleted', true, 'template_id', 'id-malformado')
+  );
+  q := format('select public.delete_service_template(%L, %L)', pg_temp.st_id(9203), created_template_id);
+  perform pg_temp.st_as(1, q, '23505', 'Conflito de command_id');
+
+  -- 3d. result.template_id divergente (aponta para outro modelo)
+  insert into app_private.service_template_receipts (user_id, command_id, church_id, action, params, result)
+  values (
+    pg_temp.st_id(1), pg_temp.st_id(9204), pg_temp.st_id(100), 'delete_service_template',
+    jsonb_build_object('template_id', created_template_id),
+    jsonb_build_object('success', true, 'deleted', true, 'template_id', in_use_template_id)
+  );
+  q := format('select public.delete_service_template(%L, %L)', pg_temp.st_id(9204), created_template_id);
+  perform pg_temp.st_as(1, q, '23505', 'Conflito de command_id');
+
+  -- 3e. params incompatíveis / tipos inválidos (não-UUID em params.template_id ou params array)
+  insert into app_private.service_template_receipts (user_id, command_id, church_id, action, params, result)
+  values (
+    pg_temp.st_id(1), pg_temp.st_id(9205), pg_temp.st_id(100), 'delete_service_template',
+    jsonb_build_object('template_id', 'nao-uuid'),
+    jsonb_build_object('success', true, 'deleted', true, 'template_id', created_template_id)
+  );
+  q := format('select public.delete_service_template(%L, %L)', pg_temp.st_id(9205), created_template_id);
+  perform pg_temp.st_as(1, q, '23505', 'Conflito de command_id');
+
+  insert into app_private.service_template_receipts (user_id, command_id, church_id, action, params, result)
+  values (
+    pg_temp.st_id(1), pg_temp.st_id(9206), pg_temp.st_id(100), 'delete_service_template',
+    '[]'::jsonb,
+    jsonb_build_object('success', true, 'deleted', true, 'template_id', created_template_id)
+  );
+  q := format('select public.delete_service_template(%L, %L)', pg_temp.st_id(9206), created_template_id);
+  perform pg_temp.st_as(1, q, '23505', 'Conflito de command_id');
+
+  -- 3f. Booleanos representados como strings ("true") em success ou deleted
+  insert into app_private.service_template_receipts (user_id, command_id, church_id, action, params, result)
+  values (
+    pg_temp.st_id(1), pg_temp.st_id(9207), pg_temp.st_id(100), 'delete_service_template',
+    jsonb_build_object('template_id', created_template_id),
+    jsonb_build_object('success', 'true', 'deleted', true, 'template_id', created_template_id)
+  );
+  q := format('select public.delete_service_template(%L, %L)', pg_temp.st_id(9207), created_template_id);
+  perform pg_temp.st_as(1, q, '23505', 'Conflito de command_id');
+
+  insert into app_private.service_template_receipts (user_id, command_id, church_id, action, params, result)
+  values (
+    pg_temp.st_id(1), pg_temp.st_id(9208), pg_temp.st_id(100), 'delete_service_template',
+    jsonb_build_object('template_id', created_template_id),
+    jsonb_build_object('success', true, 'deleted', 'true', 'template_id', created_template_id)
+  );
+  q := format('select public.delete_service_template(%L, %L)', pg_temp.st_id(9208), created_template_id);
+  perform pg_temp.st_as(1, q, '23505', 'Conflito de command_id');
+
+  -- 4. Replay histórico legítimo com alvo já ausente (modelo 899 já removido anteriormente)
+  insert into app_private.service_template_receipts (user_id, command_id, church_id, action, params, result)
+  values (
+    pg_temp.st_id(1), pg_temp.st_id(9209), pg_temp.st_id(100), 'delete_service_template',
+    jsonb_build_object('template_id', pg_temp.st_id(899)),
+    jsonb_build_object('success', true, 'deleted', true, 'template_id', pg_temp.st_id(899))
+  );
+  q := format('select public.delete_service_template(%L, %L)', pg_temp.st_id(9209), pg_temp.st_id(899));
+  result := pg_temp.st_as(1, q, '00000');
+  if result is null
+     or jsonb_typeof(result) is distinct from 'object'
+     or jsonb_typeof(result->'success') is distinct from 'boolean'
+     or jsonb_typeof(result->'deleted') is distinct from 'boolean'
+     or jsonb_typeof(result->'template_id') is distinct from 'string'
+     or result is distinct from jsonb_build_object('success', true, 'deleted', true, 'template_id', pg_temp.st_id(899)) then
+    raise exception 'S14b replay histórico legítimo falhou: %', result;
+  end if;
+
+  -- 5. Autorização administrativa revogada bloqueia replay mesmo com recibo histórico íntegro (42501)
+  -- Prepara o usuário 2 (membro ativo com onboarding concluído na igreja 100) como administrador elegível
+  -- antes de revogar o usuário 1, respeitando o gatilho protect_last_active_admin.
+  update app_private.church_access set is_admin = true
+  where church_id = pg_temp.st_id(100) and user_id = pg_temp.st_id(2);
+  update app_private.church_access set is_admin = false
+  where church_id = pg_temp.st_id(100) and user_id = pg_temp.st_id(1);
+  perform pg_temp.st_as(1, q, '42501');
+  -- Restaura os papéis originais mantendo pelo menos um administrador elegível em cada etapa
+  update app_private.church_access set is_admin = true
+  where church_id = pg_temp.st_id(100) and user_id = pg_temp.st_id(1);
+  update app_private.church_access set is_admin = false
+  where church_id = pg_temp.st_id(100) and user_id = pg_temp.st_id(2);
 
   -- S15: Exclusão de template inexistente retorna P0002
   q := format('select public.delete_service_template(%L, %L)', pg_temp.st_id(916), pg_temp.st_id(999));

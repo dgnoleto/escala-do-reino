@@ -706,30 +706,50 @@ as $function$
 declare
   v_uid uuid := (select auth.uid());
   v_st app_private.service_templates%rowtype;
+  v_st_found boolean := false;
   v_receipt app_private.service_template_receipts%rowtype;
-  v_result jsonb;
 begin
   if v_uid is null then
     raise exception 'Não autenticado.' using errcode = '28000';
   end if;
 
-  if p_command_id is null then
-    raise exception 'command_id obrigatório.' using errcode = '22023';
+  if p_command_id is null or p_template_id is null then
+    raise exception 'command_id e template_id são obrigatórios.' using errcode = '22023';
+  end if;
+
+  select * into v_st from app_private.service_templates where id = p_template_id;
+  v_st_found := found;
+
+  if v_st_found and not app_private.has_church_settings_access(v_st.church_id, true) then
+    raise exception 'Permissão insuficiente. Apenas administradores podem excluir modelos de culto.' using errcode = '42501';
   end if;
 
   select * into v_receipt from app_private.service_template_receipts
   where user_id = v_uid and command_id = p_command_id;
   if found then
-    return v_receipt.result;
+    if not app_private.has_church_settings_access(v_receipt.church_id, true) then
+      raise exception 'Permissão insuficiente. Apenas administradores podem excluir modelos de culto.' using errcode = '42501';
+    end if;
+    if (not v_st_found or v_receipt.church_id = v_st.church_id)
+       and v_receipt.action = 'delete_service_template'
+       and jsonb_typeof(v_receipt.params) = 'object'
+       and jsonb_typeof(v_receipt.params->'template_id') = 'string'
+       and lower(v_receipt.params->>'template_id') = lower(p_template_id::text)
+       and jsonb_typeof(v_receipt.result) = 'object'
+       and jsonb_typeof(v_receipt.result->'template_id') = 'string'
+       and lower(v_receipt.result->>'template_id') = lower(p_template_id::text)
+       and jsonb_typeof(v_receipt.result->'success') = 'boolean'
+       and v_receipt.result->'success' = 'true'::jsonb
+       and jsonb_typeof(v_receipt.result->'deleted') = 'boolean'
+       and v_receipt.result->'deleted' = 'true'::jsonb then
+      return v_receipt.result;
+    end if;
+    raise exception 'Conflito de command_id: identificador já utilizado para outra operação.'
+      using errcode = '23505';
   end if;
 
-  select * into v_st from app_private.service_templates where id = p_template_id;
-  if not found then
+  if not v_st_found then
     raise exception 'Modelo de culto não encontrado.' using errcode = 'P0002';
-  end if;
-
-  if not app_private.has_church_settings_access(v_st.church_id, true) then
-    raise exception 'Permissão insuficiente. Apenas administradores podem excluir modelos de culto.' using errcode = '42501';
   end if;
 
   if app_private.is_service_template_used(v_st.church_id, p_template_id, v_st.name) then
@@ -737,32 +757,10 @@ begin
       using errcode = '23503';
   end if;
 
-  delete from app_private.service_templates where id = p_template_id;
-
-  insert into app_private.audit_entries (church_id, action, actor_user_id, actor_source, target_type, target_id, details)
-  values (
-    v_st.church_id,
-    'delete_service_template',
-    v_uid,
-    'application',
-    'service_template',
-    p_template_id,
-    jsonb_build_object('template_id', p_template_id, 'name', v_st.name)
-  );
-
-  v_result := jsonb_build_object('success', true, 'template_id', p_template_id, 'deleted', true);
-
-  insert into app_private.service_template_receipts (user_id, command_id, church_id, action, params, result)
-  values (
-    v_uid,
-    p_command_id,
-    v_st.church_id,
-    'delete_service_template',
-    jsonb_build_object('template_id', p_template_id),
-    v_result
-  );
-
-  return v_result;
+  -- Contenção explícita (CA04): sem vínculo estável de modelo em eventos persistidos (escopo #29)
+  -- e sem prova global de ausência de uso histórico, a exclusão física permanece bloqueada.
+  raise exception 'Não é possível comprovar ausência de uso histórico para exclusão física deste modelo de culto. Recomenda-se desativá-lo para que não seja mais selecionado em novos planejamentos.'
+    using errcode = '23503';
 end;
 $function$;
 
@@ -788,6 +786,10 @@ begin
   select * into v_st from app_private.service_templates where id = p_template_id and church_id = p_church_id;
   if not found then
     raise exception 'Modelo de culto não encontrado na igreja especificada.' using errcode = 'P0002';
+  end if;
+
+  if v_st.active is not true then
+    raise exception 'Modelo de culto desativado não pode ser aplicado a novos planejamentos.' using errcode = '23514';
   end if;
 
   -- Atividades como cópia independente e sem alocação nominal de pessoas (CA03)
