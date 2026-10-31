@@ -1,6 +1,10 @@
 # Escala do Reino — Guia de Governança e Papéis Multiagente
 
-Este documento define os princípios de governança, divisão de responsabilidades e regras de cooperação entre os agentes e o responsável pelo produto no projeto **Escala do Reino**.
+Versão vigente: **1.1** — consolidada em **31/10/2026** (sucessora do baseline de `31/10/2026` integrado no [PR #64](https://github.com/dgnoleto/escala-do-reino/pull/64), preservado em [`docs/operacao/versoes/`](docs/operacao/versoes/README.md); referência histórica na [issue #59](https://github.com/dgnoleto/escala-do-reino/issues/59)).
+
+Primeira numeração formal adotada para este documento; o baseline anterior não declarava versão numérica e não recebe numeração retroativa.
+
+Este documento é a entrada normativa vigente que define os princípios de governança, divisão de responsabilidades e regras de cooperação entre os agentes e o responsável pelo produto no projeto **Escala do Reino**.
 
 ---
 
@@ -70,7 +74,7 @@ Volumetria deve usar medições ou hipóteses explícitas de uso, crescimento e 
 
 O orquestrador deve conferir sprint, datas reais, capacidade conhecida e dependências antes de assumir trabalho. Recomendar Backlog e avaliação na próxima planning para melhorias que não caibam ou não sejam necessárias; a próxima sprint depende da decisão do PO/PM. Segurança crítica e bloqueios de critérios não são adiados automaticamente pelo prazo. Antes de propor novo trabalho, verificar as entregas em revisão que podem ser concluídas ou avançar, respeitando as prioridades do responsável. Avaliar cada item por seus próprios critérios e dependências, sem presumir que uma frente bloqueada impede toda a fila.
 
-Nos dois últimos dias corridos da sprint, avisar ao final de uma conversa pertinente se não houver planning realizada/agendada registrada. A partir do dia seguinte ao término, verificar o encerramento e, após preparar uma passagem confiável, recomendar novo chat de orquestração, preferencialmente Work. Não criar, arquivar ou encerrar conversas automaticamente. As rotinas, limites de repetição e falhas de atualização do quadro estão no [guia de trabalho no GitHub](docs/operacao/GUIA-TRABALHO-GITHUB.md); os registros ficam em [docs/sprints/](docs/sprints/README.md).
+Nos dois últimos dias corridos da sprint, avisar ao final de uma conversa pertinente se não houver planning realizada/agendada registrada. A partir do dia seguinte ao término, verificar o encerramento e, após preparar uma passagem confiável, recomendar novo chat de orquestração, preferencialmente Work. Não criar, arquivar ou encerrar conversas automaticamente. Cada sprint mantém um único documento principal (`ACOMPANHAMENTO.md`) reunindo abertura, andamento e encerramento, com mudanças datadas e atualizações por acontecimentos relevantes. As rotinas, limites de repetição e falhas de atualização do quadro estão no [guia de trabalho no GitHub](docs/operacao/GUIA-TRABALHO-GITHUB.md#11-cadência-capacidade-e-sprints); os registros ficam em [docs/sprints/](docs/sprints/README.md).
 
 ---
 
@@ -91,6 +95,14 @@ Consolida as decisões do responsável de 23 e 24/10/2026 na [issue #59](https:/
 A matriz cobre assinatura/defaults/retorno, esquema/constraints, permissões e regras funcionais, erros, idempotência/replay, locks, auditoria/efeitos, integrações e critérios afetados. Usar os estados **IDÊNTICO**, **ALTERADO AUTORIZADO** (com decisão expressa vinculada), **DIVERGENTE** ou **NÃO VERIFICADO**. Divergência ou não verificação crítica bloqueia o avanço afetado: corrigir o delta ou obter decisão de mudança de contrato, sem ajustar requisitos para acomodar a implementação. Preservar aceites não afetados.
 
 Registrar versão, referências, autor e resultado na issue, dentro da autorização de publicação. Paridade aceita, auditoria, implementação, testes, homologação e aceite humano são etapas distintas; nenhuma autoriza automaticamente banco, Git, publicação ou avanço de gate. Procedimento no [fluxo multiagente](docs/operacao/FLUXO-MULTIAGENTE.md#regra-transversal-issue-como-trilha-oficial).
+
+## 1.8 Evolução controlada e preservação de documentos normativos
+
+**Decisão do responsável em 31/10/2026** (complemento à [issue #59](https://github.com/dgnoleto/escala-do-reino/issues/59), preservando seu aceite anterior). Cada documento de governança mantém **uma única versão vigente claramente identificada**, permanecendo este `AGENTS.md` como a entrada normativa do repositório.
+
+- É **proibido apagar, substituir ou enfraquecer silenciosamente** decisões do responsável, regras de segurança, permissões ou limites operacionais.
+- Qualquer mudança normativa relevante exige apresentação prévia com **antes/depois, motivo, impacto, riscos, autorização expressa do responsável** e **revisão independente** quando exigida pelos critérios da seção 3.
+- Após aprovação de mudança normativa relevante — inclusive quando o responsável confirmar a alteração após alertas de risco ou impacto — a versão ou baseline anterior deve ser integralmente preservada em [`docs/operacao/versoes/`](docs/operacao/versoes/README.md), sem efeito autorizativo concorrente. Correções meramente editoriais sem mudança de sentido são rastreadas pelo Git, sem exigir cópia integral a cada ajuste. O procedimento detalhado está no [fluxo operacional multiagente](docs/operacao/FLUXO-MULTIAGENTE.md#55-evolução-e-preservação-de-documentos-normativos).
 
 ---
 
@@ -184,3 +196,4 @@ A revisão técnica independente pelo Codex não é obrigatória para todo e qua
 - **Requisitos e Contratos de Domínio:** [`docs/PRD.md`](docs/PRD.md)
 - **Ciclos, alertas e encerramentos:** [`docs/sprints/README.md`](docs/sprints/README.md)
 - **Modelos para planning, encerramento e outros repositórios:** [`docs/modelos/README.md`](docs/modelos/README.md)
+- **Versões e baselines preservados de governança:** [`docs/operacao/versoes/README.md`](docs/operacao/versoes/README.md)

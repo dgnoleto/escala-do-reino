@@ -1,6 +1,6 @@
 # Modelo de governança e colaboração entre agentes de IA
 
-Versão: 1.0 — base reutilizável consolidada em 25/10/2026; exige adaptação e aprovação em cada destino.
+Versão vigente da base: **1.1** — sucessora da versão 1.0; exige adaptação e aprovação em cada destino.
 
 Este documento é uma base reutilizável, não uma configuração executável ou autorização para alterar um repositório. Sua adoção depende da adaptação ao projeto e da aprovação do responsável. Não instalar ferramentas, copiar configurações ou publicar arquivos automaticamente.
 
@@ -150,7 +150,7 @@ No primeiro contato pertinente a partir do dia seguinte ao fim da sprint, verifi
 
 Após preparar a passagem de contexto, recomendar uma nova conversa de orquestração para o próximo ciclo. Não encerrar, arquivar ou abandonar uma operação em andamento automaticamente. Conversas técnicas podem continuar até um ponto seguro da unidade de trabalho.
 
-Manter um registro conciso por ciclo, com links para evidências em vez de cópias integrais:
+Quando houver sprints, manter um único documento principal por sprint, reunindo abertura, planejamento, andamento e encerramento. Atualizar por acontecimentos relevantes, datando mudanças e preservando os retratos anteriores; modelos de planning e encerramento orientam seções do mesmo documento. Em outras cadências, adaptar o registro ao ciclo adotado. Manter links para evidências em vez de cópias integrais:
 
 | Informação | Conteúdo |
 |---|---|
@@ -173,7 +173,7 @@ Na nova sessão, ler instruções aplicáveis, estado atual, resumo de passagem 
 | AGENTS.md | Instruções de entrada, papéis, limites essenciais e links para o procedimento. |
 | Fluxo de colaboração | Etapas, decisão, diagnóstico, revisão, evidências e retomada. |
 | Guia de acompanhamento | Issues, subissues, status, capacidade, planejamento e falhas de atualização. |
-| Registro de encerramento | Resultado e passagem de contexto de um ciclo específico. |
+| Documento principal do ciclo | Abertura, andamento, encerramento e passagem de contexto, com atualizações relevantes datadas. |
 
 Não é obrigatório criar todos esses arquivos. Projetos pequenos podem manter o procedimento em um único documento, com entrada curta em AGENTS.md. Cada regra deve ter uma referência principal, evitando versões concorrentes.
 
@@ -195,3 +195,12 @@ Registrar conflitos, ajustes locais e aprovação antes de considerar este model
 ## 14. Critérios de manutenção da base
 
 Cada projeto deve registrar a versão adotada, as adaptações e o responsável pela aprovação. Uma atualização desta base deve ser comparada às regras locais antes de adoção, sem sobrescrever decisões ou copiar particularidades do projeto de origem. Este arquivo é um modelo de processo; não é uma skill instalada, configuração MCP ou mecanismo de bloqueio técnico.
+
+Aplicar os seguintes princípios gerais à base e à política adaptada:
+
+- Manter uma única versão vigente claramente identificada para cada documento normativo. Quando não houver versão numérica anterior, identificar o baseline datado e a primeira versão formal, sem inventar histórico retroativo.
+- Proibir a exclusão, substituição ou redução silenciosa de decisões aprovadas, regras de segurança, permissões e limites operacionais.
+- Apresentar mudanças normativas relevantes com antes/depois, motivo, impactos e riscos; obter autorização expressa do responsável e revisão independente quando exigida pelas regras locais.
+- Após a aprovação da mudança, preservar integralmente a versão ou baseline anterior antes de substituir a referência vigente, inclusive quando o responsável confirmar a alteração após alertas de risco ou impacto. Manter o acervo histórico sem efeito autorizativo concorrente, sem sobrescrever seus bytes.
+- Identificar no acervo origem, versão/baseline, data, SHA-256, sucessora e decisão. Documentar a localização original necessária à interpretação dos links relativos, sem alterar as cópias históricas.
+- Rastrear correções editoriais sem mudança de sentido pelo Git, sem exigir cópia integral a cada ajuste.

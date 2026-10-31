@@ -1,8 +1,10 @@
 # Plataforma do Reino — guia de trabalho no GitHub
 
+Versão vigente: **1.1** — consolidada em **31/10/2026**, sucessora do [baseline atualizado em 25/10/2026](versoes/README.md), integrado no PR #64. Primeira numeração formal deste guia; o baseline anterior não declarava versão numérica e não recebe numeração retroativa. Entrada normativa: [AGENTS.md](../../AGENTS.md).
+
 Preparado em 11/10/2026 para consolidar a organização do Project aprovada pelo responsável e a diretriz de seleção documental por PR. Este guia foi aprovado para publicação pelo responsável em 11/10/2026. Ele descreve o processo de trabalho; regras de produto continuam no PRD e nos contratos aprovados.
 
-Atualização documental autorizada em **25/10/2026**: controle de capacidade, sprints, planning, subissues, falhas de atualização do quadro e encerramento. Esta rodada altera arquivos locais; não implica publicação no GitHub nem mudança automática do Project.
+Registro da atualização documental autorizada em **25/10/2026**: controle de capacidade, sprints, planning, subissues, falhas de atualização do quadro e encerramento. Aquela rodada alterou arquivos locais, sem implicar publicação no GitHub nem mudança automática do Project. Complemento autorizado em **31/10/2026**: evolução e preservação normativa e documento principal único por sprint, conforme as referências abaixo; esta atualização local também não altera o Project.
 
 ## 1. Onde cada informação fica
 
@@ -182,6 +184,7 @@ Responsável pela decisão:
 | Este guia e README do Project | O processo de issues, PRs, documentação ou configuração de acompanhamento mudar. |
 
 - **Regra vigente:** manter uma referência principal; não criar cópias concorrentes do mesmo PRD.
+- **Evolução normativa:** aplicar o [procedimento principal de evolução e preservação](FLUXO-MULTIAGENTE.md#55-evolução-e-preservação-de-documentos-normativos), incluindo a identificação da versão vigente e o [acervo histórico](versoes/README.md).
 - **Estado atual:** refletir o presente e apontar evidências; identificar quando um SHA é referência histórica anterior ao próprio PR documental.
 - **Histórico:** preservar a observação da data original. Uma correção factual deve ficar identificada e ligada à evidência que a motivou; uma evolução posterior deve ser contextualizada sem apagar o que ocorreu.
 - **Evidência:** distinguir teste automatizado, revisão documental, interface sintética e ensaio real. Registrar versão, backend, método, resultado e alcance.
@@ -228,7 +231,7 @@ Fontes técnicas de referência: [Projects](https://docs.github.com/en/issues/pl
 
 ## 11. Cadência, capacidade e sprints
 
-Esta seção é a referência principal das decisões do PO/PM de **25/10/2026** para calendário, planning e encerramento. O PO/PM usa preferencialmente o Kanban geral. O campo **Sprint**, do tipo iteração, define períodos e associação dos itens; uma aba filtrada é somente uma visualização. Status e Sprint são campos independentes.
+Esta seção é a referência principal das decisões do PO/PM de **25/10/2026** para calendário, planning e encerramento, complementadas em **31/10/2026** pela organização documental da seção 11.6. O PO/PM usa preferencialmente o Kanban geral. O campo **Sprint**, do tipo iteração, define períodos e associação dos itens; uma aba filtrada é somente uma visualização. Status e Sprint são campos independentes.
 
 ### 11.1 Contexto temporal antes de assumir trabalho
 
@@ -272,13 +275,13 @@ O aviso não interrompe trabalho autorizado, não inicia a planning no chat de e
 
 Registrar o alerta no acompanhamento da sprint quando houver autorização documental. Evitar repetição: um alerta inicial por sprint; renovar apenas com mudança relevante, vencimento sem planning registrada ou pedido do PO/PM. Em novas sessões, conferir o registro antes de avisar; se não puder fazê-lo, declarar a limitação em vez de afirmar que nunca houve aviso.
 
-Conduzir a planning em conversa própria, com o [modelo de planning](../modelos/sprints/PLANNING.md). Registrar objetivo, período, capacidade conhecida/hipóteses, itens selecionados, dependências, critérios e decisões do PO/PM. Registrar o destino dos itens não concluídos sem transferi-los automaticamente. Só alterar o Project conforme a decisão autorizada e conferir os campos depois.
+Conduzir a planning em conversa própria, usando o [modelo de planning](../modelos/sprints/PLANNING.md) como estrutura para a seção de planejamento do documento principal da sprint (seção 11.6). Registrar objetivo, período, capacidade conhecida/hipóteses, itens selecionados, dependências, critérios e decisões do PO/PM. Registrar o destino dos itens não concluídos sem transferi-los automaticamente. Só alterar o Project conforme a decisão autorizada e conferir os campos depois.
 
 ### 11.5 Encerramento e recomendação de nova conversa
 
 A partir do dia seguinte ao término, na primeira interação pertinente, conferir o registro de encerramento. Se faltar ou estiver incompleto, sinalizar e preparar a consolidação no escopo autorizado. O fim do período não muda sozinho o estado das issues nem comprova entrega.
 
-Usar o [modelo de encerramento](../modelos/sprints/ENCERRAMENTO.md) para registrar objetivo/período, entregas comprovadas, pendências e motivos, verificações e limites, decisões, versões/ambientes relevantes e próximo passo. Referenciar evidências em vez de copiar todos os logs, comentários e commits. Identificar rascunho, revisão e aceite; não inventar resultados ou aprovações. Correções posteriores ficam datadas sem apagar o retrato original.
+Usar o [modelo de encerramento](../modelos/sprints/ENCERRAMENTO.md) como estrutura para a seção de encerramento do mesmo documento principal da sprint (seção 11.6), registrando objetivo/período, entregas comprovadas, pendências e motivos, verificações e limites, decisões, versões/ambientes relevantes e próximo passo. Referenciar evidências em vez de copiar todos os logs, comentários e commits. Identificar rascunho, revisão e aceite; não inventar resultados ou aprovações. Correções posteriores ficam datadas sem apagar o retrato original.
 
 Depois de disponibilizar o registro e um resumo confiável, recomendar uma nova conversa de orquestração para o próximo ciclo, preferencialmente Work. O PO/PM decide criar, arquivar ou encerrar chats. Preservar tarefas técnicas em andamento até um ponto seguro; a conversa de execução é delimitada por issue/resultado e pode atravessar o calendário.
 
@@ -286,8 +289,10 @@ Na retomada, ler AGENTS.md e aplicar identidade/VCC, estado atual, passagem de c
 
 ### 11.6 Organização e fonte de referência
 
-- [docs/sprints/](../sprints/README.md): acompanhamentos e fechamentos por período.
-- [docs/modelos/sprints/](../modelos/README.md): modelos vazios de planning e encerramento.
+**Decisão do responsável em 31/10/2026:** manter uma pasta por sprint e um único documento principal, `ACOMPANHAMENTO.md`, reunindo abertura, planejamento, andamento e encerramento. Atualizar por acontecimentos relevantes, datando decisões, mudanças de estado e complementos sem apagar o retrato inicial. Os modelos de planning e encerramento orientam seções desse arquivo; não geram documentos paralelos por rotina nem substituem evidências específicas referenciadas.
+
+- [docs/sprints/](../sprints/README.md): índice dos documentos principais por período.
+- [docs/modelos/sprints/](../modelos/README.md): modelos vazios usados como referência estrutural das seções de planning e encerramento.
 - [Modelo reutilizável de governança](../modelos/governanca/MODELO-GOVERNANCA-IA-REPOSITORIOS.md): base para outros repositórios, sujeita a adaptação/aprovação local; não altera as regras deste projeto automaticamente.
 - [AGENTS.md](../../AGENTS.md): autoridade, papéis, princípios e limites.
 - [Fluxo multiagente](FLUXO-MULTIAGENTE.md): procedimento de decisão, diagnóstico, contraponto, risco e evidências.
