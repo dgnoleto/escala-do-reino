@@ -1,5 +1,7 @@
 # Escala do Reino — Fluxo Operacional Multiagente
 
+Versão vigente: **1.1** — consolidada em **31/10/2026**, sucessora do [baseline de 31/10/2026](versoes/README.md) integrado no PR #64. Primeira numeração formal deste documento; o baseline anterior não declarava versão numérica e não recebe numeração retroativa. Entrada normativa: [AGENTS.md](../../AGENTS.md).
+
 Este documento descreve o ciclo de trabalho recomendado para a colaboração entre o **responsável pelo produto**, **ChatGPT**, **Antigravity** e **Codex**, detalhando as etapas de desenvolvimento, critérios de eficiência e o protocolo para retomada segura de contexto.
 
 ---
@@ -242,6 +244,17 @@ Encerrar a tarefa quando seus critérios vigentes estiverem satisfeitos e as evi
 | Critérios atendidos com melhorias futuras | Concluir a entrega e manter evolução separada, sem auditoria infinita. |
 | Mesma falha persiste após duas rodadas de correção | Aplicar o diagnóstico de repetição da seção 5.2; não emitir outro repasse equivalente sem rever a causa e a verificação. |
 | Uma frente está bloqueada | Delimitar a entrega afetada e conferir itens em revisão ou frentes independentes autorizadas, sem trocar prioridades do responsável por inferência. |
+
+### 5.5 Evolução e preservação de documentos normativos
+
+Procedimento principal da decisão de **31/10/2026**, descrita em [AGENTS.md, seção 1.8](../../AGENTS.md#18-evolução-controlada-e-preservação-de-documentos-normativos), com a [issue #59](https://github.com/dgnoleto/escala-do-reino/issues/59) como referência histórica e seu aceite preservado:
+
+1. **Identificar a referência vigente:** cada documento mantém uma única versão vigente, com identificação e data claras. Quando não houver número anterior declarado, identificar o baseline datado e a primeira versão formal adotada, sem inventar histórico ou numeração retroativa.
+2. **Apresentar o delta antes da alteração normativa relevante:** mostrar antes/depois, motivo, impactos e riscos; identificar decisões, regras de segurança, permissões e limites afetados. É proibido apagar, substituir ou enfraquecer silenciosamente essas disposições. Obter autorização expressa do responsável e revisão independente quando exigida pelos critérios existentes de [AGENTS.md, seção 3](../../AGENTS.md#3-critérios-para-convocação-de-revisão-independente).
+3. **Preservar a referência anterior após a aprovação da mudança:** arquivar sua íntegra em [docs/operacao/versoes/](versoes/README.md) antes de substituir o conteúdo vigente, inclusive quando o responsável confirmar a alteração após alertas de risco ou impacto. Reutilizar a cópia existente quando ela já corresponder ao baseline; não duplicar nem sobrescrever arquivos históricos.
+4. **Conferir e identificar o acervo:** manter os bytes originais, calcular SHA-256 e registrar no índice origem, versão/baseline, data de preservação, sucessora e decisão autorizadora. Explicar o diretório de origem necessário para interpretar os links relativos, sem editar as cópias para ajustá-los à pasta de arquivo. O acervo é histórico, sem efeito autorizativo concorrente.
+5. **Atualizar a referência principal e seus links:** aplicar somente o delta aprovado, conferir a preservação das regras não afetadas e distinguir alteração local de publicação. Concentrar o procedimento nesta seção; os demais guias apontam para ela.
+6. **Distinguir correção editorial:** ajustes sem mudança de sentido são rastreados pelo Git, sem cópia integral obrigatória a cada ajuste. Essa dispensa não permite disfarçar mudança normativa como edição de texto.
 
 ## 6. Ciclos e passagem de contexto entre conversas
 
