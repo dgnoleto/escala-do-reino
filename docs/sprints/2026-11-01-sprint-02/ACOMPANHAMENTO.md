@@ -4,6 +4,8 @@ Abertura documental preparada em **31/10/2026** para vigência a partir de **01/
 
 Estado atual do registro em **31/10/2026**: **6 issues selecionadas pelo responsável e transferidas pelo orquestrador para a `Sprint 2` no Project (`#28`, `#29`, `#30`, `#51`, `#57` e `#58`) — objetivo, capacidade, prioridades e ordem de execução permanecem pendentes de planejamento**. A associação à sprint não autoriza execução paralela de todas as frentes.
 
+Atualização vigente em **01/11/2026**: o responsável definiu capacidade e ratificou o foco nas seis issues herdadas, com sequência de tratamento e sem inclusão de novas issues até sua conclusão. O planejamento deliberado está na seção 2.2; os registros de 31/10 abaixo permanecem como histórico datado. Estimativas do esforço restante por entrega ainda não foram produzidas.
+
 ## 1. Calendário e fonte
 
 | Informação | Referência conferida |
@@ -44,12 +46,53 @@ As seis issues abaixo — que compunham as pendências do corte de fechamento da
 | [#30](https://github.com/dgnoleto/escala-do-reino/issues/30) — Conferir duração e publicar a programação conforme a política do evento | **Em revisão** | UI e apuração de durações/políticas `warn` e `block` integradas no [PR #50](https://github.com/dgnoleto/escala-do-reino/pull/50); paridade, auditoria estática e ensaio sob `ROLLBACK` (`023a + 023b + 025`) aceitos para `set_event_duration_policy`, `publish_event_program` e `save_event_program_draft`. | (a) **Instalação atômica segura** da cadeia `023a + 023b + 025`, (b) **verificação de concorrência** na publicação/rascunho, (c) **integração HTTP/aplicação** dessas RPCs e (d) refinamentos de autoridade/rascunhos no corpo da história. | **Impede:** homologação final da publicação e política de duração contra banco instalado. **Não impede:** definição dos refinamentos funcionais ou testes locais de cálculo. **Liberação:** instalação segura de `023a + 023b + 025` e validação integrada HTTP/aplicação após `#28` e `#29`. | **Selecionada e transferida para a Sprint 2** *(prioridade e ordem de execução pendentes de planejamento)* |
 | [#51](https://github.com/dgnoleto/escala-do-reino/issues/51) — [Task técnica] Integrar cadastros e planejamento à navegação autenticada da igreja | **Em revisão** | Navegação integrada no [PR #56](https://github.com/dgnoleto/escala-do-reino/pull/56); subissues `#53`, `#54` e `#55` e histórias `#25`, `#26` e `#27` aceitas e encerradas. | Exclusivamente a **integração HTTP/aplicação da aba de planejamento (`#28–#30`)** contra o backend seguro instalado, sem simular persistência quando migrations faltarem. | **Impede:** homologação final da jornada autenticada de planejamento e fechamento integral da `#51`. **Não impede:** operação e manutenção das abas de cadastros já aceitas. **Liberação:** instalação segura de `023a + 023b + 025` e homologação integrada da aba de planejamento (`#28–#30`). | **Selecionada e transferida para a Sprint 2** *(prioridade e ordem de execução pendentes de planejamento)* |
 
+### 2.2 Abertura e planejamento deliberados em 01/11/2026
+
+**Fonte da decisão:** conversa de orquestração de 01/11/2026 entre o responsável pelo produto e ChatGPT (coordenação). O responsável informou sua disponibilidade, ratificou a sequência proposta e decidiu não incluir novas issues até concluir as seis herdadas. Este complemento sucede as pendências de planejamento registradas em 31/10, sem apagar os registros anteriores.
+
+**Objetivo da sprint:** concluir as pendências herdadas de `#58`, `#57`, `#28`, `#29`, `#30` e `#51`, viabilizando a criação, organização e publicação do planejamento de cultos na jornada autenticada, com os critérios de segurança, integração, evidências e aceite de cada issue preservados.
+
+**Escopo decidido:** somente as seis issues já vinculadas à Sprint 2. Novas issues do Backlog, inclusive a candidata `#32` discutida na planning, permanecem fora da sprint até a conclusão das seis herdadas. Após essa conclusão, eventual ampliação depende de capacidade restante e de nova seleção expressa do responsável; não há inclusão automática.
+
+#### Capacidade informada e base de planejamento
+
+Disponibilidade do responsável para acompanhamento, decisões, verificações e aceite; não é estimativa de esforço por issue nem garantia de conclusão. O dia 02/11 é a exceção expressamente informada à rotina de duas horas por dia útil.
+
+| Dias do período inclusivo | Quantidade de dias | Disponibilidade por dia | Total |
+|---|---:|---:|---:|
+| 01 e 02/11 | 2 | 4 a 6 horas | 8 a 12 horas |
+| 03 a 06/11 e 09 a 13/11 | 9 | 2 horas | 18 horas |
+| 07, 08, 14 e 15/11 | 4 | 4 a 6 horas | 16 a 24 horas |
+| **Total de 01 a 15/11** | **15** | | **42 a 54 horas** |
+
+Usar 42 horas como referência conservadora do planejamento, sem depender das 12 horas adicionais possíveis. A distribuição por entrega, a margem de contingência e a viabilidade do esforço restante continuam a dimensionar, incluindo implementação, testes, revisão independente quando aplicável, homologação e aceite. Não foram atribuídas estimativas ou datas de conclusão fictícias às issues.
+
+#### Prioridade e sequência ratificadas
+
+1. **#58 — ambiente e recuperação:** resolver os bloqueios efetivos de R7/reconciliação e as demais pendências dos critérios vigentes. Distinguir o recorte que libera etapas dependentes do atendimento integral necessário ao encerramento da própria issue; preservar o backup/restore e o ensaio sequencial já aceitos.
+2. **#57 — segurança do planejamento:** concluir instalação atômica segura, verificações concorrentes, integração e publicação pertinentes, conforme as dependências e autorizações aplicáveis. Preservar o candidato e os aceites anteriores; nenhum estado intermediário vulnerável pode ser confirmado.
+3. **#28 — criação e liderança:** concluir o refinamento pendente e a validação integrada da criação de edições e das permissões de liderança, após as condições técnicas de liberação.
+4. **#29 — programação:** concluir o refinamento da preparação prévia e a validação integrada da persistência, reordenação e serviços paralelos, apoiada em #28.
+5. **#30 — duração e publicação:** concluir os refinamentos de autoridade/rascunhos e a validação integrada das políticas e da publicação, apoiada em #28 e #29.
+6. **#51 — jornada autenticada:** concluir a conferência da navegação e da integração de planejamento #28–#30, reaproveitando suas evidências e as entregas de cadastros já aceitas.
+
+A sequência define prioridade, respeitando as condições de liberação de cada operação; um bloqueio tem alcance delimitado e não invalida evidências ou trabalho independente já autorizado. Manter uma frente complexa por vez, salvo paralelismo expressamente autorizado conforme AGENTS.md. A conclusão das seis é o objetivo escolhido pelo responsável, não um aceite antecipado nem uma previsão técnica comprovada.
+
+#### Critérios de acompanhamento e limites
+
+- Reutilizar os critérios das issues e a matriz da seção 2.1; verificar somente pendências, deltas e consequências demonstradas, sem reabrir aceites por rotina.
+- Distinguir revisão estática, mocks, ensaio PostgreSQL sob ROLLBACK, instalação persistente, HTTP/aplicação e aceite funcional. O fechamento de cada issue depende das evidências aplicáveis e da decisão do responsável.
+- Registrar neste documento os acontecimentos relevantes, mudanças de capacidade, bloqueios com alcance concreto e decisões, com data e referência, sem relatórios paralelos por comando.
+- Esta decisão autoriza a atualização documental da abertura. Não autoriza execução técnica, SQL, alterações de ambiente/dados, commit, push, PR, merge, deploy, fechamento de issues ou novas alterações no Project. As autorizações operacionais conservam seus escopos próprios.
+- **Próximo passo de planejamento:** dimensionar apenas o esforço restante das seis issues, começando pelas pendências efetivas de #58, para orientar a execução na sequência ratificada. O dimensionamento não exige refazer auditorias ou ensaios já aceitos e não cria novo critério de aceite.
+
 ## 3. Andamento, alertas e decisões do ciclo
 
 | Data | Evento | Situação/decisão | Referência |
 |---|---|---|---|
 | 31/10/2026 | Abertura documental da Sprint 2 | Período de `01 a 15/11/2026` (15 dias inclusivos) cadastrado e conferido no GitHub Project pelo orquestrador, sob autorização expressa do responsável, em `31/10/2026`. Documento principal criado com objetivo, capacidade e seleção de issues então pendentes de planning e as seis pendências da Sprint 1 listadas inicialmente como candidatas. | Decisão do responsável nesta conversa. |
 | 31/10/2026 | Seleção e transferência das 6 pendências para a Sprint 2 | Por decisão expressa do responsável, as 6 issues pendentes do fechamento da Sprint 1 (`#28`, `#29`, `#30`, `#51`, `#57` e `#58`) foram selecionadas para a **Sprint 2** e transferidas/conferidas no Project pelo orquestrador, mantendo seus status (`5 Em revisão`, `1 Em andamento`), corpos, critérios, títulos, comentários e estados preservados. Objetivo, capacidade, prioridades e ordem de execução permanecem pendentes de planejamento; a associação à sprint não autoriza execução paralela de todas as frentes. | Decisão do responsável e conferência do orquestrador em `31/10/2026`. |
+| 01/11/2026 | Abertura e planejamento deliberados | Responsável informou 42 a 54 horas de dedicação, com exceção de 4 a 6 horas em 02/11, e ratificou a sequência #58 → #57 → #28 → #29 → #30 → #51. Nenhuma nova issue será incluída antes de concluir as seis herdadas. Escopo e sequência definidos; esforço restante por entrega ainda a dimensionar. | Decisão do responsável nesta conversa; seção 2.2. |
 
 *(Registrar nesta tabela os avisos da janela de 14–15/11/2026, a realização da planning, as decisões de escopo do responsável e as entregas concluídas ao longo do período.)*
 
