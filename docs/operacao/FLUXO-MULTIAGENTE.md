@@ -1,8 +1,8 @@
 # Escala do Reino — Fluxo Operacional Multiagente
 
-Versão vigente: **1.1** — consolidada em **31/10/2026**, sucessora do [baseline de 31/10/2026](versoes/README.md) integrado no PR #64. Primeira numeração formal deste documento; o baseline anterior não declarava versão numérica e não recebe numeração retroativa. Entrada normativa: [AGENTS.md](../../AGENTS.md).
+Versão vigente: **1.3** — evolução focal em **05/11/2026** (referências decisórias conceituais de 03/11/2026 e 05/11/2026) da [versão 1.2 preservada](versoes/2026-11-05-FLUXO-MULTIAGENTE-v1.2.md). O baseline anterior à primeira numeração permanece no [acervo](versoes/README.md). Entrada normativa: [AGENTS.md](../../AGENTS.md).
 
-Este documento descreve o ciclo de trabalho recomendado para a colaboração entre o **responsável pelo produto**, **ChatGPT**, **Antigravity** e **Codex**, detalhando as etapas de desenvolvimento, critérios de eficiência e o protocolo para retomada segura de contexto.
+Este documento descreve o ciclo de trabalho recomendado para a colaboração entre o **responsável pelo produto**, **ChatGPT** (orquestrador canônico), **Claude** (orquestrador secundário convocável), **Antigravity** (executor principal), executores complementares autorizados e **Codex** (revisor técnico independente), detalhando as etapas de desenvolvimento, critérios de eficiência e o protocolo para retomada segura de contexto.
 
 ---
 
@@ -11,25 +11,15 @@ Este documento descreve o ciclo de trabalho recomendado para a colaboração ent
 O fluxo de trabalho do projeto segue um modelo baseado em gates de qualidade progressivos, garantindo que nenhum incremento seja integrado sem validação técnica e documental:
 
 ```
-[1. Definição do Escopo]
-         |
-         v
-[2. Implementação (Antigravity)]
-         |
-         v
-[3. Testes & Evidências]
-         |
-         v
-[4. Revisão Independente (Codex)] ---> (Identificou bloqueios?)
-         |                                    |
-         | Não (Aprovado / Ressalvas)         v Sim (Rejeitado)
-         |                             [5. Correções Cirúrgicas]
-         v                                    |
-[6. Aceite do Gate (Responsável)] <-----------+
-         |
-         v
-[7. Registro de Checkpoint]
+[1. Escopo] -> [2. Implementação] -> [3. Verificação] -> [4. Revisão, quando exigida]
+                                                                  |
+                      sem bloqueio -------------------------------+-> [6. Aceite] -> [7. Registro]
+                                                                  |
+                      bloqueio -> [5. Correção] -> [3. Verificação do delta]
+                                                        -> [4. Reavaliação focal, quando exigida] -> [6. Aceite]
 ```
+
+Uma correção não segue diretamente para aceite: a verificação afetada deve ser repetida; a revisão focal é repetida quando exigida pelo risco ou pelo responsável. Aceites não afetados permanecem válidos.
 
 ### Regra transversal: issue como trilha oficial
 
@@ -41,12 +31,14 @@ O fluxo de trabalho do projeto segue um modelo baseado em gates de qualidade pro
 - **Antes da implementação e da auditoria:** aplicar o gate de paridade contratual de [AGENTS.md, seção 1.7](../../AGENTS.md#17-rastreabilidade-por-issue-e-paridade-contratual). Exigir especificação/delta e matriz por fonte de verdade; não avançar com divergência ou não verificação crítica. Registrar a paridade separadamente de auditoria, execução, homologação e autorização de publicação.
 
 ### Etapa 1: Definição Clara da Tarefa e Escopo
-- O responsável ou o ChatGPT define a meta pontual, os limites operacionais, arquivos autorizados e critérios de aceitação.
+- O responsável, o ChatGPT (orquestrador canônico) ou Claude (quando convocado como orquestrador secundário pelo responsável) define a meta pontual, os limites operacionais, arquivos autorizados e critérios de aceitação.
 - O escopo deve ser delimitado: tarefas focais produzem resultados mais rápidos, fáceis de auditar e livres de contaminação de contexto.
 - Na passagem existente, explicitar o resultado que encerra a tarefa, a verificação mínima e os limites, conforme [AGENTS.md, seção 1.3](../../AGENTS.md#13-decisão-autorização-e-contenção-de-escopo). Se surgir ferramental adicional, confrontá-lo com esse resultado antes de ampliar a implementação.
 
-### Etapa 2: Implementação pelo Agente Executor (Antigravity)
-- O Antigravity executa a alteração no checkout local, aderindo aos contratos de domínio prévios.
+### Etapa 2: Implementação pelo Agente Executor Principal (Antigravity) e Executores Complementares
+- O Antigravity executa a alteração no checkout local como executor principal. Agentes identificados operando via interfaces autorizadas (como Claude Code) podem atuar como executores complementares recorrentes ou revisores auxiliares sob escopo autorizado pelo responsável.
+- Diante de sinais de estagnação, repetição, especialização útil ou para divisão produtiva de trabalho, qualquer agente ou o responsável pode sugerir segunda opinião ou execução complementar conforme Seção 1.3 e Seção 2.7 de AGENTS.md, mantendo-se a abordagem vigente enquanto houver avanço contínuo.
+- **Isolamento de trabalho:** escopos de arquivos disjuntos reduzem conflitos, mas não substituem o isolamento físico. Toda atuação paralela exige worktree, clone ou checkout fisicamente separado, associado à sua própria branch (branches diferentes no mesmo working tree não constituem isolamento para atuação simultânea). No mesmo checkout, a atuação é exclusivamente serial e exige reconferência prévia de branch, HEAD, índice e diff. O executor complementar entrega evidências e hashes ao Antigravity, que confere e integra as alterações; essa conferência é interna e não substitui a revisão técnica independente do Codex quando exigida.
 - O executor preserva arquivos não relacionados e respeita as convenções de código (Unicode NFC, imutabilidade, isolamento de inquilino por `church_id`).
 
 ### Etapa 3: Testes e Coleta de Evidências
@@ -54,11 +46,13 @@ O fluxo de trabalho do projeto segue um modelo baseado em gates de qualidade pro
 - Selecionar verificações conforme a mudança, o risco e a autorização. Alterações somente documentais não exigem suíte de aplicação, build ou ensaio de banco por rotina.
 - Planejar cedo a verificação local necessária e executá-la dentro da autorização de implementação/correção descrita em AGENTS.md, seção 1.3; restrições expressas e autorizações de ambientes reais continuam prevalecendo.
 - Coleta de evidências objetivas e reprodutíveis: saídas de terminal com código de saída, contagens de registros, diffs e fingerprints determinísticos.
+- Antes de encaminhar código ou SQL à revisão, executar a menor checagem local disponível e autorizada que detecte erros básicos da classe alterada; informar separadamente os limites dessa checagem.
 
 ### Etapa 4: Revisão Independente (Codex)
 - Convocação **obrigatória** em mudanças críticas de segurança, autorização multi-tenant (`church_id`), funções RPC com `SECURITY DEFINER` ou parâmetros sensíveis, concorrência e integridade estrutural de dados no banco.
 - Convocação **proporcional ao risco** nas demais entregas, não sendo obrigatória para todo e qualquer fechamento formal de gate (alterações puramente documentais ou cosméticas de interface estão isentas).
-- O revisor atua de forma adversarial: valida diffs, busca vulnerabilidades, testa premissas de concorrência e avalia a completude das evidências.
+- O revisor atua de forma adversarial: valida diffs, busca vulnerabilidades, testa premissas de concorrência e avalia a completude das evidências. Confere diretamente as fontes e saídas brutas relevantes; quando o responsável exigir sessão separada do Codex, receberá um prompt para essa sessão.
+- **Distinção de escopo de revisão e coautoria:** segundas opiniões e revisões auxiliares constituem controles internos de qualidade; passam a caracterizar participação ou coautoria quando suas conclusões forem incorporadas à especificação, ao código ou à decisão técnica. Apenas o parecer do Codex satisfaz a revisão técnica independente exigida para o fechamento dos gates obrigatórios.
 - Consolidar os bloqueios encontrados no parecer da rodada. Em novo achado tardio, informar sua origem (alteração recente ou omissão anterior) e o aceite afetado, conforme AGENTS.md, seção 1.4.
 - Classifica os apontamentos em: **Bloqueios** (impedem o gate), **Ressalvas** (não impedem o avanço, mas exigem registro formal) e **Melhorias Futuras** (escopo de novas issues).
 - O responsável pelo produto detém a prerrogativa de solicitar revisões adicionais do Codex para qualquer entrega ou inspeção técnica quando julgar necessário.
@@ -67,6 +61,7 @@ O fluxo de trabalho do projeto segue um modelo baseado em gates de qualidade pro
 - Diante de parecer com bloqueios, o Antigravity realiza intervenções cirúrgicas **apenas** nos pontos apontados pelo Codex.
 - Evita-se reescrever código ou refatorar componentes que já foram aprovados em etapas anteriores.
 - Acompanhar no checkpoint existente as rodadas do mesmo defeito. Ao atingir o gatilho de AGENTS.md, seção 1.4, aplicar o diagnóstico de repetição da seção 5.2 antes de outro repasse equivalente.
+- Após corrigir, retornar à Etapa 3 para verificar o delta e as consequências diretas; retornar à Etapa 4 apenas quando a revisão for exigida. Não encaminhar a correção diretamente ao aceite.
 
 ### Etapa 6: Aceite do Gate pelo Responsável
 - O responsável pelo produto analisa o parecer técnico do Codex (quando aplicável), as evidências colhidas e as eventuais ressalvas declaradas.
@@ -88,7 +83,7 @@ Para maximizar a produtividade e a robustez sem redundâncias:
 1. **Revisão proporcional ao risco e nem todo agente em toda tarefa:** Alterações puramente documentais, pequenos ajustes de estilo ou correções tipográficas podem ser finalizadas diretamente pelo Antigravity sob aprovação do responsável, sem acionar o ciclo completo de auditoria do Codex. A revisão independente concentra-se onde há risco real (segurança, banco, concorrência, integridade).
 2. **Não reabrir escopos já aprovados:** Se uma frente foi validada e aprovada pelo Codex em rodada anterior, o revisor deve focar estritamente nas alterações recentes ou nos bloqueios remanescentes, sem reiniciar auditoria do zero em código estável.
 3. **Não reabrir gates sem evidência nova:** Decisões de arquitetura e gates formalmente homologados pelo responsável em etapas anteriores não devem ser rediscutidos sem um fato técnico novo, falha comprovada ou regressão observada em testes.
-4. **Relatórios incrementais:** Usar o checkpoint existente para registrar sucintamente o delta, o resultado concluído, o impedimento concreto remanescente e a necessidade da próxima ação. Não criar um novo Markdown de revisão por rotina nem reproduzir todo o histórico a cada interação; preservar as evidências originais e criar documento adicional somente quando necessário ao resultado ou solicitado pelo responsável.
+4. **Relatórios incrementais:** Usar o checkpoint existente para registrar sucintamente o delta, o resultado concluído, o impedimento concreto remanescente e a necessidade da próxima ação. Não criar um novo Markdown de revisão por rotina nem reproduzir todo o histórico a cada interação; preservar as evidências originais e criar documento adicional somente quando necessário ao resultado ou solicitado pelo responsável. Se o histórico de comandos contradisser o resumo, explicitar e resolver essa divergência antes de declarar cumprimento.
 5. **Separar bloqueios de melhorias futuras:** Diferenciar com rigor o que impede a entrega atual do que constitui sugestão de evolução para o backlog futuro.
 6. **Prompts focalizados:** Prompts longos e generalistas tendem a diluir a atenção dos modelos; instruções diretas e bem delimitadas produzem código mais seguro.
 7. **Distinção estrita das classes de teste:**
@@ -136,7 +131,7 @@ Passo 6: Apresentar resumo objetivo ao responsável ANTES de propor execução
 4. **Distinguir Trabalho Autorizado de Trabalho Futuro:**
    - Não assumir que uma atividade sugerida no backlog já possui autorização para ser executada.
 5. **Alinhamento Inicial:**
-   - O agente deve abrir a conversa apresentando um diagnóstico objetivo de 1 parágrafo com: branch atual, último commit, último gate concluído e a próxima atividade que aguarda autorização.
+   - O agente deve abrir a conversa apresentando um diagnóstico objetivo de 1 parágrafo com: branch atual, último commit, último gate concluído e a próxima atividade que aguarda autorização. Se a frente estiver pausada, identificar também o último resultado comprovado e a condição de retomada.
 
 > **Acesso e leitura dirigida:** Confirmar as ferramentas e os acessos efetivamente disponíveis na sessão, sem presumir acesso local, GitHub ou Project. Se faltar acesso, pedir somente o material necessário. Usar estado atual, issue e passagem de contexto, aprofundando nos contratos e no código afetado; não reler todo o repositório por rotina. Economia de contexto não justifica omitir uma regra ou evidência necessária.
 
@@ -148,11 +143,11 @@ Aplica as decisões do responsável de **24/10/2026**, registradas nas [seções
 
 ### 4.1 Identidade antes da execução
 
-Quem preparar um prompt deve declarar seu destinatário e incluir a trava abaixo. Quem o receber deve conferir sua identidade antes de executar qualquer etapa. Se for outro agente ou outro LLM exigido, responder apenas com o aviso de bloqueio, identificando o esperado e o confirmado; não executar parcialmente nem encaminhar a tarefa por conta própria. Identidade ou destinatário incerto exige esclarecimento antes de avançar.
+Quem preparar um prompt deve declarar seu destinatário e incluir a trava abaixo. Quem o receber deve conferir sua identidade antes de executar qualquer etapa. Na ausência de exigência de modelo específico, o modelo pode ser declarado como “não confirmado”, sem inventar identificação. Se houver modelo específico exigido e ele não puder ser confirmado, não execute nenhuma etapa. Se for outro agente ou se o modelo confirmado for diferente do exigido, responder apenas com o aviso de bloqueio, identificando o esperado e o confirmado; não executar parcialmente nem encaminhar a tarefa por conta própria. Identidade ou destinatário incerto exige esclarecimento antes de avançar.
 
 ### 4.2 VCC antes de avançar
 
-1. Comparar o retorno recebido com o objetivo/issue vigente, a última etapa comprovada, o resultado solicitado, os limites autorizados e as decisões existentes. Conferir versão e ambiente quando pertinentes; separar relatório de evidência e hipótese de fato confirmado.
+1. Comparar o retorno recebido com o objetivo/issue vigente, a última etapa comprovada, o resultado solicitado, os limites autorizados e as decisões existentes. Conferir versão e ambiente quando pertinentes; separar relatório de evidência e hipótese de fato confirmado. Confrontar alegações de execução com os registros brutos disponíveis e apontar contradições antes de usá-las como prova.
 2. Se o retorno estiver vazio, vago, fora de contexto ou contradisser a continuidade, suspender o passo dependente. Informar: **contexto esperado; trecho recebido ou ausência de conteúdo; divergência; impacto; esclarecimento necessário**. Perguntar como esse conteúdo sustenta a próxima etapa, sem inventar a conexão nem reenviar sucessivamente prompts que conservem a dúvida.
 3. Se a divergência propuser mudança material de escopo, barrar essa mudança e encaminhá-la ao responsável para decisão expressa. Preservar o último estado confirmado e os gates aceitos; uma divergência documental isolada não comprova regressão nem autoriza reabrir gate.
 4. Após o esclarecimento, registrar a base confirmada para a retomada. Havendo mudança material, registrar quem autorizou, data, objetivo e novos limites antes da execução. O registro deve permanecer no escopo documental autorizado; alterações em issues, Project ou publicações continuam sujeitas às permissões próprias.
@@ -162,17 +157,21 @@ Quem preparar um prompt deve declarar seu destinatário e incluir a trava abaixo
 Preencher os campos antes do envio; não inferir o destinatário a partir da ferramenta em que o prompt foi aberto.
 
 ```text
-Agente destinatário e papel:
-LLM/modelo exigido (quando aplicável; caso contrário, declarar sem exigência específica):
-Objetivo/issue e resultado esperado:
+Agente destinatário:
+Papel funcional esperado:
+Interface operacional, quando relevante:
+LLM/modelo exigido, quando aplicável; caso contrário, declarar sem exigência específica:
+Objetivo/issue, resultado esperado e condição de parada:
 Última etapa confirmada e evidências de referência:
 Escopo autorizado, arquivos e limites de execução:
 Versão/ambiente (quando aplicável):
 
 Trava de identidade: confira sua identidade real antes de executar qualquer etapa.
-Se você não for o agente ou LLM indicado, não execute este prompt, nem parcialmente.
-Avise a divergência e solicite o encaminhamento correto. Se não puder confirmar
-a identidade exigida ou o destinatário, pare e peça esclarecimento.
+Se você não for o agente indicado, se o modelo confirmado for diferente do exigido,
+ou se houver modelo específico exigido e ele não puder ser confirmado, não execute
+nenhuma etapa deste prompt, nem parcialmente. Declare agente, papel, interface e modelo
+confirmado ou “não confirmado”. Avise a divergência e solicite o encaminhamento correto.
+Se não puder confirmar a identidade exigida ou o destinatário, pare e peça esclarecimento.
 
 VCC: valide a relação entre o retorno recebido e a continuidade acima.
 Não encaixe respostas vazias, vagas ou fora de contexto. Sinalize a divergência
@@ -241,6 +240,8 @@ Encerrar a tarefa quando seus critérios vigentes estiverem satisfeitos e as evi
 | Duas IAs discordam | Comparar evidências e regras; encaminhar a decisão de produto ao responsável. |
 | Ferramenta não atualiza Project | Informar item, campo e valor pendentes, sem declarar a atualização concluída. |
 | Sprint termina com item incompleto | Registrar motivo e próximo passo; não marcar como entregue nem transferir automaticamente. |
+| Issue pausada pelo responsável | Registrar último resultado comprovado, pendências e condição de retomada no checkpoint existente; não tratar pausa como conclusão. |
+| Commit, sincronização ou edição no checkout durante uma ação | Interromper a ação dependente e reconferir branch, HEAD, índice e diff antes de prosseguir; preservar o trabalho existente. |
 | Critérios atendidos com melhorias futuras | Concluir a entrega e manter evolução separada, sem auditoria infinita. |
 | Mesma falha persiste após duas rodadas de correção | Aplicar o diagnóstico de repetição da seção 5.2; não emitir outro repasse equivalente sem rever a causa e a verificação. |
 | Uma frente está bloqueada | Delimitar a entrega afetada e conferir itens em revisão ou frentes independentes autorizadas, sem trocar prioridades do responsável por inferência. |
@@ -265,3 +266,4 @@ O procedimento de sprint, os alertas e o tratamento de limitações do Project t
 - A partir do dia seguinte ao término, verificar o encerramento. Preparar resumo confiável antes de recomendar nova conversa, preferencialmente Work; não criar, arquivar ou encerrar automaticamente.
 - A passagem informa objetivo, entregas comprovadas, limites, pendências/motivos, decisões, versão/ambiente relevantes e próximo passo, com uma lista curta de leituras. Publicação e alteração de issues/Project dependem da autorização própria.
 - O resumo é um ponto de entrada, não uma prova substituta. Conferir o estado relevante antes de executar e aprofundar somente nas evidências e arquivos necessários. Abrir outro chat não garante economia de tokens por si só.
+- **Retorno da orquestração secundária:** ao concluir período de contingência conduzido por Claude, emitir passagem formal contendo: tarefas executadas, estado Git/hashes, evidências colhidas, ressalvas e decisões pendentes para revalidação pelo ChatGPT (orquestrador canônico).
