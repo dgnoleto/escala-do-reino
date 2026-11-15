@@ -1,6 +1,6 @@
 # Escala do Reino — Guia de Governança e Papéis Multiagente
 
-Versão vigente: **1.3** — evolução focal em **05/11/2026** (referências decisórias conceituais de 03/11/2026 e 05/11/2026) da versão 1.2, preservada em [`docs/operacao/versoes/2026-11-05-AGENTS-v1.2.md`](docs/operacao/versoes/2026-11-05-AGENTS-v1.2.md). O baseline anterior à primeira numeração permanece no [acervo](docs/operacao/versoes/README.md).
+Versão vigente: **1.4** — evolução focal em **15/11/2026** (decisões do responsável de 15/11/2026: troca experimental de funções entre Codex e Claude Code na Sprint 3 e registro das conexões MCP do Antigravity) da versão 1.3, preservada em [`docs/operacao/versoes/2026-11-15-AGENTS-v1.3.md`](docs/operacao/versoes/2026-11-15-AGENTS-v1.3.md). O baseline anterior à primeira numeração permanece no [acervo](docs/operacao/versoes/README.md).
 
 Primeira numeração formal adotada para este documento; o baseline anterior não declarava versão numérica e não recebe numeração retroativa.
 
@@ -182,6 +182,7 @@ Registrar versão, referências, autor e resultado na issue, dentro da autoriza�
 - Executa as suítes de testes automatizados (`npm test`, testes focais, build de produção).
 - Conduz os ensaios técnicos autorizados e extrai evidências objetivas e determinísticas.
 - Prepara o empacotamento de commits e documentação, sem publicá-los sem autorização.
+- **Decisão do responsável em 15/11/2026:** as conexões MCP do Antigravity operam com leitura e escrita. A exceção é exclusiva dele, não se estende a outros agentes ou interfaces e não dispensa a autorização expressa para operações em banco, laboratório ou piloto (seções 1, 4 e 5).
 
 ### 2.4 Codex (Revisor Técnico Independente)
 - Realiza auditoria e revisão técnica independente de diffs, implementações e transcripts de execução.
@@ -222,6 +223,17 @@ Registrar versão, referências, autor e resultado na issue, dentro da autoriza�
   5. O resultado esperado e a condição de parada clara;
   6. Os riscos, custos contextuais e autorizações operacionais que seriam necessárias.
 - **Poder decisório:** a sugestão não implica convocação automática nem concessão de autorizações. A decisão de convocar, manter o executor atual ou mudar de abordagem é prerrogativa exclusiva do responsável pelo produto.
+
+### 2.8 Troca experimental de funções na Sprint 3
+**Decisão do responsável em 15/11/2026.** Durante a Sprint 3 (início em 16/11/2026), em caráter experimental:
+
+- A **revisão técnica independente** (seção 2.4 e seção 3) é exercida por **Claude, operando via Claude Code**, em sessão aberta pelo responsável com prompt próprio, lendo diretamente as fontes e evidências brutas.
+- O **Codex** exerce a **execução complementar e a revisão auxiliar** descritas na seção 2.6, sob as mesmas regras de escopo, checkout e entrega ao Antigravity.
+- O **ChatGPT** permanece como orquestrador canônico e o **Antigravity** como executor principal.
+- Enquanto esta seção vigorar, as menções ao Codex como revisor técnico independente nas seções 1.7, 2.4, 2.5, 2.6, 2.7 e 3 leem-se como referidas ao revisor designado nesta seção, e as menções da seção 2.6 ao agente que opera via Claude Code leem-se como referidas ao Codex.
+- **Independência preservada:** a seção 3, item 6, continua valendo integralmente. O Claude não atua como revisor independente em frente de cuja especificação, implementação ou decisão técnica material tenha participado, ainda que em outra sessão ou com outro modelo. Por isso, as frentes **B1 (issues #28 e #29) e B2 (pacote SQL do planejamento)** permanecem com revisão técnica independente do Codex, que nelas não acumula execução complementar. Se o Claude for convocado como orquestrador secundário (seção 2.5) em uma frente, não a revisa como independente.
+- **Sem novas permissões:** a troca não concede autorização para arquivos, banco de dados, Git ou publicação, nem transfere autorizações antigas.
+- **Avaliação e reversão:** ao encerrar a Sprint 3, o responsável avalia o resultado por frente revisada, considerando defeitos confirmados encontrados, defeitos que escaparam à revisão e foram achados depois, e rodadas até o aceite. Sem decisão expressa de manutenção registrada no acompanhamento da sprint, esta seção perde efeito no encerramento da Sprint 3 e as seções 2.4 e 2.6 voltam a valer como escritas.
 
 ---
 
