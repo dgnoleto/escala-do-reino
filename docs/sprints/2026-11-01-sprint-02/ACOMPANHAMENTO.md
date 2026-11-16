@@ -106,14 +106,16 @@ A sequência define prioridade, respeitando as condições de liberação de cad
 
 *(Registrar nesta tabela os avisos da janela de 14–15/11/2026, a realização da planning, as decisões de escopo do responsável e as entregas concluídas ao longo do período.)*
 
-## 4. Encerramento do ciclo — ainda não realizado
+## 4. Encerramento do ciclo
 
-Estado: **encerramento ainda não realizado** (período vigente de `01/11/2026` a `15/11/2026`; verificação de encerramento a partir de `16/11/2026`).
+**Período de 01 a 15/11/2026.** A Sprint 2 atingiu parcialmente o objetivo de viabilizar o planejamento de cultos na jornada autenticada. Das seis issues comprometidas, **uma foi concluída e cinco seguiram abertas para a Sprint 3**.
 
-Quando o ciclo terminar ou o responsável determinar sua consolidação, preencher nesta mesma seção (reaproveitando a estrutura do [modelo de encerramento](../../modelos/sprints/ENCERRAMENTO.md)):
+A **#57** foi aplicada no piloto em 13/11, revisada pelo Codex com ressalvas e aceita pelo responsável em 14/11. Quatro operações passaram pela tela real. A validação da reordenação com etapas gravadas ficou para a #29. O PR #68 foi mesclado. [Aceite da #57](https://github.com/dgnoleto/escala-do-reino/issues/57#issuecomment-6875023007) · [PR #68](https://github.com/dgnoleto/escala-do-reino/pull/68)
 
-- Resultado frente ao objetivo aprovado na planning;
-- Entregas comprovadas (com critérios, PR/versão, método de validação e limites);
-- Pendências remanescentes, motivos e grau de certeza;
-- Aprendizados técnicos (causa confirmada vs. hipótese);
-- Passagem de contexto para a sprint seguinte.
+- **#28 e #29:** o B1 avançou localmente, com testes simulados. A complementação e a revisão da rodada 6 seguem pendentes, assim como a validação da criação, da recarga e da programação na aplicação real.
+- **#30 e #51:** seguem pendentes a validação de duração e publicação com etapas gravadas e a conferência da jornada autenticada completa.
+- **#58:** permanece pausada, com o escopo reduzido à preparação do laboratório para o B2. O aceite anterior de backup e restauração foi preservado. [Decisão sobre a #58](https://github.com/dgnoleto/escala-do-reino/issues/58#issuecomment-6875283162)
+
+**Passagem para a Sprint 3.** A entrega é a **V1 funcional do Escala do Reino**. As correções devem ser integradas no repositório oficial e validadas no fluxo autenticado em `http://localhost:3000`, com persistência conferida após recarregar. A demo em memória fica como referência das regras de tela. A retomada começa pelo complemento focal do B1 e sua revisão independente.
+
+**Aceite do encerramento.** O responsável pelo produto aprovou este registro em 15/11/2026.
