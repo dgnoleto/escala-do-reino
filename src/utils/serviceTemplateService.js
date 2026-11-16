@@ -920,8 +920,28 @@ export async function instantiateServiceTemplateRemote(supabaseClient, churchIdO
     if (error) {
       return { success: false, error: serviceTemplateErrorMessage(error), rawError: error };
     }
-    const receipt = Array.isArray(data) ? data[0] : data;
-    return { success: true, receipt, error: null };
+    const payload = Array.isArray(data) ? data[0] : data;
+    if (
+      !payload ||
+      typeof payload !== 'object' ||
+      Array.isArray(payload) ||
+      payload.success !== true ||
+      String(payload.template_id || '') !== String(templateId) ||
+      !Array.isArray(payload.activities) ||
+      !Array.isArray(payload.parallelServices)
+    ) {
+      return {
+        success: false,
+        error: 'O servidor não retornou uma estrutura válida para o modelo de culto.',
+      };
+    }
+    return {
+      success: true,
+      receipt: payload,
+      activities: payload.activities,
+      parallelServices: payload.parallelServices,
+      error: null,
+    };
   } catch (err) {
     return { success: false, error: serviceTemplateErrorMessage(err), rawError: err };
   }

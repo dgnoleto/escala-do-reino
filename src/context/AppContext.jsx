@@ -78,7 +78,25 @@ import {
   publishEventProgramRemote,
   saveEventProgramDraftRemote,
   eventPlanningErrorMessage,
+  extractChurchEventsFromRpc,
+  toPlanningEventFromServer,
+  mergeServerEventsWithSession,
+  generateCommandUuid,
+  DEFAULT_TIMEZONE,
 } from '../utils/eventPlanningService';
+import {
+  buildLiturgicalItemDrafts,
+  buildEventItemDraftKey,
+  saveEventItemsSequentially,
+  describeEventItemsOutcome,
+  toPersistedActivities,
+  EVENT_ITEMS_PERSISTENCE_NOTICE,
+  PARALLEL_SERVICES_NOT_PERSISTED_NOTICE,
+  TEMPLATE_APPEND_NOTICE,
+  UNKNOWN_SERVER_ITEMS_BLOCK_REASON,
+  canAppendEventItemsToEvent,
+  getAppendEventItemsBlockReason,
+} from '../utils/eventItemService';
 
 export const AppContext = createContext(null);
 
@@ -114,6 +132,15 @@ export function AppProvider({
   const loadRequestSeqRef = useRef(0);
   const lastSuccessfulSyncSeqRef = useRef(0);
   const editingDraftsRef = useRef(new Map());
+  // Comandos de gravação de etapa sem confirmação do servidor, para repetir com o mesmo command_id (Issue #29)
+  const pendingEventItemCommandsRef = useRef(new Map());
+  // Comando de criação de edição sem confirmação do servidor, para evitar duplicação (Issue #28)
+  const pendingCreateEventCommandRef = useRef(null);
+  const [pendingCreateEvent, setPendingCreateEvent] = useState(null);
+  const setPendingCreateCommand = useCallback((entry) => {
+    pendingCreateEventCommandRef.current = entry;
+    setPendingCreateEvent(entry ? { commandId: entry.commandId, summary: entry.summary } : null);
+  }, []);
 
   const ensureAuthorizedContext = () => {
     if (!effectiveClient || !effectiveChurchId) {
@@ -172,12 +199,16 @@ export function AppProvider({
   // Estados de Sincronização Remota com Supabase (Issues #25 a #30)
   const [remoteLoading, setRemoteLoading] = useState(false);
   const [remoteError, setRemoteError] = useState(null);
+  const [teamsLoadStatus, setTeamsLoadStatus] = useState(() => (effectiveClient && effectiveChurchId ? 'loading' : 'loaded'));
 
   // Isolamento Multi-Tenant: Limpa estado e cancela requisições em voo na troca de igreja
   useEffect(() => {
     if (previousChurchIdRef.current !== effectiveChurchId) {
       previousChurchIdRef.current = effectiveChurchId;
       loadRequestSeqRef.current += 1;
+      setPendingCreateCommand(null);
+      pendingEventItemCommandsRef.current.clear();
+      setTeamsLoadStatus(effectiveClient && effectiveChurchId ? 'loading' : 'loaded');
       if (effectiveChurchId) {
         setCancelReasons([]);
         setEventTypes([]);
@@ -186,13 +217,14 @@ export function AppProvider({
         setEvents([]);
       }
     }
-  }, [effectiveChurchId]);
+  }, [effectiveChurchId, effectiveClient, setPendingCreateCommand]);
 
   const reloadRemoteData = useCallback(async () => {
     if (!effectiveClient || !effectiveChurchId) return;
     const currentSeq = ++loadRequestSeqRef.current;
     setRemoteLoading(true);
     setRemoteError(null);
+    setTeamsLoadStatus('loading');
     try {
       const [reasonsRes, typesRes, actsRes, templatesRes] = await Promise.all([
         fetchCancellationReasonsRemote(effectiveClient, effectiveChurchId, true),
@@ -307,18 +339,23 @@ export function AppProvider({
         const { data: teamsData, error: teamsErr } = await effectiveClient.rpc('list_church_teams', {
           p_church_id: effectiveChurchId
         });
-        if (!teamsErr && Array.isArray(teamsData)) {
-          const mappedTeams = teamsData.map(t => ({
-            id: t.id,
-            name: t.name,
-            leaderId: t.leader_member_id || null
-          }));
-          if (mappedTeams.length > 0) {
+        if (loadRequestSeqRef.current === currentSeq) {
+          if (!teamsErr && Array.isArray(teamsData)) {
+            const mappedTeams = teamsData.map(t => ({
+              id: t.id,
+              name: t.name,
+              leaderId: t.leader_member_id || null
+            }));
             setTeams(mappedTeams);
+            setTeamsLoadStatus('loaded');
+          } else {
+            setTeamsLoadStatus('failed');
           }
         }
       } catch {
-        // Consulta auxiliar não-bloqueante
+        if (loadRequestSeqRef.current === currentSeq) {
+          setTeamsLoadStatus('failed');
+        }
       }
 
       try {
@@ -328,39 +365,41 @@ export function AppProvider({
           p_limit: 50,
           p_offset: 0
         });
-        if (!eventsErr && Array.isArray(eventsData)) {
-          const mappedEvents = eventsData.map(ev => ({
-            id: ev.id,
-            title: ev.title,
-            date: ev.event_date || (ev.planned_start_at ? ev.planned_start_at.split('T')[0] : '2026-10-25'),
-            scheduledStartTime: ev.start_time || (ev.planned_start_at ? new Date(ev.planned_start_at).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' }) : '19:00'),
-            plannedDurationMinutes: ev.planned_duration_minutes || 105,
-            durationPolicy: ev.duration_policy || 'warn',
-            programStatus: ev.program_status || 'draft',
-            programVersion: ev.program_version || 1,
-            liturgyLeaderId: ev.liturgy_leader_member_id || null,
-            activities: Array.isArray(ev.items) ? ev.items.map((it, idx) => ({
-              id: it.id || `act-${idx}`,
-              title: it.title,
-              plannedDurationMinutes: it.planned_duration_minutes || 5,
-              category: it.category || 'Liturgia',
-              responsibleMemberId: it.responsible_member_id || null,
-              status: 'pendente',
-              roster: []
-            })) : [],
-            parallelServices: []
-          }));
-          if (mappedEvents.length > 0) {
-            setEvents(mappedEvents);
-            setCurrentEventId(mappedEvents[0].id);
+        // Issue #28: a RPC devolve uma linha { events: [...], total_count }, não a lista de eventos.
+        // A carga só é válida sem erro, com formato reconhecido e na sequência de carga mais recente.
+        const serverEvents = (!eventsErr && loadRequestSeqRef.current === currentSeq)
+          ? extractChurchEventsFromRpc(eventsData)
+          : null;
+        if (serverEvents !== null) {
+          if (serverEvents.length > 0) {
+            const fallbackTimezone = authContext?.churchAccess?.timezone || DEFAULT_TIMEZONE;
+            const mappedEvents = serverEvents
+              .map(ev => toPlanningEventFromServer(ev, fallbackTimezone))
+              .filter(Boolean);
+            if (mappedEvents.length > 0) {
+              // Etapas, apoios, política e situação da programação não vêm do servidor:
+              // mantém o que esta sessão já conhece do mesmo evento e deixa o restante como não informado.
+              setEvents(prev => mergeServerEventsWithSession(mappedEvents, prev));
+              setCurrentEventId(prevId => (
+                mappedEvents.some(ev => ev.id === prevId) ? prevId : mappedEvents[0].id
+              ));
+            } else {
+              setEvents([]);
+              setCurrentEventId(null);
+            }
+          } else {
+            setEvents([]);
+            setCurrentEventId(null);
           }
         }
+        // Em erro ou formato não reconhecido: preserva o estado atual para não apagar dados em falha transitória.
       } catch {
         // Consulta auxiliar não-bloqueante
       }
     } catch (err) {
       if (loadRequestSeqRef.current === currentSeq) {
         setRemoteError(err.message || 'Falha ao sincronizar dados remotos.');
+        setTeamsLoadStatus(prev => (prev === 'loading' ? 'failed' : prev));
       }
     } finally {
       if (loadRequestSeqRef.current === currentSeq) {
@@ -2002,21 +2041,88 @@ export function AppProvider({
     if (!authCheck.inMemory) {
       return (async () => {
         try {
-          const res = await instantiateServiceTemplateRemote(effectiveClient, effectiveChurchId, templateId, event.id);
+          // Issue #29: bloqueia acréscimo em evento carregado do servidor sem leitura (B2) ou com comando incerto pendente.
+          const blockReason = getAppendEventItemsBlockReason(event, pendingEventItemCommandsRef.current);
+          if (blockReason) {
+            return { success: false, persisted: false, error: blockReason };
+          }
+          // Issue #29: instantiate_service_template(p_command_id, p_church_id, p_template_id) não recebe evento
+          // e devolve a estrutura canônica atual do modelo no servidor; cada etapa é gravada com create_event_item.
+          const targetEventId = event.id;
+          const existingActivities = Array.isArray(event.activities) ? event.activities : [];
+          const existingParallelServices = Array.isArray(event.parallelServices) ? event.parallelServices : [];
+
+          const res = await instantiateServiceTemplateRemote(effectiveClient, effectiveChurchId, templateId);
           if (!res.success) {
             return { success: false, error: res.error };
           }
-          setEvent(updatedEvent);
+
+          // Não há RPC para remover etapas: as do modelo devolvido pelo servidor são acrescentadas após as já existentes.
+          const drafts = buildLiturgicalItemDrafts(res.activities, existingActivities.length);
+          const outcome = await saveEventItemsSequentially({
+            supabase: effectiveClient,
+            churchId: effectiveChurchId,
+            eventId: targetEventId,
+            drafts,
+            pendingCommandIds: pendingEventItemCommandsRef.current,
+          });
+          const savedActivities = toPersistedActivities(outcome.saved);
+          const templateParallelServices = Array.isArray(res.parallelServices) ? res.parallelServices : [];
+          const hasFailure = Boolean(outcome.failed);
+          const appended = existingActivities.length > 0;
+
+          if (!hasFailure || savedActivities.length > 0) {
+            setEvents(prev => prev.map(ev => ev.id === targetEventId ? {
+              ...ev,
+              templateId: updatedEvent.templateId,
+              templateName: updatedEvent.templateName,
+              templateApplied: true,
+              activities: [...(ev.activities || []), ...savedActivities],
+              // Serviços paralelos não são gravados no servidor: permanecem só na memória da sessão.
+              parallelServices: hasFailure
+                ? (ev.parallelServices || [])
+                : [...(ev.parallelServices || []), ...templateParallelServices],
+            } : ev));
+          }
+
+          const details = describeEventItemsOutcome(outcome);
+          if (hasFailure) {
+            addAuditLog(
+              "Aplicação de Modelo no Culto",
+              `Modelo '${template.name}' aplicado parcialmente: ${savedActivities.length} de ${drafts.length} etapa(s) gravada(s) no servidor.`
+            );
+            return {
+              success: false,
+              remote: true,
+              persisted: savedActivities.length > 0 ? 'partial' : false,
+              itemsOutcome: outcome,
+              error: `O modelo não foi aplicado por completo. ${details} Os serviços paralelos do modelo não foram carregados.`
+                + (savedActivities.length > 0 && !outcome.failed?.uncertain
+                  ? ' Não reaplique o modelo inteiro: as etapas já gravadas seriam duplicadas. Adicione as etapas faltantes manualmente.'
+                  : savedActivities.length > 0
+                    ? ' Não reaplique o modelo inteiro: as etapas já gravadas seriam duplicadas.'
+                    : '')
+            };
+          }
+
           addAuditLog(
             "Aplicação de Modelo no Culto",
-            `Modelo '${template.name}' aplicado à prévia do culto em memória. Observação: a persistência durável no servidor depende da issue #29.`
+            `Modelo '${template.name}': ${savedActivities.length} etapa(s) gravada(s) no servidor. Serviços paralelos mantidos apenas em memória.`
           );
-          // Etapa 3: Tratamento provisório que impede o usuário de interpretar prévia em memória como programação persistida
+          const notices = [EVENT_ITEMS_PERSISTENCE_NOTICE];
+          if (appended && savedActivities.length > 0) notices.unshift(TEMPLATE_APPEND_NOTICE);
+          if (templateParallelServices.length > 0 || existingParallelServices.length > 0) {
+            notices.push(PARALLEL_SERVICES_NOT_PERSISTED_NOTICE);
+          }
           return {
             success: true,
             remote: true,
-            persisted: false,
-            warning: "Programação carregada na prévia em memória a partir do modelo. A gravação persistente dos itens no servidor depende da implementação da issue #29."
+            persisted: true,
+            appended,
+            savedItemsCount: savedActivities.length,
+            parallelServicesPersisted: false,
+            itemsOutcome: outcome,
+            warning: notices.join(' ')
           };
         } catch (err) {
           return { success: false, error: err.message || "Falha ao aplicar modelo de culto no servidor." };
@@ -2094,41 +2200,153 @@ export function AppProvider({
       if (!authCheck.inMemory) {
         return (async () => {
           try {
-            const res = await createChurchEventEditionRemote(effectiveClient, effectiveChurchId, {
+            if (!isAdmin) {
+              if (teamsLoadStatus === 'loading' || teamsLoadStatus === 'idle') {
+                return {
+                  success: false,
+                  unavailable: true,
+                  error: 'As equipes da igreja ainda estão carregando para confirmar sua liderança. Aguarde ou recarregue os dados antes de criar a edição.',
+                };
+              }
+              if (teamsLoadStatus === 'failed') {
+                return {
+                  success: false,
+                  unavailable: true,
+                  error: 'Não foi possível carregar as equipes da igreja para confirmar sua liderança. Recarregue os dados antes de tentar criar a edição.',
+                };
+              }
+              if (!isTeamLeader) {
+                return {
+                  success: false,
+                  error: 'Apenas administradores ou líderes de equipe podem criar edições de culto.',
+                };
+              }
+            }
+
+            // Issue #28: tipo escolhido enviado pelo nome (p_event_type text), sem padrão silencioso;
+            // início e fim como instantes no fuso da igreja (newEvent já foi calculado nesse fuso).
+            const selectedEventType = normalizeNfcText(eventData.type || '');
+            if (!selectedEventType) {
+              return { success: false, error: "Selecione o tipo de evento antes de criar a edição de culto." };
+            }
+
+            // Opção B (#28): somente administrador designa dirigente (validação acima já recusa valor preenchido por não-admin).
+            const effectiveLiturgyLeaderId = isAdmin ? (eventData.liturgyLeaderId || null) : null;
+            const creationFingerprint = JSON.stringify([
+              effectiveChurchId,
+              newEvent.title,
+              selectedEventType,
+              newEvent.plannedStartAt,
+              newEvent.plannedEndAt,
+              newEvent.durationPolicy,
+              effectiveLiturgyLeaderId,
+            ]);
+
+            const pendingCreate = pendingCreateEventCommandRef.current;
+            if (pendingCreate && pendingCreate.fingerprint !== creationFingerprint) {
+              return {
+                success: false,
+                uncertain: true,
+                pendingSummary: pendingCreate.summary,
+                error: 'Havia uma tentativa anterior de criação sem confirmação do servidor. Repita a tentativa anterior com os mesmos dados para consultar o servidor (se ela ainda não foi gravada, será gravada com aqueles dados).',
+              };
+            }
+
+            const commandId = pendingCreate ? pendingCreate.commandId : generateCommandUuid();
+            const pendingPayload = { ...eventData, type: selectedEventType };
+            const pendingSummary = {
               title: newEvent.title,
-              event_date: newEvent.date,
-              start_time: newEvent.scheduledStartTime,
-              event_type_id: eventData.eventTypeId || null,
-              service_template_id: eventData.serviceTemplateId || null,
-              liturgy_leader_id: eventData.liturgyLeaderId || null,
-              duration_policy: eventData.durationPolicy || 'warn',
-              target_end_time: eventData.targetEndTime || null,
-              planned_duration_minutes: newEvent.plannedDurationMinutes || 105,
-              items: (eventData.activities || []).map((a, idx) => ({
-                title: a.title,
-                position: idx + 1,
-                planned_duration_minutes: a.plannedDurationMinutes || 5,
-                category: a.category || 'Liturgia',
-                standard_activity_id: a.standardActivityId || null
-              }))
+              type: selectedEventType,
+              plannedStartAt: newEvent.plannedStartAt,
+              plannedEndAt: newEvent.plannedEndAt,
+              date: newEvent.date,
+              scheduledStartTime: newEvent.scheduledStartTime,
+            };
+            setPendingCreateCommand({
+              fingerprint: creationFingerprint,
+              commandId,
+              payload: pendingPayload,
+              summary: pendingSummary,
+            });
+
+            const res = await createChurchEventEditionRemote(effectiveClient, effectiveChurchId, {
+              commandId,
+              title: newEvent.title,
+              eventType: selectedEventType,
+              plannedStartAt: newEvent.plannedStartAt,
+              plannedEndAt: newEvent.plannedEndAt,
+              timezone: newEvent.timezone,
+              liturgyLeaderMemberId: effectiveLiturgyLeaderId,
+              durationPolicy: eventData.durationPolicy || 'warn'
             });
 
             if (!res.success) {
-              return { success: false, error: res.error };
+              if (res.uncertain === false) {
+                setPendingCreateCommand(null);
+              }
+              return { success: false, uncertain: res.uncertain !== false, error: res.error };
             }
+
+            setPendingCreateCommand(null);
+
+            // Issue #29: etapas informadas na criação são gravadas uma a uma com create_event_item.
+            // No estado ficam apenas as etapas confirmadas pelo servidor, com o id devolvido por ele.
+            const requestedActivities = newEvent.activities || [];
+            const requestedParallelServices = newEvent.parallelServices || [];
+            const serverEventId = res.receipt?.result_entity_id || null;
+            const drafts = buildLiturgicalItemDrafts(requestedActivities, 0);
+            let outcome = { saved: [], failed: null, notAttempted: [] };
+            let itemsWarning = null;
+
+            if (drafts.length > 0 && !isAdmin) {
+              outcome = { saved: [], failed: null, notAttempted: drafts };
+              itemsWarning = 'A edição foi criada sem dirigente de liturgia designado. As etapas iniciais não foram enviadas e poderão ser gravadas depois que o administrador designar o dirigente.';
+            } else if (drafts.length > 0 && !serverEventId) {
+              outcome = { saved: [], failed: null, notAttempted: drafts };
+              itemsWarning = "O servidor não devolveu o identificador do evento criado; as etapas não foram enviadas. " + describeEventItemsOutcome(outcome);
+            } else if (drafts.length > 0) {
+              outcome = await saveEventItemsSequentially({
+                supabase: effectiveClient,
+                churchId: effectiveChurchId,
+                eventId: serverEventId,
+                drafts,
+                pendingCommandIds: pendingEventItemCommandsRef.current,
+              });
+              if (outcome.failed) {
+                itemsWarning = "A edição foi criada, mas nem todas as etapas foram gravadas. " + describeEventItemsOutcome(outcome)
+                  + (!outcome.failed.uncertain ? " Adicione as etapas faltantes manualmente." : "");
+              }
+            }
+
+            const notices = [];
+            if (itemsWarning) notices.push(itemsWarning);
+            if (outcome.saved.length > 0) notices.push(EVENT_ITEMS_PERSISTENCE_NOTICE);
+            if (requestedParallelServices.length > 0) notices.push(PARALLEL_SERVICES_NOT_PERSISTED_NOTICE);
 
             const createdEvent = {
               ...newEvent,
-              id: res.data?.id || newEvent.id
+              id: res.eventId || res.data?.id || newEvent.id,
+              type: selectedEventType,
+              loadedFromServer: false,
+              activitiesKnownInSession: true,
+              activities: toPersistedActivities(outcome.saved),
+              parallelServices: requestedParallelServices
             };
 
             setEvents(prev => [createdEvent, ...prev]);
             setCurrentEventId(createdEvent.id);
             addAuditLog(
               "Criação de Edição de Culto",
-              `${currentUser.name} criou a edição '${createdEvent.title}' (${createdEvent.date} às ${createdEvent.scheduledStartTime}, duração prevista: ${createdEvent.plannedDurationMinutes} min).`
+              `${currentUser.name} criou a edição '${createdEvent.title}' (${createdEvent.date} às ${createdEvent.scheduledStartTime}, duração prevista: ${createdEvent.plannedDurationMinutes} min; etapas gravadas no servidor: ${outcome.saved.length} de ${drafts.length}).`
             );
-            return { success: true, event: createdEvent, remote: true };
+            return {
+              success: true,
+              event: createdEvent,
+              remote: true,
+              itemsOutcome: outcome,
+              itemsFailed: Boolean(itemsWarning),
+              warning: notices.length > 0 ? notices.join(' ') : null
+            };
           } catch (err) {
             return { success: false, error: err.message || "Falha ao criar edição de evento no servidor." };
           }
@@ -2145,6 +2363,95 @@ export function AppProvider({
     } catch (err) {
       return { success: false, error: err.message };
     }
+  };
+
+  const retryPendingCreateEvent = async () => {
+    const pending = pendingCreateEventCommandRef.current;
+    if (!pending?.payload) {
+      return {
+        success: false,
+        error: 'Não há tentativa anterior pendente para repetir.',
+      };
+    }
+    return createEventEdition(pending.payload);
+  };
+
+  // Adicionar Etapa Litúrgica a um Evento Já Criado (Issue #29)
+  // No ambiente conectado, a etapa só entra no estado depois do recibo do servidor (create_event_item),
+  // já com o identificador devolvido por ele. Sem confirmação, nada é exibido como gravado.
+  const addActivityToEvent = (activityData, targetEventId = null) => {
+    if (!isAdmin && !isLiturgyLeader) {
+      return { success: false, error: "Apenas administradores ou líderes da liturgia podem adicionar etapas." };
+    }
+    const authCheck = ensureAuthorizedContext();
+    if (!authCheck.allowed) return { success: false, error: authCheck.error };
+
+    const targetId = targetEventId || event?.id;
+    const targetEv = events.find(ev => ev.id === targetId) || event;
+    if (!targetEv) return { success: false, error: "Nenhum evento selecionado para receber a etapa." };
+
+    const title = normalizeNfcText(activityData?.title || '');
+    if (!title) return { success: false, error: "Título da etapa é obrigatório." };
+
+    const localActivity = {
+      id: "act-" + Date.now(),
+      title,
+      category: activityData?.category || 'Liturgia',
+      plannedDurationMinutes: parseInt(activityData?.plannedDurationMinutes, 10) || 5,
+      responsibleMemberId: activityData?.responsibleMemberId || null,
+      responsibleTeamId: activityData?.responsibleTeamId || null,
+      status: "pendente",
+      notes: activityData?.notes || '',
+      requiresPlayback: Boolean(activityData?.requiresPlayback),
+      musics: [],
+      roster: []
+    };
+
+    if (!authCheck.inMemory) {
+      return (async () => {
+        try {
+          const existingCount = Array.isArray(targetEv.activities) ? targetEv.activities.length : 0;
+          const drafts = buildLiturgicalItemDrafts([localActivity], existingCount);
+          const nextDraftKey = buildEventItemDraftKey(targetId, drafts[0]);
+          const blockReason = getAppendEventItemsBlockReason(targetEv, pendingEventItemCommandsRef.current, nextDraftKey);
+          if (blockReason) {
+            return { success: false, persisted: false, error: blockReason };
+          }
+          const outcome = await saveEventItemsSequentially({
+            supabase: effectiveClient,
+            churchId: effectiveChurchId,
+            eventId: targetId,
+            drafts,
+            pendingCommandIds: pendingEventItemCommandsRef.current,
+          });
+          if (outcome.failed || outcome.saved.length === 0) {
+            return {
+              success: false,
+              persisted: false,
+              uncertain: Boolean(outcome.failed?.uncertain),
+              error: describeEventItemsOutcome(outcome) || "O servidor não confirmou a gravação da etapa."
+            };
+          }
+          const [savedActivity] = toPersistedActivities(outcome.saved);
+          setEvents(prev => prev.map(ev => ev.id === targetId
+            ? { ...ev, activities: [...(ev.activities || []), savedActivity] }
+            : ev));
+          addAuditLog(
+            "Nova Atividade Planejada",
+            `Atividade '${title}' (${localActivity.plannedDurationMinutes} min) gravada no servidor na edição '${targetEv.title}'.`
+          );
+          return { success: true, remote: true, persisted: true, activity: savedActivity, notice: EVENT_ITEMS_PERSISTENCE_NOTICE };
+        } catch (err) {
+          return { success: false, persisted: false, error: err.message || "Falha ao gravar a etapa no servidor." };
+        }
+      })();
+    }
+
+    setEvents(prev => prev.map(ev => ev.id === targetId
+      ? { ...ev, activities: [...(ev.activities || []), localActivity] }
+      : ev));
+    addAuditLog("Nova Atividade Planejada", `Atividade '${title}' (${localActivity.plannedDurationMinutes} min) adicionada à ordem.`);
+    return { success: true, persisted: false, activity: localActivity };
   };
 
   // Selecionar Edição Ativa (Issue #28)
@@ -2422,6 +2729,10 @@ export function AppProvider({
         setCurrentEventId,
         selectEvent,
         createEventEdition,
+        pendingCreateEvent,
+        retryPendingCreateEvent,
+        teamsLoadStatus,
+        addActivityToEvent,
         reorderActivities,
         moveActivityUpInEvent,
         moveActivityDownInEvent,
