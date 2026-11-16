@@ -4,6 +4,8 @@
  * Atende às Issues #28, #29 e #30 e aos critérios do PRD §3.2, §5, §6 e §7.7 (Cenários M05, M06, M24-M26, M28, M47-M50).
  */
 
+import { isDefinitiveLiturgicalError } from './liturgicalCommandService.js';
+
 export const MAX_TITLE_LENGTH = 200;
 export const MIN_TITLE_LENGTH = 1;
 export const DEFAULT_TIMEZONE = 'America/Sao_Paulo';
@@ -18,6 +20,155 @@ export const MAX_EVENT_DURATION_MINUTES = 1440; // 24 horas
 export function normalizeNfcText(value) {
   if (typeof value !== 'string') return '';
   return value.normalize('NFC').trim();
+}
+
+const NAIVE_LOCAL_DATETIME_REGEX = /^(\d{4})-(\d{2})-(\d{2})[T ](\d{2}):(\d{2})(?::(\d{2})(?:\.\d+)?)?$/;
+const zonedFormatterCache = new Map();
+
+function pad2(value) {
+  return String(value).padStart(2, '0');
+}
+
+/**
+ * Devolve o formatador Intl do fuso informado. Lança RangeError se o fuso não for reconhecido.
+ */
+function getZonedFormatter(timeZone) {
+  if (!zonedFormatterCache.has(timeZone)) {
+    zonedFormatterCache.set(timeZone, new Intl.DateTimeFormat('en-CA', {
+      timeZone,
+      hourCycle: 'h23',
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit',
+      second: '2-digit',
+    }));
+  }
+  return zonedFormatterCache.get(timeZone);
+}
+
+/**
+ * Indica se o identificador de fuso é reconhecido pelo ambiente (Intl).
+ */
+export function isValidTimeZone(timeZone) {
+  if (typeof timeZone !== 'string' || !timeZone.trim()) return false;
+  try {
+    getZonedFormatter(timeZone);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Decompõe um instante em data e hora de parede no fuso informado.
+ */
+function getZonedParts(instantMs, timeZone) {
+  const parts = {};
+  for (const part of getZonedFormatter(timeZone).formatToParts(new Date(instantMs))) {
+    if (part.type !== 'literal') parts[part.type] = parseInt(part.value, 10);
+  }
+  return parts;
+}
+
+/**
+ * Deslocamento do fuso em relação ao UTC, em minutos, no instante informado.
+ */
+function getTimeZoneOffsetMinutes(instantMs, timeZone) {
+  const p = getZonedParts(instantMs, timeZone);
+  const wallAsUtc = Date.UTC(p.year, p.month - 1, p.day, p.hour, p.minute, p.second);
+  return Math.round((wallAsUtc - Math.floor(instantMs / 1000) * 1000) / 60000);
+}
+
+/**
+ * Converte data e hora de parede no fuso informado para o instante correspondente (ms).
+ * Não usa o fuso do navegador (Issue #28 / PRD §3.3 / M47).
+ * Limite conhecido: em hora repetida de fim de horário de verão, escolhe a primeira ocorrência.
+ */
+function zonedWallTimeToInstantMs(year, month, day, hour, minute, second, timeZone) {
+  const wallAsUtc = Date.UTC(year, month - 1, day, hour, minute, second);
+  let instant = wallAsUtc - getTimeZoneOffsetMinutes(wallAsUtc, timeZone) * 60000;
+  instant = wallAsUtc - getTimeZoneOffsetMinutes(instant, timeZone) * 60000;
+  return instant;
+}
+
+/**
+ * Interpreta data/hora como instante (ms).
+ * - Texto sem fuso ("2026-11-01T19:00" ou "2026-11-01T19:00:00") é lido como hora local NO FUSO INFORMADO.
+ * - Texto com fuso explícito (Z ou ±hh:mm) e objetos Date mantêm o instante que já representam.
+ * Retorna null se o valor for inválido. Lança RangeError se o fuso não for reconhecido.
+ */
+export function parseInstantInTimeZone(value, timeZone = DEFAULT_TIMEZONE) {
+  if (value === null || value === undefined || value === '') return null;
+  if (typeof value === 'string') {
+    const match = NAIVE_LOCAL_DATETIME_REGEX.exec(value.trim());
+    if (match) {
+      const year = parseInt(match[1], 10);
+      const month = parseInt(match[2], 10);
+      const day = parseInt(match[3], 10);
+      const hour = parseInt(match[4], 10);
+      const minute = parseInt(match[5], 10);
+      const second = match[6] ? parseInt(match[6], 10) : 0;
+      // Rejeita datas/horas inexistentes (ex.: 31/02 ou 25:00) em vez de normalizá-las em silêncio
+      const check = new Date(Date.UTC(year, month - 1, day, hour, minute, second));
+      if (
+        check.getUTCFullYear() !== year || check.getUTCMonth() !== month - 1 || check.getUTCDate() !== day ||
+        check.getUTCHours() !== hour || check.getUTCMinutes() !== minute || check.getUTCSeconds() !== second
+      ) {
+        return null;
+      }
+      const instant = zonedWallTimeToInstantMs(year, month, day, hour, minute, second, timeZone);
+      // Conferência de ida e volta no fuso: rejeita hora local inexistente em transição de horário de verão
+      const roundTrip = getZonedParts(instant, timeZone);
+      if (
+        roundTrip.year !== year || roundTrip.month !== month || roundTrip.day !== day ||
+        roundTrip.hour !== hour || roundTrip.minute !== minute || roundTrip.second !== second
+      ) {
+        return null;
+      }
+      return instant;
+    }
+  }
+  const ms = new Date(value).getTime();
+  return Number.isNaN(ms) ? null : ms;
+}
+
+/**
+ * Formata um instante como texto ISO com deslocamento explícito do fuso informado
+ * (ex.: "2026-11-01T19:00:00-03:00"), próprio para parâmetros timestamptz.
+ */
+export function formatInstantWithOffset(instantMs, timeZone = DEFAULT_TIMEZONE) {
+  const p = getZonedParts(instantMs, timeZone);
+  const offset = getTimeZoneOffsetMinutes(instantMs, timeZone);
+  const sign = offset < 0 ? '-' : '+';
+  const abs = Math.abs(offset);
+  const datePart = `${String(p.year).padStart(4, '0')}-${pad2(p.month)}-${pad2(p.day)}`;
+  const timePart = `${pad2(p.hour)}:${pad2(p.minute)}:${pad2(p.second)}`;
+  return `${datePart}T${timePart}${sign}${pad2(Math.floor(abs / 60))}:${pad2(abs % 60)}`;
+}
+
+/**
+ * Converte data/hora (com ou sem fuso) em texto ISO com deslocamento explícito no fuso informado.
+ * Retorna null se o valor for inválido.
+ */
+export function toZonedInstantString(value, timeZone = DEFAULT_TIMEZONE) {
+  const ms = parseInstantInTimeZone(value, timeZone);
+  return ms === null ? null : formatInstantWithOffset(ms, timeZone);
+}
+
+/**
+ * Data (AAAA-MM-DD) e hora (HH:mm) de um instante para exibição no fuso informado.
+ * Retorna null se o valor for inválido.
+ */
+export function formatInstantInTimeZone(value, timeZone = DEFAULT_TIMEZONE) {
+  const ms = parseInstantInTimeZone(value, timeZone);
+  if (ms === null) return null;
+  const p = getZonedParts(ms, timeZone);
+  return {
+    date: `${String(p.year).padStart(4, '0')}-${pad2(p.month)}-${pad2(p.day)}`,
+    time: `${pad2(p.hour)}:${pad2(p.minute)}`,
+  };
 }
 
 /**
@@ -82,16 +233,28 @@ export function validateEventEdition(eventData, church = {}, caller = {}) {
     return { valid: false, error: `Título do evento deve ter no máximo ${MAX_TITLE_LENGTH} caracteres.` };
   }
 
+  // Fuso da igreja (CA02 de #28 e PRD §3.3 / M47)
+  const timezone = church?.timezone || DEFAULT_TIMEZONE;
+  if (!isValidTimeZone(timezone)) {
+    return { valid: false, error: `Fuso horário da igreja não reconhecido: '${timezone}'.` };
+  }
+
+  // Data/hora sem fuso explícito é hora local no fuso da igreja, nunca no fuso do navegador (#28)
+  const startMs = parseInstantInTimeZone(eventData?.plannedStartAt, timezone);
+  if (startMs === null) {
+    return { valid: false, error: 'Data/hora de início inválida para o fuso da igreja.' };
+  }
+  const endMs = parseInstantInTimeZone(eventData?.plannedEndAt, timezone);
+  if (endMs === null) {
+    return { valid: false, error: 'Data/hora de término inválida para o fuso da igreja.' };
+  }
   const durationCheck = calculateAvailableDurationMinutes(
-    eventData?.plannedStartAt,
-    eventData?.plannedEndAt
+    new Date(startMs).toISOString(),
+    new Date(endMs).toISOString()
   );
   if (!durationCheck.valid) {
     return { valid: false, error: durationCheck.error };
   }
-
-  // Fuso da igreja (CA02 de #28 e PRD §3.3 / M47)
-  const timezone = church?.timezone || DEFAULT_TIMEZONE;
 
   // Política de duração (Issue #30)
   const durationPolicy = eventData?.durationPolicy || 'warn';
@@ -118,6 +281,8 @@ export function validateEventEdition(eventData, church = {}, caller = {}) {
     error: null,
     title,
     timezone,
+    plannedStartAt: new Date(startMs).toISOString(),
+    plannedEndAt: new Date(endMs).toISOString(),
     plannedDurationMinutes: durationCheck.minutes,
     durationPolicy
   };
@@ -135,8 +300,10 @@ export function createEventEditionObject(eventData, church = {}, caller = {}, in
 
   const now = new Date().toISOString();
   const id = eventData?.id || `evt-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
-  const startDateStr = new Date(eventData.plannedStartAt).toISOString().split('T')[0];
-  const startTimeStr = new Date(eventData.plannedStartAt).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
+  // Data e hora de exibição no fuso da igreja, não no fuso do navegador (#28)
+  const startDisplay = formatInstantInTimeZone(validation.plannedStartAt, validation.timezone);
+  const startDateStr = startDisplay.date;
+  const startTimeStr = startDisplay.time;
 
   // Assegura que atividades não possuem escalas nominais de voluntários (CA04 de #28 e CA03 de #27)
   const cleanActivities = initialActivities.map((act, idx) => ({
@@ -174,8 +341,8 @@ export function createEventEditionObject(eventData, church = {}, caller = {}, in
     type: normalizeNfcText(eventData?.type || 'Culto'),
     date: startDateStr,
     scheduledStartTime: startTimeStr,
-    plannedStartAt: new Date(eventData.plannedStartAt).toISOString(),
-    plannedEndAt: new Date(eventData.plannedEndAt).toISOString(),
+    plannedStartAt: validation.plannedStartAt,
+    plannedEndAt: validation.plannedEndAt,
     timezone: validation.timezone,
     plannedDurationMinutes: validation.plannedDurationMinutes,
     liturgyLeaderId: eventData?.liturgyLeaderId || null,
@@ -502,32 +669,167 @@ export function generateCommandUuid() {
 }
 
 /**
+ * Extrai a lista de eventos do retorno de public.list_church_events (Issue #28).
+ * A RPC devolve TABLE(events jsonb, total_count bigint): uma linha { events: [...], total_count }.
+ * Retorna null quando o formato não é reconhecido (nada deve ser alterado no estado) e
+ * lista vazia quando o servidor informa que não há eventos — nunca cria evento-fantasma.
+ */
+export function extractChurchEventsFromRpc(data) {
+  const row = Array.isArray(data) ? data[0] : data;
+  if (!row || typeof row !== 'object' || !Array.isArray(row.events)) return null;
+  return row.events.filter(ev => ev && typeof ev === 'object' && ev.id);
+}
+
+const SERVER_EVENT_STATUS_TO_LOCAL = {
+  scheduled: 'pronto',
+  in_progress: 'em_andamento',
+  completed: 'encerrado',
+  cancelled: 'cancelado',
+};
+
+/**
+ * Converte um evento devolvido por list_church_events para o formato usado na tela (Issue #28).
+ * - Data e hora de exibição usam o fuso do próprio evento, não o do navegador.
+ * - A duração planejada é derivada de planned_start_at/planned_end_at.
+ * - A RPC não devolve política de duração, situação/versão da programação nem etapas:
+ *   esses campos ficam null ("não informado pelo servidor") em vez de valores inventados.
+ */
+export function toPlanningEventFromServer(ev, fallbackTimezone = DEFAULT_TIMEZONE) {
+  if (!ev || !ev.id) return null;
+  const timezone = isValidTimeZone(ev.timezone)
+    ? ev.timezone
+    : (isValidTimeZone(fallbackTimezone) ? fallbackTimezone : DEFAULT_TIMEZONE);
+  const startDisplay = ev.planned_start_at ? formatInstantInTimeZone(ev.planned_start_at, timezone) : null;
+  const durationCheck = calculateAvailableDurationMinutes(ev.planned_start_at, ev.planned_end_at);
+
+  return {
+    id: ev.id,
+    churchId: ev.church_id || null,
+    title: ev.title,
+    type: ev.event_type || null,
+    timezone,
+    date: startDisplay ? startDisplay.date : null,
+    scheduledStartTime: startDisplay ? startDisplay.time : null,
+    plannedStartAt: ev.planned_start_at || null,
+    plannedEndAt: ev.planned_end_at || null,
+    plannedDurationMinutes: durationCheck.valid ? durationCheck.minutes : null,
+    liturgyLeaderId: ev.liturgy_leader_member_id || null,
+    liturgyLeaderName: ev.liturgy_leader_name || null,
+    serverStatus: ev.status || null,
+    status: SERVER_EVENT_STATUS_TO_LOCAL[ev.status] || null,
+    actualStartAt: ev.actual_start_at || null,
+    actualEndAt: ev.actual_end_at || null,
+    cancelReason: ev.cancel_reason || null,
+    version: ev.version ?? null,
+    // Não informados por list_church_events (dependem do pacote B2):
+    durationPolicy: null,
+    programStatus: null,
+    programVersion: null,
+    activities: [],
+    parallelServices: [],
+    checklist: [],
+    internalAlerts: [],
+    loadedFromServer: true,
+    activitiesKnownInSession: false,
+  };
+}
+
+/**
+ * Combina os eventos lidos do servidor com o que a sessão atual já conhece (Issue #28).
+ * O servidor é a fonte de identidade, título, tipo, fuso, datas e liderança. Como a RPC de listagem
+ * não devolve etapas, apoios, política de duração nem situação da programação, o que a sessão já
+ * conhece desses campos para o mesmo evento é mantido; o que ela não conhece permanece null.
+ */
+export function mergeServerEventsWithSession(serverEvents = [], sessionEvents = []) {
+  const known = new Map((Array.isArray(sessionEvents) ? sessionEvents : []).map(ev => [ev?.id, ev]));
+  return serverEvents.map(serverEv => {
+    const prev = known.get(serverEv.id);
+    if (!prev) return serverEv;
+    return {
+      ...prev,
+      ...serverEv,
+      durationPolicy: prev.durationPolicy ?? null,
+      programStatus: prev.programStatus ?? null,
+      programVersion: prev.programVersion ?? null,
+      activities: Array.isArray(prev.activities) ? prev.activities : [],
+      parallelServices: Array.isArray(prev.parallelServices) ? prev.parallelServices : [],
+      checklist: Array.isArray(prev.checklist) ? prev.checklist : [],
+      internalAlerts: Array.isArray(prev.internalAlerts) ? prev.internalAlerts : [],
+      loadedFromServer: prev.loadedFromServer ?? true,
+      activitiesKnownInSession: prev.activitiesKnownInSession ?? !prev.loadedFromServer,
+    };
+  });
+}
+
+/**
+ * Valida estritamente o recibo canônico devolvido por public.create_church_event_edition (#28).
+ * Rejeita resposta vazia, com mais de uma linha, comando/ação/igreja divergentes,
+ * created_at ausente/inválido ou payload sem event_id coerente.
+ */
+export function validateCreateEventEditionReceipt(data, commandId, churchId) {
+  if (!data) return null;
+  const rows = Array.isArray(data) ? data : [data];
+  if (rows.length !== 1) return null;
+  const receipt = rows[0];
+  if (!receipt || typeof receipt !== 'object') return null;
+  if (receipt.command_id !== commandId) return null;
+  if (receipt.church_id !== churchId) return null;
+  if (receipt.action !== 'create_church_event_edition') return null;
+  if (!receipt.result_entity_id) return null;
+  if (typeof receipt.created_at !== 'string' || !receipt.created_at.trim() || Number.isNaN(Date.parse(receipt.created_at))) {
+    return null;
+  }
+  if (!receipt.result_payload || typeof receipt.result_payload !== 'object' || Array.isArray(receipt.result_payload)) {
+    return null;
+  }
+  const payloadEntityId = receipt.result_payload.event_id;
+  if (!payloadEntityId || String(payloadEntityId) !== String(receipt.result_entity_id)) {
+    return null;
+  }
+  return receipt;
+}
+
+/**
  * Cria edição concreta de culto no Supabase.
+ * Início e fim são enviados como instantes com deslocamento explícito, calculados no fuso da igreja
+ * (campo timezone; se ausente, America/Sao_Paulo, padrão do servidor) — nunca no fuso do navegador.
+ * O tipo de evento é obrigatório: não há padrão silencioso (Issue #28).
  */
 export async function createChurchEventEditionRemote(
   supabaseClient,
   churchIdOrOpts,
   maybeEventData = {}
 ) {
-  let churchId, commandId, title, eventType, plannedStartAt, plannedEndAt, liturgyLeaderMemberId, durationPolicy;
+  let churchId, commandId, title, eventType, plannedStartAt, plannedEndAt, liturgyLeaderMemberId, durationPolicy, timezone;
+  let fallbackDurationMinutes = null;
+  let endGivenAsTimeOnly = false;
   if (typeof churchIdOrOpts === 'object' && churchIdOrOpts !== null) {
     ({
       churchId,
       commandId,
       title,
-      eventType = 'Culto',
+      eventType,
       plannedStartAt,
       plannedEndAt,
       liturgyLeaderMemberId = null,
       durationPolicy = 'warn',
+      timezone,
     } = churchIdOrOpts);
   } else {
     churchId = churchIdOrOpts;
     const d = maybeEventData || {};
     title = d.title;
-    eventType = d.eventType || d.event_type || 'Culto';
-    plannedStartAt = d.plannedStartAt || d.planned_start_at || (d.event_date && d.start_time ? `${d.event_date}T${d.start_time}:00` : null);
-    plannedEndAt = d.plannedEndAt || d.planned_end_at || (d.event_date && d.target_end_time ? `${d.event_date}T${d.target_end_time}:00` : null) || (plannedStartAt ? new Date(new Date(plannedStartAt).getTime() + (d.planned_duration_minutes || 105) * 60000).toISOString() : null);
+    eventType = d.eventType || d.event_type;
+    timezone = d.timezone || d.timeZone;
+    plannedStartAt = d.plannedStartAt || d.planned_start_at || (d.event_date && d.start_time ? `${d.event_date}T${d.start_time}` : null);
+    plannedEndAt = d.plannedEndAt || d.planned_end_at || null;
+    if (!plannedEndAt && d.event_date && d.target_end_time) {
+      plannedEndAt = `${d.event_date}T${d.target_end_time}`;
+      endGivenAsTimeOnly = true;
+    }
+    if (!plannedEndAt) {
+      fallbackDurationMinutes = d.planned_duration_minutes || 105;
+    }
     liturgyLeaderMemberId = d.liturgyLeaderMemberId || d.liturgy_leader_id || d.liturgyLeaderId || null;
     durationPolicy = d.durationPolicy || d.duration_policy || 'warn';
     commandId = d.commandId;
@@ -536,6 +838,36 @@ export async function createChurchEventEditionRemote(
   if (!churchId) {
     return { success: false, error: 'Identificador da igreja não informado.' };
   }
+
+  // Instantes com deslocamento explícito, calculados no fuso da igreja e não no do navegador (Issue #28)
+  const effectiveTimezone = timezone || DEFAULT_TIMEZONE;
+  if (!isValidTimeZone(effectiveTimezone)) {
+    return { success: false, error: `Fuso horário da igreja não reconhecido: '${effectiveTimezone}'.` };
+  }
+  const startMs = parseInstantInTimeZone(plannedStartAt, effectiveTimezone);
+  if (startMs === null) {
+    return { success: false, uncertain: false, error: 'Data/hora de início inválida ou inexistente no fuso horário da igreja.' };
+  }
+  let endMs = parseInstantInTimeZone(plannedEndAt, effectiveTimezone);
+  if (!plannedEndAt && fallbackDurationMinutes) {
+    endMs = startMs + fallbackDurationMinutes * 60000;
+  }
+  if (endMs !== null && endGivenAsTimeOnly && endMs <= startMs) {
+    // Término informado só como hora e não posterior ao início: virada de meia-noite (dia seguinte no fuso da igreja)
+    const startDay = formatInstantInTimeZone(startMs, effectiveTimezone).date;
+    const nextDay = new Date(Date.UTC(
+      parseInt(startDay.slice(0, 4), 10),
+      parseInt(startDay.slice(5, 7), 10) - 1,
+      parseInt(startDay.slice(8, 10), 10) + 1
+    )).toISOString().slice(0, 10);
+    endMs = parseInstantInTimeZone(`${nextDay}T${String(plannedEndAt).split('T')[1]}`, effectiveTimezone);
+  }
+  if (endMs === null) {
+    return { success: false, uncertain: false, error: 'Data/hora de término inválida ou inexistente no fuso horário da igreja.' };
+  }
+  plannedStartAt = formatInstantWithOffset(startMs, effectiveTimezone);
+  plannedEndAt = formatInstantWithOffset(endMs, effectiveTimezone);
+
   const durationCheck = calculateAvailableDurationMinutes(plannedStartAt, plannedEndAt);
   if (!durationCheck.valid) {
     return { success: false, error: durationCheck.error };
@@ -548,33 +880,64 @@ export async function createChurchEventEditionRemote(
   if (!DURATION_POLICIES.includes(cleanPolicy)) {
     return { success: false, error: "Política de duração inválida. Opções aceitas: 'warn' ou 'block'." };
   }
+  // Tipo de evento obrigatório: sem padrão silencioso (Issue #28)
+  const cleanEventType = normalizeNfcText(eventType);
+  if (!cleanEventType) {
+    return { success: false, error: 'Tipo de evento não informado. Selecione o tipo de evento antes de criar a edição.' };
+  }
   const cmdId = commandId || generateCommandUuid();
   try {
     const { data, error } = await invokeSupabaseRpc(supabaseClient, 'create_church_event_edition', {
       p_church_id: churchId,
       p_command_id: cmdId,
       p_title: cleanTitle,
-      p_event_type: eventType,
+      p_event_type: cleanEventType,
       p_planned_start_at: plannedStartAt,
       p_planned_end_at: plannedEndAt,
       p_liturgy_leader_member_id: liturgyLeaderMemberId || null,
       p_duration_policy: cleanPolicy,
     });
     if (error) {
-      return { success: false, error: eventPlanningErrorMessage(error), rawError: error };
+      return {
+        success: false,
+        uncertain: !isDefinitiveLiturgicalError(error),
+        error: eventPlanningErrorMessage(error),
+        rawError: error,
+      };
     }
-    const receipt = Array.isArray(data) ? data[0] : data;
-    const eventId = receipt?.result_entity_id || receipt?.result_payload?.event_id || `ev-${Date.now()}`;
+    const receipt = validateCreateEventEditionReceipt(data, cmdId, churchId);
+    if (!receipt) {
+      return {
+        success: false,
+        uncertain: true,
+        commandId: cmdId,
+        error: 'O servidor não retornou um recibo canônico válido para a criação da edição.',
+      };
+    }
+    const eventId = receipt.result_entity_id;
+    const rawPayload = receipt.result_payload && typeof receipt.result_payload === 'object'
+      ? { ...receipt.result_payload }
+      : {};
+    delete rawPayload.id;
+    const sanitizedPayload = { ...rawPayload, event_id: eventId };
     return {
       success: true,
+      uncertain: false,
+      commandId: cmdId,
       eventId,
-      data: { id: eventId, ...(receipt?.result_payload || {}) },
-      payload: receipt?.result_payload,
+      data: { ...sanitizedPayload, id: eventId },
+      payload: sanitizedPayload,
       receipt,
       error: null,
     };
   } catch (err) {
-    return { success: false, error: eventPlanningErrorMessage(err), rawError: err };
+    return {
+      success: false,
+      uncertain: !isDefinitiveLiturgicalError(err),
+      commandId: cmdId,
+      error: eventPlanningErrorMessage(err),
+      rawError: err,
+    };
   }
 }
 

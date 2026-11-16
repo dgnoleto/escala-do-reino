@@ -207,12 +207,26 @@ describe('Integração Frontend-RPCs Supabase (Issues #25 a #30)', () => {
       const mockClient = {
         rpc: async (fn, params) => {
           planningCalls.push({ fn, params });
+          if (fn === 'create_church_event_edition') {
+            return {
+              data: [{
+                command_id: params.p_command_id,
+                action: 'create_church_event_edition',
+                church_id: params.p_church_id,
+                result_entity_id: 'ev-1',
+                result_payload: { event_id: 'ev-1', program_version: 2 },
+                created_at: '2026-11-01T00:00:00Z',
+              }],
+              error: null,
+            };
+          }
           return { data: { id: 'ev-1', program_version: 2 }, error: null };
         }
       };
 
       const createRes = await createChurchEventEditionRemote(mockClient, TEST_CHURCH_A, {
         title: 'Culto de Domingo Noite',
+        event_type: 'Culto',
         event_date: '2026-11-01',
         start_time: '19:00',
         duration_policy: 'warn',
@@ -241,6 +255,7 @@ describe('Integração Frontend-RPCs Supabase (Issues #25 a #30)', () => {
 
       const res = await createChurchEventEditionRemote(mockClient, TEST_CHURCH_A, {
         title: 'Culto com Política Inválida',
+        event_type: 'Culto',
         event_date: '2026-11-01',
         start_time: '19:00',
         duration_policy: 'horario_termino_variavel',
@@ -250,6 +265,28 @@ describe('Integração Frontend-RPCs Supabase (Issues #25 a #30)', () => {
       assert.equal(res.success, false);
       assert.match(res.error, /Política de duração inválida/);
       assert.match(res.error, /warn.*block/);
+    });
+
+    test('2.5b Validação estrita de domínio: rejeição de criação sem tipo do evento', async () => {
+      let called = false;
+      const mockClient = {
+        rpc: async () => {
+          called = true;
+          return { data: { id: 'ev-test' }, error: null };
+        }
+      };
+
+      const res = await createChurchEventEditionRemote(mockClient, TEST_CHURCH_A, {
+        title: 'Culto sem Tipo',
+        event_date: '2026-11-01',
+        start_time: '19:00',
+        duration_policy: 'warn',
+        items: []
+      });
+
+      assert.equal(res.success, false);
+      assert.equal(called, false);
+      assert.match(res.error, /Tipo de evento não informado/);
     });
 
     test('2.6 Validação de compatibilidade contratual de parâmetros com RPCs (020 a 023)', async () => {

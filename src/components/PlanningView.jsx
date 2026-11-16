@@ -1,6 +1,10 @@
 import React, { useState } from 'react';
 import { useApp } from '../context/AppContext';
 import {
+  EVENT_ITEMS_PERSISTENCE_NOTICE,
+  PARALLEL_SERVICES_NOT_PERSISTED_NOTICE,
+} from '../utils/eventItemService';
+import {
   Sliders,
   Plus,
   Clock,
@@ -29,6 +33,8 @@ export default function PlanningView({ onBack } = {}) {
     events = [],
     selectEvent,
     createEventEdition,
+    addActivityToEvent,
+    isRemoteConfigured,
     moveActivityUpInEvent,
     moveActivityDownInEvent,
     setEventDurationPolicy,
@@ -56,22 +62,32 @@ export default function PlanningView({ onBack } = {}) {
     church,
     remoteLoading,
     remoteError,
-    reloadRemoteData
+    reloadRemoteData,
+    pendingCreateEvent,
+    retryPendingCreateEvent,
+    teamsLoadStatus
   } = useApp();
+
+  const canCreateEvent = isAdmin || isTeamLeader;
+  const isTeamsCheckingForCreate = isRemoteConfigured && !isAdmin && (teamsLoadStatus === 'loading' || teamsLoadStatus === 'idle');
+  const isTeamsUnavailableForCreate = isRemoteConfigured && !isAdmin && teamsLoadStatus === 'failed';
+  const isTeamsStatusBlocking = isTeamsCheckingForCreate || isTeamsUnavailableForCreate;
 
   // Modal de Criação de Edição de Culto (Issue #28)
   const [createEventModalOpen, setCreateEventModalOpen] = useState(false);
   const [newEventTitle, setNewEventTitle] = useState('');
-  const [newEventType, setNewEventType] = useState('Celebração Geral');
+  const [newEventType, setNewEventType] = useState('');
   const [newEventStartDate, setNewEventStartDate] = useState('2026-10-25');
   const [newEventStartTime, setNewEventStartTime] = useState('19:00');
   const [newEventEndDate, setNewEventEndDate] = useState('2026-10-25');
   const [newEventEndTime, setNewEventEndTime] = useState('20:45');
   const [newEventTemplateId, setNewEventTemplateId] = useState('');
-  const [newEventLiturgyLeader, setNewEventLiturgyLeader] = useState(() => currentUser?.id || '');
+  const [newEventLiturgyLeader, setNewEventLiturgyLeader] = useState('');
   const [newEventDurationPolicy, setNewEventDurationPolicy] = useState('warn');
   const [createEventError, setCreateEventError] = useState('');
   const [createEventSuccess, setCreateEventSuccess] = useState('');
+  const [createEventWarning, setCreateEventWarning] = useState('');
+  const [isCreatingEvent, setIsCreatingEvent] = useState(false);
 
   // Estados de Publicação e Rascunho (Issue #30)
   const [publishFeedback, setPublishFeedback] = useState('');
@@ -90,6 +106,8 @@ export default function PlanningView({ onBack } = {}) {
   const [formResponsible, setFormResponsible] = useState(() => currentUser?.id || (members?.[0]?.id || ''));
   const [formNotes, setFormNotes] = useState('');
   const [formRequiresPlayback, setFormRequiresPlayback] = useState(false);
+  const [activityError, setActivityError] = useState('');
+  const [isSavingActivity, setIsSavingActivity] = useState(false);
 
   // Modal de Adicionar Música (PRD 9.1)
   const [musicModalOpen, setMusicModalOpen] = useState(false);
@@ -113,10 +131,12 @@ export default function PlanningView({ onBack } = {}) {
     setFormResponsible(currentUser?.id || (members?.[0]?.id || ''));
     setFormNotes('');
     setFormRequiresPlayback(false);
+    setActivityError('');
     setActivityModalOpen(true);
   };
 
   const openEditActivityModal = (act) => {
+    setActivityError('');
     setEditingActivityId(act.id);
     setFormTitle(act.title);
     setFormCategory(act.category);
@@ -127,8 +147,9 @@ export default function PlanningView({ onBack } = {}) {
     setActivityModalOpen(true);
   };
 
-  const handleSaveActivity = () => {
-    if (!formTitle) return;
+  const handleSaveActivity = async () => {
+    if (!formTitle || isSavingActivity) return;
+    setActivityError('');
 
     if (editingActivityId) {
       // Edição
@@ -151,27 +172,30 @@ export default function PlanningView({ onBack } = {}) {
       }));
       addAuditLog("Edição de Atividade", `Atividade '${formTitle}' atualizada no planejamento.`);
     } else {
-      // Criação de Nova Atividade
-      const newAct = {
-        id: "act-" + Date.now(),
-        title: formTitle,
-        category: formCategory,
-        plannedDurationMinutes: parseInt(formDuration) || 5,
-        responsibleMemberId: formResponsible,
-        responsibleTeamId: "liturgia",
-        status: "pendente",
-        notes: formNotes,
-        requiresPlayback: formRequiresPlayback,
-        musics: [],
-        roster: []
-      };
+      // Criação de Nova Atividade (Issue #29): no ambiente conectado, a etapa só aparece na lista
+      // depois de gravada no servidor; se a gravação falhar, o erro é exibido e nada é simulado.
+      setIsSavingActivity(true);
+      let res;
+      try {
+        res = await Promise.resolve(addActivityToEvent({
+          title: formTitle,
+          category: formCategory,
+          plannedDurationMinutes: parseInt(formDuration) || 5,
+          responsibleMemberId: formResponsible,
+          responsibleTeamId: "liturgia",
+          notes: formNotes,
+          requiresPlayback: formRequiresPlayback
+        }));
+      } catch (err) {
+        res = { success: false, error: err.message || 'Erro inesperado ao adicionar a etapa.' };
+      } finally {
+        setIsSavingActivity(false);
+      }
 
-      setEvent(prev => ({
-        ...prev,
-        activities: [...prev.activities, newAct]
-      }));
-
-      addAuditLog("Nova Atividade Planejada", `Atividade '${formTitle}' (${formDuration} min) adicionada à ordem.`);
+      if (!res?.success) {
+        setActivityError(res?.error || 'Não foi possível adicionar a etapa.');
+        return;
+      }
     }
 
     setActivityModalOpen(false);
@@ -257,11 +281,18 @@ export default function PlanningView({ onBack } = {}) {
       const templateName = tpl?.name || 'Modelo';
 
       if (res.persisted === false) {
-        // Prévia em memória carregada (Issue #27 / #29)
+        // Modo local sem servidor (demonstração/testes): nada é gravado
         setTemplateFeedback({
           type: 'warning',
           title: `Prévia do modelo "${templateName}" carregada em memória`,
-          message: res.warning || 'As atividades litúrgicas e serviços de apoio foram carregados como prévia local nesta sessão. A gravação durável no banco de dados para esta edição de culto depende da issue #29.'
+          message: res.warning || 'As atividades litúrgicas e serviços de apoio foram carregados apenas na memória desta sessão; nada foi gravado no servidor.'
+        });
+      } else if (res.warning) {
+        // Etapas gravadas no servidor (Issue #29), com os limites exatos do que foi gravado
+        setTemplateFeedback({
+          type: 'warning',
+          title: `Modelo "${templateName}": ${res.savedItemsCount ?? 0} etapa(s) gravada(s) no servidor`,
+          message: res.warning
         });
       } else {
         setTemplateFeedback({
@@ -280,23 +311,41 @@ export default function PlanningView({ onBack } = {}) {
   // Handlers para Edição de Culto e Publicação (Issues #28 e #30)
   const handleOpenCreateEventModal = () => {
     setNewEventTitle('');
-    setNewEventType(eventTypes[0]?.name || 'Celebração Geral');
+    setNewEventType(eventTypes[0]?.name || (isRemoteConfigured ? '' : 'Celebração Geral'));
     setNewEventStartDate('2026-10-25');
     setNewEventStartTime('19:00');
     setNewEventEndDate('2026-10-25');
     setNewEventEndTime('20:45');
     setNewEventTemplateId('');
-    setNewEventLiturgyLeader(currentUser?.id || (members?.[0]?.id || ''));
+    setNewEventLiturgyLeader(isAdmin ? (currentUser?.id || (members?.[0]?.id || '')) : '');
     setNewEventDurationPolicy('warn');
     setCreateEventError('');
     setCreateEventSuccess('');
+    setCreateEventWarning('');
     setCreateEventModalOpen(true);
   };
 
   const handleCreateEventEditionSubmit = async (e) => {
     e?.preventDefault?.();
+    // Evita criar a mesma edição duas vezes: envio em andamento, edição já criada ou tentativa incerta pendente
+    if (isCreatingEvent || createEventSuccess) return;
+    if (pendingCreateEvent) {
+      setCreateEventError('Há uma tentativa anterior sem confirmação do servidor. Use "Repetir tentativa anterior" para consultar o servidor com os mesmos dados.');
+      return;
+    }
     setCreateEventError('');
     setCreateEventSuccess('');
+    setCreateEventWarning('');
+
+    if (isRemoteConfigured && eventTypes.length === 0) {
+      setCreateEventError('Nenhum tipo de evento cadastrado. Cadastre ao menos um tipo na Administração antes de criar uma edição de culto.');
+      return;
+    }
+
+    if (!newEventType) {
+      setCreateEventError('Selecione o tipo de evento antes de criar a edição de culto.');
+      return;
+    }
 
     const startIso = `${newEventStartDate}T${newEventStartTime}:00`;
     const endIso = `${newEventEndDate}T${newEventEndTime}:00`;
@@ -323,25 +372,63 @@ export default function PlanningView({ onBack } = {}) {
       }
     }
 
-    const res = await createEventEdition({
-      title: newEventTitle,
-      type: newEventType,
-      plannedStartAt: startIso,
-      plannedEndAt: endIso,
-      liturgyLeaderId: newEventLiturgyLeader,
-      durationPolicy: newEventDurationPolicy,
-      activities: initialActs,
-      parallelServices: initialServices
-    });
+    // Data e hora digitadas são hora local no fuso da igreja; a conversão é feita no contexto (#28)
+    setIsCreatingEvent(true);
+    let res;
+    try {
+      res = await Promise.resolve(createEventEdition({
+        title: newEventTitle,
+        type: newEventType,
+        plannedStartAt: startIso,
+        plannedEndAt: endIso,
+        liturgyLeaderId: isAdmin ? (newEventLiturgyLeader || null) : null,
+        durationPolicy: newEventDurationPolicy,
+        activities: initialActs,
+        parallelServices: initialServices
+      }));
+    } catch (err) {
+      res = { success: false, error: err.message || 'Erro inesperado ao criar a edição de culto.' };
+    } finally {
+      setIsCreatingEvent(false);
+    }
 
     if (!res.success) {
       setCreateEventError(res.error);
+    } else if (res.warning) {
+      // Edição criada, com ressalvas sobre as etapas (Issue #29): o modal permanece aberto até o usuário ler
+      setCreateEventSuccess(`Edição '${res.event.title}' criada com sucesso.`);
+      setCreateEventWarning(res.warning);
     } else {
       setCreateEventSuccess(`Edição '${res.event.title}' criada com sucesso!`);
       setTimeout(() => {
         setCreateEventModalOpen(false);
         setCreateEventSuccess('');
       }, 1500);
+    }
+  };
+
+  const handleRetryPendingCreateEvent = async () => {
+    if (isCreatingEvent || !retryPendingCreateEvent) return;
+    setCreateEventError('');
+    setCreateEventSuccess('');
+    setCreateEventWarning('');
+    setIsCreatingEvent(true);
+    let res;
+    try {
+      res = await Promise.resolve(retryPendingCreateEvent());
+    } catch (err) {
+      res = { success: false, error: err.message || 'Erro inesperado ao repetir a tentativa anterior.' };
+    } finally {
+      setIsCreatingEvent(false);
+    }
+    if (!res?.success) {
+      setCreateEventError(res?.error || 'Não foi possível concluir a tentativa anterior.');
+    } else if (res.warning) {
+      setCreateEventModalOpen(true);
+      setCreateEventSuccess(`Edição '${res.event.title}' criada com sucesso.`);
+      setCreateEventWarning(res.warning);
+    } else {
+      setCreateEventModalOpen(false);
     }
   };
 
@@ -435,22 +522,93 @@ export default function PlanningView({ onBack } = {}) {
         </div>
       )}
 
+      {isTeamsStatusBlocking && (
+        <div
+          id="notice-teams-load-status"
+          className="card"
+          style={{
+            borderLeft: '4px solid #3b82f6',
+            background: '#eff6ff',
+            color: '#1e3a8a',
+            padding: '1rem'
+          }}
+        >
+          <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', fontWeight: 600 }}>
+            <Info size={18} color="#2563eb" />
+            <span>
+              {isTeamsCheckingForCreate
+                ? 'Carregando equipes da igreja para verificar sua liderança...'
+                : 'Não foi possível carregar as equipes da igreja para verificar sua liderança.'}
+            </span>
+          </div>
+          {reloadRemoteData && (
+            <button
+              type="button"
+              id="btn-reload-teams-status"
+              className="btn btn-secondary"
+              onClick={reloadRemoteData}
+              disabled={remoteLoading}
+              style={{ marginTop: '0.5rem', fontSize: '0.8rem', padding: '0.35rem 0.75rem' }}
+            >
+              {remoteLoading ? 'Recarregando...' : 'Recarregar equipes'}
+            </button>
+          )}
+        </div>
+      )}
+
+      {pendingCreateEvent && !createEventModalOpen && (
+        <div
+          id="banner-pending-create-event"
+          className="card"
+          style={{
+            borderLeft: '4px solid #d97706',
+            background: '#fffbeb',
+            color: '#92400e',
+            padding: '1rem'
+          }}
+        >
+          <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', fontWeight: 600 }}>
+            <AlertTriangle size={20} color="#d97706" />
+            <span>Tentativa anterior de criação sem confirmação do servidor</span>
+          </div>
+          <p style={{ margin: '0.5rem 0 0 0', fontSize: '0.9rem' }}>
+            Não é possível saber se a tentativa anterior foi gravada. Repetir consulta o servidor e, se ela não tiver sido gravada, será gravada com os dados abaixo:
+          </p>
+          <p style={{ margin: '0.4rem 0 0 0', fontSize: '0.85rem', fontWeight: 600 }}>
+            {pendingCreateEvent.summary?.title} — {pendingCreateEvent.summary?.type} ({pendingCreateEvent.summary?.date} às {pendingCreateEvent.summary?.scheduledStartTime})
+          </p>
+          <div style={{ marginTop: '0.75rem', display: 'flex', gap: '0.75rem', flexWrap: 'wrap' }}>
+            <button
+              type="button"
+              id="btn-retry-pending-create-event"
+              className="btn btn-primary"
+              onClick={handleRetryPendingCreateEvent}
+              disabled={isCreatingEvent}
+            >
+              {isCreatingEvent ? 'Consultando servidor...' : 'Repetir tentativa anterior'}
+            </button>
+          </div>
+        </div>
+      )}
+
       {(!event || events.length === 0) ? (
         <div className="card" style={{ padding: '2.5rem 1.5rem', textAlign: 'center' }}>
           <Calendar size={48} color="var(--primary)" style={{ margin: '0 auto 1rem' }} />
           <h2 style={{ fontSize: '1.25rem', marginBottom: '0.5rem' }}>Nenhum Culto Cadastrado</h2>
           <p style={{ color: 'var(--text-secondary)', fontSize: '0.9rem', maxWidth: '500px', margin: '0 auto 1.5rem', lineHeight: 1.5 }}>
-            {(isAdmin || isLiturgyLeader)
-              ? 'Não existem edições de culto cadastradas para esta igreja. Clique abaixo para cadastrar a primeira edição e iniciar o planejamento litúrgico.'
-              : 'Não existem edições de culto cadastradas para esta igreja no momento. O cronograma litúrgico estará disponível assim que a liderança cadastrar o culto.'}
+            {isTeamsStatusBlocking
+              ? 'Aguardando o carregamento das equipes da igreja para confirmar quem pode cadastrar novas edições.'
+              : canCreateEvent
+                ? 'Não existem edições de culto cadastradas para esta igreja. Clique abaixo para cadastrar a primeira edição e iniciar o planejamento litúrgico.'
+                : 'Não existem edições de culto cadastradas para esta igreja no momento. O cronograma litúrgico estará disponível assim que a liderança cadastrar o culto.'}
           </p>
-          {(isAdmin || isLiturgyLeader) && (
+          {canCreateEvent && (
             <button
               type="button"
               id="btn-open-create-event-modal"
               className="btn btn-primary"
               onClick={handleOpenCreateEventModal}
-              disabled={isControlsDisabled}
+              disabled={isControlsDisabled || isTeamsStatusBlocking}
               style={{ display: 'inline-flex', alignItems: 'center', gap: '0.5rem', margin: '0 auto' }}
             >
               <Plus size={16} /> Nova Edição de Culto
@@ -488,7 +646,11 @@ export default function PlanningView({ onBack } = {}) {
               </span>
 
               <span className={`badge ${event.programStatus === 'published' ? 'badge-primary' : 'badge-pending'}`} id="badge-program-status">
-                {event.programStatus === 'published' ? `Publicado (v${event.programVersion || 1})` : 'Rascunho'}
+                {event.programStatus === 'published'
+                  ? `Publicado (v${event.programVersion || 1})`
+                  : event.programStatus === 'draft'
+                    ? 'Rascunho'
+                    : 'Situação da programação não informada pelo servidor'}
               </span>
             </div>
           </div>
@@ -500,7 +662,7 @@ export default function PlanningView({ onBack } = {}) {
             id="btn-open-create-event-modal"
             className="btn btn-primary"
             onClick={handleOpenCreateEventModal}
-            disabled={(!isLiturgyLeader && !isAdmin) || isControlsDisabled}
+            disabled={!canCreateEvent || isControlsDisabled || isTeamsStatusBlocking}
           >
             <Plus size={15} style={{ marginRight: '6px' }} /> Nova Edição de Culto
           </button>
@@ -549,11 +711,14 @@ export default function PlanningView({ onBack } = {}) {
               <select
                 id="select-duration-policy"
                 className="form-select form-select-sm"
-                value={event.durationPolicy || 'warn'}
-                onChange={e => handleChangeDurationPolicy(e.target.value)}
+                value={event.durationPolicy === null ? '' : (event.durationPolicy || 'warn')}
+                onChange={e => { if (e.target.value) handleChangeDurationPolicy(e.target.value); }}
                 disabled={(!isLiturgyLeader && !isAdmin) || isControlsDisabled}
                 style={{ fontSize: '12px', padding: '4px 8px' }}
               >
+                {event.durationPolicy === null && (
+                  <option value="">Não informada pelo servidor — selecione para definir</option>
+                )}
                 <option value="warn">Modo Alerta (warn) — Permite salvar e publicar com excesso</option>
                 <option value="block">Modo Bloqueio (block) — Bloqueia publicação se houver excesso</option>
               </select>
@@ -601,7 +766,12 @@ export default function PlanningView({ onBack } = {}) {
             <div id="msg-publish-warning" className="ignorable-overflow-banner" style={{ marginTop: '10px' }}>
               <AlertTriangle size={15} color="#fbbf24" />
               <span>
-                {event.durationPolicy === 'block' ? (
+                {event.durationPolicy === null ? (
+                  <>
+                    <strong>Excesso de duração:</strong> A programação excede o culto em {durationOverflowMinutes} min.
+                    A política de duração deste culto não foi informada pelo servidor; a publicação será aceita ou recusada conforme a política gravada nele.
+                  </>
+                ) : event.durationPolicy === 'block' ? (
                   <>
                     <strong>Bloqueio de Publicação (PRD 6 / M49 & Issue #30 CA03):</strong> A programação excede o culto em {durationOverflowMinutes} min.
                     No modo de bloqueio, você pode salvar rascunhos, mas a publicação só é permitida após ajustar a sequência principal.
@@ -725,6 +895,17 @@ export default function PlanningView({ onBack } = {}) {
           <Plus size={16} /> Adicionar Nova Etapa Litúrgica
         </button>
       </div>
+
+      {/* Aviso exato sobre o que é gravado no servidor (Issue #29) */}
+      {isRemoteConfigured && (
+        <div
+          id="notice-event-items-persistence"
+          style={{ padding: '10px 14px', background: '#fffbeb', border: '1px solid #fcd34d', color: '#92400e', borderRadius: 'var(--radius-sm)', fontSize: '12px', display: 'flex', alignItems: 'flex-start', gap: '8px' }}
+        >
+          <Info size={15} style={{ flexShrink: 0, marginTop: '2px' }} />
+          <span>{EVENT_ITEMS_PERSISTENCE_NOTICE}</span>
+        </div>
+      )}
 
       <div className="planning-activities-list">
         {event.activities.map((act, index) => (
@@ -857,6 +1038,11 @@ export default function PlanningView({ onBack } = {}) {
               Acompanham os marcos do culto (início e término) sem cronômetro próprio. Conforme o <strong>PRD §5 e CA02</strong>,
               retirar a transmissão ou outro apoio desta edição específica não altera o modelo nem outros eventos.
             </p>
+            {isRemoteConfigured && (
+              <p id="notice-parallel-services-not-persisted" style={{ fontSize: '12px', color: '#92400e', margin: '6px 0 0 0', fontWeight: 600 }}>
+                {PARALLEL_SERVICES_NOT_PERSISTED_NOTICE}
+              </p>
+            )}
           </div>
         </div>
 
@@ -1042,12 +1228,25 @@ export default function PlanningView({ onBack } = {}) {
               </label>
             </div>
 
+            {editingActivityId && isRemoteConfigured && (
+              <div id="notice-activity-edit-local" style={{ marginBottom: '12px', padding: '8px 12px', fontSize: '12px', background: '#fffbeb', border: '1px solid #fcd34d', color: '#92400e', borderRadius: '6px' }}>
+                A edição de etapa ainda não é gravada no servidor: esta alteração vale apenas nesta sessão.
+              </div>
+            )}
+
+            {activityError && (
+              <div id="msg-activity-error" className="alert alert-danger" style={{ marginBottom: '12px', padding: '10px 12px', display: 'flex', alignItems: 'flex-start', gap: '8px', fontSize: '13px', background: 'rgba(239, 68, 68, 0.1)', color: '#ef4444', borderRadius: '6px' }}>
+                <AlertTriangle size={16} style={{ flexShrink: 0, marginTop: '2px' }} />
+                <span>{activityError}</span>
+              </div>
+            )}
+
             <div className="modal-footer">
               <button className="btn btn-secondary" onClick={() => setActivityModalOpen(false)}>
                 Cancelar
               </button>
-              <button className="btn btn-primary" onClick={handleSaveActivity}>
-                Salvar Etapa no Planejamento
+              <button id="btn-save-activity" className="btn btn-primary" onClick={handleSaveActivity} disabled={isSavingActivity}>
+                {isSavingActivity ? 'Gravando etapa...' : 'Salvar Etapa no Planejamento'}
               </button>
             </div>
           </div>
@@ -1219,6 +1418,41 @@ export default function PlanningView({ onBack } = {}) {
               </div>
             )}
 
+            {createEventWarning && (
+              <div id="msg-create-event-warning" style={{ marginBottom: '14px', padding: '10px 12px', display: 'flex', alignItems: 'flex-start', gap: '8px', fontSize: '13px', background: '#fffbeb', border: '1px solid #fcd34d', color: '#92400e', borderRadius: '6px' }}>
+                <AlertTriangle size={16} style={{ flexShrink: 0, marginTop: '2px' }} />
+                <span>{createEventWarning}</span>
+              </div>
+            )}
+
+            {pendingCreateEvent && (
+              <div
+                id="banner-pending-create-event"
+                style={{ marginBottom: '14px', padding: '10px 12px', fontSize: '13px', background: '#fffbeb', border: '1px solid #f59e0b', color: '#92400e', borderRadius: '6px' }}
+              >
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px', fontWeight: 600 }}>
+                  <AlertTriangle size={16} />
+                  <span>Tentativa anterior sem confirmação do servidor</span>
+                </div>
+                <p style={{ margin: '6px 0 0 0' }}>
+                  Não é possível saber se a tentativa anterior foi gravada. Repetir consulta o servidor e, se ela não tiver sido gravada, será gravada com os dados abaixo:
+                </p>
+                <p style={{ margin: '4px 0 0 0', fontWeight: 600 }}>
+                  {pendingCreateEvent.summary?.title} — {pendingCreateEvent.summary?.type} ({pendingCreateEvent.summary?.date} às {pendingCreateEvent.summary?.scheduledStartTime})
+                </p>
+                <button
+                  type="button"
+                  id="btn-retry-pending-create-event"
+                  className="btn btn-primary"
+                  onClick={handleRetryPendingCreateEvent}
+                  disabled={isCreatingEvent}
+                  style={{ marginTop: '8px' }}
+                >
+                  {isCreatingEvent ? 'Consultando servidor...' : 'Repetir tentativa anterior'}
+                </button>
+              </div>
+            )}
+
             <form onSubmit={handleCreateEventEditionSubmit}>
               <div className="form-group">
                 <label className="form-label">Título da Edição do Culto:</label>
@@ -1246,8 +1480,18 @@ export default function PlanningView({ onBack } = {}) {
                     {eventTypes.map(t => (
                       <option key={t.id} value={t.name}>{t.name}</option>
                     ))}
-                    {eventTypes.length === 0 && <option value="Celebração Geral">Celebração Geral</option>}
+                    {eventTypes.length === 0 && isRemoteConfigured && (
+                      <option value="">-- Nenhum tipo de evento cadastrado --</option>
+                    )}
+                    {eventTypes.length === 0 && !isRemoteConfigured && (
+                      <option value="Celebração Geral">Celebração Geral</option>
+                    )}
                   </select>
+                  {eventTypes.length === 0 && isRemoteConfigured && (
+                    <span id="event-type-empty-notice" style={{ fontSize: '11px', color: 'var(--warning, #d97706)', display: 'block', marginTop: '4px' }}>
+                      Cadastre ao menos um tipo de evento na Administração antes de criar uma edição.
+                    </span>
+                  )}
                 </div>
 
                 <div className="form-group">
@@ -1332,10 +1576,11 @@ export default function PlanningView({ onBack } = {}) {
                   <select
                     id="event-liturgy-leader"
                     className="form-select"
-                    value={newEventLiturgyLeader}
+                    value={isAdmin ? newEventLiturgyLeader : ''}
                     onChange={e => setNewEventLiturgyLeader(e.target.value)}
                     disabled={!isAdmin}
                   >
+                    {!isAdmin && <option value="">-- A definir pelo administrador --</option>}
                     {members.map(m => (
                       <option key={m.id} value={m.id}>
                         {m.name} ({m.roles.join(', ')})
@@ -1344,7 +1589,7 @@ export default function PlanningView({ onBack } = {}) {
                   </select>
                   {!isAdmin && (
                     <span style={{ fontSize: '11px', color: 'var(--text-muted)' }}>
-                      Somente administradores podem designar ou alterar a liderança (CA03).
+                      Somente administradores podem designar o líder da liturgia. A edição será criada sem dirigente designado (Opção B).
                     </span>
                   )}
                 </div>
@@ -1365,10 +1610,15 @@ export default function PlanningView({ onBack } = {}) {
 
               <div className="modal-footer">
                 <button type="button" className="btn btn-secondary" onClick={() => setCreateEventModalOpen(false)}>
-                  Cancelar
+                  {createEventSuccess ? 'Fechar' : 'Cancelar'}
                 </button>
-                <button type="submit" id="btn-submit-create-event" className="btn btn-primary">
-                  Criar Edição de Culto (CA01-CA04)
+                <button
+                  type="submit"
+                  id="btn-submit-create-event"
+                  className="btn btn-primary"
+                  disabled={isCreatingEvent || Boolean(createEventSuccess) || Boolean(pendingCreateEvent) || (isRemoteConfigured && eventTypes.length === 0)}
+                >
+                  {isCreatingEvent ? 'Criando edição...' : 'Criar Edição de Culto (CA01-CA04)'}
                 </button>
               </div>
             </form>
