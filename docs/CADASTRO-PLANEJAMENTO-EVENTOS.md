@@ -55,7 +55,16 @@ Esta entrega conclui a frente integrada de planejamento e governança litúrgica
 
 ## 3. Estruturas de Dados e Modelo Relacional
 
-### 3.1 Evolução de `app_private.events`
+### 3.1 Estrutura e Evolução das Tabelas Canônicas
+
+O esquema relacional auditado do módulo de eventos contempla contagens estritas de colunas e relacionamentos canônicos:
+
+- **`app_private.events` (20 colunas canônicas):** tabela principal de eventos da igreja. Contém a chave estrangeira `published_by_member_id` com ação referencial `ON DELETE SET NULL` (`confdeltype = 'n'`) apontando para `app_private.members(id)`.
+- **`app_private.event_items` (15 colunas pré-026 / 16 colunas pós-026):** itens da programação litúrgica e técnica. O incremento 026 adiciona estritamente a coluna `prep_required_minutes` (tipo `integer`, não nulo, default `0`). A coluna `sequence_order` não possui restrição de unicidade (`UNIQUE`), sendo a continuidade sequencial garantida pelas RPCs procedurais sob bloqueio exclusivo do evento.
+- **`app_private.assignments` (13 colunas canônicas):** alocações de voluntários em itens ou no evento.
+- **`app_private.event_planning_receipts` (7 colunas canônicas):** registros de recibos transacionais para garantia de idempotência estrita por `command_id`.
+
+#### 3.1.1 Colunas de `app_private.events`
 
 | Campo | Tipo | Descrição e Invariante |
 |---|---|---|
@@ -78,13 +87,115 @@ Esta entrega conclui a frente integrada de planejamento e governança litúrgica
 
 Garante idempotência transacional por `command_id` para todas as mutações de planejamento e publicação de programação.
 
+### 3.3 Evolução de `app_private.event_items` (Incremento 026 / B2 v1.0)
+
+| Campo | Tipo | Descrição e Invariante |
+|---|---|---|
+| `prep_required_minutes` | `integer` | Tempo de preparação antecedente em minutos (`0..180`, default 0). |
+| *Constraint `ei_prep_minutes_range`* | `CHECK` | `prep_required_minutes >= 0 and prep_required_minutes <= 180`. |
+| *Constraint `ei_liturgical_prep_zero`* | `CHECK` | Itens litúrgicos exigem `prep_required_minutes = 0` (`item_nature <> 'liturgical' or prep_required_minutes = 0`). |
+| *Constraint `ei_sequence_order_positive`* | `CHECK` | `sequence_order >= 1`. |
+| *Invariante de Sequência* | N/A | Ausência semântica e física de índice ou constraint `UNIQUE` em `(event_id, item_nature, sequence_order)` para evitar contenções e conflitos em reordenações. A contiguidade `1..n` é gerida pelas RPCs de mutação sob `SELECT ... FOR UPDATE` no evento pai. |
+
 ---
 
-## 4. Contratos de RPCs Públicas
+## 4. Contratos de RPCs Públicas (Consolidado com Incremento 026)
 
+### 4.1 Criação de Edição e Liderança (Issue #28)
 1. `public.create_church_event_edition(p_church_id, p_command_id, p_title, p_event_type, p_planned_start_at, p_planned_end_at, p_liturgy_leader_member_id, p_duration_policy)`
 2. `public.assign_event_liturgy_leader(p_church_id, p_command_id, p_event_id, p_new_liturgy_leader_member_id, p_expected_version)`
-3. `public.reorder_event_items(p_church_id, p_command_id, p_event_id, p_ordered_item_ids)`
-4. `public.set_event_duration_policy(p_church_id, p_command_id, p_event_id, p_duration_policy)`
-5. `public.save_event_program_draft(p_church_id, p_command_id, p_event_id)`
-6. `public.publish_event_program(p_church_id, p_command_id, p_event_id)`
+
+### 4.2 Leitura e Listagem de Programação (Issue #29, B2 v1.0)
+3. `public.get_event_program(p_church_id uuid, p_event_id uuid)`
+   - Leitura estável (`STABLE`), sem recibo e sem auditoria.
+   - Devolve `table (event jsonb, items jsonb)`.
+   - Exclusivo para administradores e dirigente de liturgia do evento.
+   - Itens ordenados deterministamente por natureza (`liturgical` primeiro), `sequence_order`, `created_at` e `id`.
+4. `public.list_church_events(p_church_id uuid, p_status_filter text, p_limit integer, p_offset integer)`
+   - Estendido no Incremento 026 para retornar: `program_status`, `duration_policy`, `program_version`, `published_at` e `items_count`.
+
+### 4.3 Mutações de Etapas do Cronograma (Issue #29, B2 v1.0)
+5. `public.create_event_item(p_church_id, p_command_id, p_event_id, p_title, p_item_nature, p_sequence_order, p_planned_duration_seconds, p_designated_team_id, p_nominal_leader_member_id, p_prep_required_minutes)`
+   - Evoluído com argumento `p_prep_required_minutes` (default 0).
+   - Serialização com lock exclusivo no evento (`FOR UPDATE`).
+   - Mutações restritas a evento `scheduled` e programa `draft`.
+   - Autoridade restrita a administrador elegível e dirigente de liturgia do evento (líder de equipe não possui autoridade estrutural).
+   - Valida posição entre `1` e `n + 1`, deslocando itens subsequentes da mesma natureza.
+6. `public.update_event_item(p_church_id, p_command_id, p_event_id, p_item_id, p_title, p_planned_duration_seconds, p_prep_required_minutes, p_designated_team_id, p_nominal_leader_member_id, p_expected_updated_at)`
+   - Altera estrita e exatamente os 5 campos autorizados do item:
+     1. título (`title`);
+     2. duração planejada em segundos (`planned_duration_seconds`);
+     3. tempo de preparação em minutos (`prep_required_minutes`);
+     4. equipe designada (`designated_team_id`);
+     5. responsável nominal (`nominal_leader_member_id`).
+   - Concorrência otimista via `p_expected_updated_at` (conflito retorna `40001`).
+   - Captura com `RETURNING updated_at` o timestamp persistido pelo trigger `touch_updated_at` e o devolve no payload/recibo, devendo o cliente capturar este token para uso no próximo `p_expected_updated_at`.
+   - Replay idempotente devolve o recibo persistido mesmo se o item tiver sido removido posteriormente; reenvio de mesmo comando com parâmetros divergentes rejeitado com `23505`.
+   - Recibo em `event_planning_receipts` e auditoria com snapshot antes/depois.
+7. `public.remove_event_item(p_church_id, p_command_id, p_event_id, p_item_id, p_expected_updated_at)`
+   - Remoção física estrita no planejamento (evento `scheduled`, programa `draft`, item `pending`).
+   - Bloqueio estrito se houver qualquer linha em `app_private.assignments` vinculada ao item (`assignments.item_id = p_item_id`), independentemente do status da alocação (`P0020`).
+   - Replay idempotente devolve o recibo persistido mesmo após a exclusão física do item; reenvio de mesmo comando com parâmetros divergentes rejeitado com `23505`.
+   - Renumeração contígua dos itens restantes da mesma natureza para `1..n`.
+
+### 4.4 Governança de Programação e Políticas (Issues #29 e #30)
+8. `public.reorder_event_items(p_church_id, p_command_id, p_event_id, p_ordered_item_ids)`
+   - Restrito a evento `scheduled` e programa `draft`.
+   - Exige lista completa e não vazia de todos os itens de uma única natureza, todos no status `pending`.
+9. `public.set_event_duration_policy(p_church_id, p_command_id, p_event_id, p_duration_policy)`
+   - Restrito a evento `scheduled` e programa `draft`.
+10. `public.publish_event_program(p_church_id, p_command_id, p_event_id)`
+    - Restrito a evento `scheduled` e programa `draft`.
+    - Incrementa `program_version` estritamente na publicação.
+    - Publicações repetidas diretas são rejeitadas (exige transição explícita para rascunho antes de nova publicação).
+11. `public.save_event_program_draft(p_church_id, p_command_id, p_event_id)`
+    - Transição estrita de `published` para `draft`.
+    - Preserva metadados da última publicação (`published_at`, `published_by_member_id` e `program_version`).
+    - Nenhuma mutação converte automaticamente para rascunho sem esta chamada explícita.
+
+---
+
+## 5. Garantias Operacionais e Governança Técnica (Incremento 026 / B2 v1.0)
+
+### 5.1 Preflight e Verificação Fail-Closed
+- **Validação Estrutural Rígida:** Os scripts de pré-condição (`026_event_program_editing.sql`) e pós-condição (`026_verify.sql` e `026_rollback.sql`) são executados com `\set ON_ERROR_STOP on` em blocos procedurais PL/pgSQL anônimos.
+- **Contagem Estrita de Colunas:** Verificação exata da contagem de colunas das tabelas do domínio (`events = 20`, `event_items = 15/16`, `assignments = 13`, `event_planning_receipts = 7`).
+- **Verificação de Chaves e Integridade:** Validação explícita da integridade referencial de `published_by_member_id` com `confdeltype = 'n'` (`ON DELETE SET NULL`) para `app_private.members`.
+- **Ausência de Unicidade em Sequência:** Validação explícita de ausência de restrição ou índice `UNIQUE` cobrindo `sequence_order` nas tabelas do domínio.
+- **Allowlist Direta de Privilégios:** Inspeção via `aclexplode(proacl)` garantindo concessão exclusiva de `EXECUTE` para a role `authenticated` e ausência terminante de privilégios para `anon`, `public` (grantee 0) e `service_role`.
+
+### 5.2 Fórmula de Normalização e Fingerprint Canônico (F2)
+- Para evitar falsos positivos decorrentes de quebras de linha (`CRLF` vs `LF`) e espaços/tabs nas extremidades da definição de funções em bancos PostgreSQL sob diferentes plataformas, adota-se a fórmula canônica:
+  ```sql
+  encode(
+    pg_catalog.sha256(
+      convert_to(
+        btrim(
+          replace(p.prosrc, E'\r\n', E'\n'),
+          E' \t\r\n'
+        ),
+        'UTF8'
+      )
+    ),
+    'hex'
+  )
+  ```
+- A implementação usa `pg_catalog.sha256` (PostgreSQL 11+), sem dependência da extensão `pgcrypto`.
+- Essa normalização garante que pequenas variações nas bordas não invalidem o preflight, mantendo 100% de rigidez na detecção de qualquer alteração interna no corpo das funções.
+
+### 5.3 Idempotência Estrita e Desacoplamento de Concorrência Otimista (F1)
+- O protocolo de mutação de itens de programação implementa concorrência otimista via token temporal `expected_updated_at` (retornando `40001` em caso de conflito concorrente).
+- Em reenvios idempotentes (mesmo `church_id` e `command_id`), a RPC retorna com sucesso o recibo original persistido caso os parâmetros sejam idênticos, mesmo se o item já tiver sido fisicamente removido posteriormente.
+- Se o mesmo `command_id` for reenviado com qualquer parâmetro divergente, a requisição é terminantemente rejeitada com código `23505` (`unique_violation`), precedendo qualquer checagem de concorrência.
+- O teste de ensaio de replay pós-exclusão (Caso 8) desacopla expressamente as variáveis `v_update_expected_at_original`, `v_update_persisted_at` e `v_remove_expected_at`, assegurando a perfeita identidade de parâmetros da chamada original.
+
+### 5.4 Procedimento Determinístico de Delta Zero em 7 Momentos (F10)
+- O roteiro de ensaio (`026_rehearsal_cases.sql`) estabelece uma metodologia matemática de comprovação de reversibilidade perfeita (Delta Zero):
+  1. `M0`: Catálogo e dados antes de qualquer intervenção.
+  2. `M1`: Catálogo e dados após execução do instalador `026_event_program_editing.sql`.
+  3. `M2`: Catálogo e dados após execução de todas as baterias de ensaio (Casos 1 a 15).
+  4. `M3`: Catálogo e dados após limpeza de dados de ensaio.
+  5. `M4`: Catálogo e dados após execução do script de rollback `026_rollback.sql`.
+  6. `M5`: Catálogo e dados após reinstalação (reaplicação de `026_event_program_editing.sql`).
+  7. `M6`: Catálogo e dados após segundo rollback definitivo.
+- Critério de aprovação: `M0 == M4 == M6` em catálogo de objetos do domínio e dados canônicos, comprovando ausência de qualquer resíduo, vazamento ou alteração estrutural não revertida.
