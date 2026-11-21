@@ -4,7 +4,13 @@
  * Atende às Issues #28, #29 e #30 e aos critérios do PRD §3.2, §5, §6 e §7.7 (Cenários M05, M06, M24-M26, M28, M47-M50).
  */
 
-import { isDefinitiveLiturgicalError } from './liturgicalCommandService.js';
+import {
+  isDefinitiveLiturgicalError,
+  updateEventItem,
+  removeEventItem,
+  reorderEventItems,
+  validateLiturgicalReceipt,
+} from './liturgicalCommandService.js';
 
 export const MAX_TITLE_LENGTH = 200;
 export const MIN_TITLE_LENGTH = 1;
@@ -943,6 +949,7 @@ export async function createChurchEventEditionRemote(
 
 /**
  * Reordena atividades litúrgicas no Supabase.
+ * Delega para a implementação canônica com validação de recibo em liturgicalCommandService.
  */
 export async function reorderEventItemsRemote(
   supabaseClient,
@@ -950,36 +957,50 @@ export async function reorderEventItemsRemote(
   maybeEventId = null,
   maybeItemOrders = []
 ) {
-  let churchId, commandId, eventId, orderedItemIds;
+  let churchId, commandId, eventId, itemIds, itemNature;
   if (typeof churchIdOrOpts === 'object' && churchIdOrOpts !== null) {
-    ({ churchId, commandId, eventId, orderedItemIds = [] } = churchIdOrOpts);
+    ({
+      churchId,
+      commandId,
+      eventId,
+      itemIds = churchIdOrOpts.orderedItemIds || churchIdOrOpts.itemIds || [],
+      itemNature = 'liturgical',
+    } = churchIdOrOpts);
   } else {
     churchId = churchIdOrOpts;
     eventId = maybeEventId;
-    orderedItemIds = Array.isArray(maybeItemOrders)
+    itemIds = Array.isArray(maybeItemOrders)
       ? maybeItemOrders.map(item => (typeof item === 'object' ? item.item_id || item.id : item)).filter(Boolean)
       : [];
+    itemNature = 'liturgical';
   }
 
-  if (!churchId || !eventId || !Array.isArray(orderedItemIds) || orderedItemIds.length === 0) {
-    return { success: false, error: 'Parâmetros obrigatórios ausentes.' };
-  }
   const cmdId = commandId || generateCommandUuid();
-  try {
-    const { data, error } = await invokeSupabaseRpc(supabaseClient, 'reorder_event_items', {
-      p_church_id: churchId,
-      p_command_id: cmdId,
-      p_event_id: eventId,
-      p_ordered_item_ids: orderedItemIds,
-    });
-    if (error) {
-      return { success: false, error: eventPlanningErrorMessage(error), rawError: error };
-    }
-    const receipt = Array.isArray(data) ? data[0] : data;
-    return { success: true, receipt, error: null };
-  } catch (err) {
-    return { success: false, error: eventPlanningErrorMessage(err), rawError: err };
+  const res = await reorderEventItems({
+    supabase: supabaseClient,
+    churchId,
+    commandId: cmdId,
+    eventId,
+    itemIds,
+    itemNature,
+  });
+
+  if (res.status === 'SUCCESS') {
+    return {
+      success: true,
+      commandId: cmdId,
+      receipt: res.receipt,
+      error: null,
+    };
   }
+
+  return {
+    success: false,
+    commandId: cmdId,
+    uncertain: res.status === 'UNCERTAIN' || res.status === 'UNCERTAIN_ERROR',
+    error: res.message || eventPlanningErrorMessage(res.rawError),
+    rawError: res.rawError,
+  };
 }
 
 /**
@@ -1016,12 +1037,31 @@ export async function setEventDurationPolicyRemote(
       p_duration_policy: durationPolicy,
     });
     if (error) {
-      return { success: false, error: eventPlanningErrorMessage(error), rawError: error };
+      const definitive = isDefinitiveLiturgicalError(error);
+      return {
+        success: false,
+        uncertain: !definitive,
+        error: eventPlanningErrorMessage(error),
+        rawError: error,
+      };
     }
-    const receipt = Array.isArray(data) ? data[0] : data;
+    const receipt = validateLiturgicalReceipt(data, cmdId, churchId, 'set_event_duration_policy');
+    if (!receipt) {
+      return {
+        success: false,
+        uncertain: true,
+        error: 'Resposta recebida sem recibo canônico compatível para confirmação da política de duração.',
+      };
+    }
     return { success: true, durationPolicy, receipt, error: null };
   } catch (err) {
-    return { success: false, error: eventPlanningErrorMessage(err), rawError: err };
+    const definitive = isDefinitiveLiturgicalError(err);
+    return {
+      success: false,
+      uncertain: !definitive,
+      error: eventPlanningErrorMessage(err),
+      rawError: err,
+    };
   }
 }
 
@@ -1055,12 +1095,31 @@ export async function publishEventProgramRemote(
       p_event_id: eventId,
     });
     if (error) {
-      return { success: false, error: eventPlanningErrorMessage(error), rawError: error };
+      const definitive = isDefinitiveLiturgicalError(error);
+      return {
+        success: false,
+        uncertain: !definitive,
+        error: eventPlanningErrorMessage(error),
+        rawError: error,
+      };
     }
-    const receipt = Array.isArray(data) ? data[0] : data;
+    const receipt = validateLiturgicalReceipt(data, cmdId, churchId, 'publish_event_program');
+    if (!receipt) {
+      return {
+        success: false,
+        uncertain: true,
+        error: 'Resposta recebida sem recibo canônico compatível para confirmação da publicação da programação.',
+      };
+    }
     return { success: true, payload: receipt?.result_payload, receipt, error: null };
   } catch (err) {
-    return { success: false, error: eventPlanningErrorMessage(err), rawError: err };
+    const definitive = isDefinitiveLiturgicalError(err);
+    return {
+      success: false,
+      uncertain: !definitive,
+      error: eventPlanningErrorMessage(err),
+      rawError: err,
+    };
   }
 }
 
@@ -1092,11 +1151,173 @@ export async function saveEventProgramDraftRemote(
       p_event_id: eventId,
     });
     if (error) {
+      const definitive = isDefinitiveLiturgicalError(error);
+      return {
+        success: false,
+        uncertain: !definitive,
+        error: eventPlanningErrorMessage(error),
+        rawError: error,
+      };
+    }
+    const receipt = validateLiturgicalReceipt(data, cmdId, churchId, 'save_event_program_draft');
+    if (!receipt) {
+      return {
+        success: false,
+        uncertain: true,
+        error: 'Resposta recebida sem recibo canônico compatível para confirmação do salvamento de rascunho.',
+      };
+    }
+    return { success: true, payload: receipt?.result_payload, receipt, error: null };
+  } catch (err) {
+    const definitive = isDefinitiveLiturgicalError(err);
+    return {
+      success: false,
+      uncertain: !definitive,
+      error: eventPlanningErrorMessage(err),
+      rawError: err,
+    };
+  }
+}
+
+/**
+ * Obtém a programação completa do evento no Supabase (pós-026 / B2).
+ * Retorna { event, items }.
+ */
+export async function getEventProgramRemote(supabaseClient, churchId, eventId) {
+  if (!churchId || !eventId) {
+    return { success: false, error: 'Identificadores da igreja e do evento são obrigatórios.' };
+  }
+  try {
+    const { data, error } = await invokeSupabaseRpc(supabaseClient, 'get_event_program', {
+      p_church_id: churchId,
+      p_event_id: eventId,
+    });
+    if (error) {
       return { success: false, error: eventPlanningErrorMessage(error), rawError: error };
     }
-    const receipt = Array.isArray(data) ? data[0] : data;
-    return { success: true, payload: receipt?.result_payload, receipt, error: null };
+    const row = Array.isArray(data) ? data[0] : data;
+    if (!row || !row.event || !Array.isArray(row.items)) {
+      return { success: false, error: 'Retorno inválido ao carregar a programação do evento: estrutura incompleta.' };
+    }
+    return {
+      success: true,
+      event: row.event,
+      items: row.items,
+      error: null,
+    };
   } catch (err) {
     return { success: false, error: eventPlanningErrorMessage(err), rawError: err };
   }
+}
+
+/**
+ * Atualiza etapa litúrgica ou apoio no Supabase com token de concorrência otimista (pós-026 / B2).
+ * Delega para a implementação canônica com validação de recibo em liturgicalCommandService.
+ */
+export async function updateEventItemRemote(supabaseClient, params) {
+  const {
+    churchId,
+    commandId,
+    eventId,
+    itemId,
+    title,
+    itemNature = 'liturgical',
+    plannedDurationSeconds,
+    prepRequiredMinutes = 0,
+    designatedTeamId = null,
+    nominalLeaderMemberId = null,
+    expectedUpdatedAt,
+  } = params || {};
+
+  const cmdId = commandId || generateCommandUuid();
+  const res = await updateEventItem({
+    supabase: supabaseClient,
+    churchId,
+    commandId: cmdId,
+    eventId,
+    itemId,
+    title,
+    itemNature,
+    plannedDurationSeconds,
+    prepRequiredMinutes,
+    designatedTeamId,
+    nominalLeaderMemberId,
+    expectedUpdatedAt,
+  });
+
+  if (res.status === 'SUCCESS') {
+    return {
+      success: true,
+      commandId: cmdId,
+      receipt: res.receipt,
+      updatedAt: res.receipt?.result_payload?.updated_at,
+      error: null,
+    };
+  }
+
+  const rawError = res.rawError || res.error || null;
+  const isConcurrency = (res.code || rawError?.code) === '40001' || String(res.message || rawError?.message || '').includes('40001');
+  return {
+    success: false,
+    commandId: cmdId,
+    uncertain: res.status === 'UNCERTAIN' || res.status === 'UNCERTAIN_ERROR',
+    concurrencyConflict: isConcurrency,
+    error: isConcurrency
+      ? 'Conflito de concorrência: a etapa foi modificada por outro usuário. Recarregue a página antes de editar.'
+      : (res.message || eventPlanningErrorMessage(rawError)),
+    rawError,
+  };
+}
+
+/**
+ * Remove fisicamente etapa litúrgica ou apoio no Supabase no status de planejamento (pós-026 / B2).
+ * Delega para a implementação canônica com validação de recibo em liturgicalCommandService.
+ */
+export async function removeEventItemRemote(supabaseClient, params) {
+  const {
+    churchId,
+    commandId,
+    eventId,
+    itemId,
+    expectedUpdatedAt,
+  } = params || {};
+
+  const cmdId = commandId || generateCommandUuid();
+  const res = await removeEventItem({
+    supabase: supabaseClient,
+    churchId,
+    commandId: cmdId,
+    eventId,
+    itemId,
+    expectedUpdatedAt,
+  });
+
+  if (res.status === 'SUCCESS') {
+    return {
+      success: true,
+      commandId: cmdId,
+      receipt: res.receipt,
+      error: null,
+    };
+  }
+
+  const rawError = res.rawError || res.error || null;
+  const isConflict = (res.code || rawError?.code) === '40001' || String(res.message || rawError?.message || '').includes('40001');
+  const isBlocked = (res.code || rawError?.code) === 'P0020' || String(res.message || rawError?.message || '').includes('P0020');
+  let msg = res.message || eventPlanningErrorMessage(rawError);
+  if (isConflict) {
+    msg = 'Conflito de concorrência: a etapa foi modificada. Recarregue a página.';
+  } else if (isBlocked) {
+    msg = 'Não é possível remover a etapa: existem voluntários ou equipes alocadas a ela.';
+  }
+
+  return {
+    success: false,
+    commandId: cmdId,
+    uncertain: res.status === 'UNCERTAIN' || res.status === 'UNCERTAIN_ERROR',
+    concurrencyConflict: isConflict,
+    blockedByAssignment: isBlocked,
+    error: msg,
+    rawError,
+  };
 }

@@ -1,8 +1,8 @@
-import React, { useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { useApp } from '../context/AppContext';
 import {
   EVENT_ITEMS_PERSISTENCE_NOTICE,
-  PARALLEL_SERVICES_NOT_PERSISTED_NOTICE,
+  PARALLEL_SERVICES_PERSISTENCE_NOTICE,
 } from '../utils/eventItemService';
 import {
   Sliders,
@@ -26,6 +26,13 @@ import {
   ShieldCheck
 } from 'lucide-react';
 
+export function isProgramPublicationBlocked(durationPolicy, overflowMinutes) {
+  const normalizedOverflow = Number(overflowMinutes);
+  return durationPolicy === 'block'
+    && Number.isFinite(normalizedOverflow)
+    && normalizedOverflow > 0;
+}
+
 export default function PlanningView({ onBack } = {}) {
   const {
     event,
@@ -34,6 +41,9 @@ export default function PlanningView({ onBack } = {}) {
     selectEvent,
     createEventEdition,
     addActivityToEvent,
+    updateActivityInEvent,
+    removeActivityFromEvent,
+    loadEventProgram,
     isRemoteConfigured,
     moveActivityUpInEvent,
     moveActivityDownInEvent,
@@ -54,6 +64,8 @@ export default function PlanningView({ onBack } = {}) {
     standardActivities = [],
     serviceTemplates = [],
     applyServiceTemplateToEvent,
+    addParallelServiceToCurrentEvent,
+    updateParallelServiceInCurrentEvent,
     removeParallelServiceFromCurrentEvent,
     checkAssignmentConflict,
     addAuditLog,
@@ -122,6 +134,94 @@ export default function PlanningView({ onBack } = {}) {
   const [conflictModalOpen, setConflictModalOpen] = useState(false);
   const [conflictData, setConflictData] = useState({ reason: '', candidates: [] });
 
+  // Modal de Criação / Edição de Apoio Paralelo (Issue #29 / #30)
+  const [parallelModalOpen, setParallelModalOpen] = useState(false);
+  const [editingParallelId, setEditingParallelId] = useState(null);
+  const [parallelTitle, setParallelTitle] = useState('');
+  const [parallelDuration, setParallelDuration] = useState(60);
+  const [parallelPrepMinutes, setParallelPrepMinutes] = useState(15);
+  const [parallelTeamId, setParallelTeamId] = useState('');
+  const [parallelLeaderId, setParallelLeaderId] = useState('');
+  const [parallelError, setParallelError] = useState('');
+  const [isSavingParallel, setIsSavingParallel] = useState(false);
+
+  const openNewParallelModal = () => {
+    setEditingParallelId(null);
+    setParallelTitle('');
+    setParallelDuration(event?.plannedDurationMinutes && event.plannedDurationMinutes > 0 ? event.plannedDurationMinutes : 60);
+    setParallelPrepMinutes(15);
+    setParallelTeamId(teams?.[0]?.id || 'transmissao');
+    setParallelLeaderId('');
+    setParallelError('');
+    setParallelModalOpen(true);
+  };
+
+  const openEditParallelModal = (serv) => {
+    setEditingParallelId(serv.id);
+    setParallelTitle(serv.name || serv.title || '');
+    const durMin = serv.plannedDurationMinutes != null && serv.plannedDurationMinutes > 0
+      ? serv.plannedDurationMinutes
+      : (serv.plannedDurationSeconds && serv.plannedDurationSeconds > 0
+        ? Math.round(serv.plannedDurationSeconds / 60)
+        : (event?.plannedDurationMinutes || 60));
+    setParallelDuration(durMin);
+    setParallelPrepMinutes(serv.prepRequiredMinutes != null ? serv.prepRequiredMinutes : 15);
+    setParallelTeamId(serv.teamId || teams?.[0]?.id || 'transmissao');
+    setParallelLeaderId(serv.leaderId || '');
+    setParallelError('');
+    setParallelModalOpen(true);
+  };
+
+  const handleSaveParallel = async (e) => {
+    if (e && e.preventDefault) e.preventDefault();
+    if (isSavingParallel || isProgramMutationsDisabled) return;
+    if (!parallelTitle.trim()) {
+      setParallelError('Informe o título do apoio paralelo.');
+      return;
+    }
+    const durMin = Number(parallelDuration);
+    if (isNaN(durMin) || durMin <= 0 || !Number.isInteger(durMin)) {
+      setParallelError('A duração planejada do apoio paralelo deve ser um número inteiro maior que zero.');
+      return;
+    }
+    const prepMin = Number(parallelPrepMinutes);
+    if (isNaN(prepMin) || !Number.isInteger(prepMin) || prepMin < 0 || prepMin > 180) {
+      setParallelError('O tempo de preparação antecedente deve ser um número inteiro entre 0 e 180 minutos.');
+      return;
+    }
+    setIsSavingParallel(true);
+    setParallelError('');
+    let res;
+    try {
+      if (editingParallelId) {
+        res = await updateParallelServiceInCurrentEvent(editingParallelId, {
+          name: parallelTitle.trim(),
+          plannedDurationMinutes: durMin,
+          prepRequiredMinutes: prepMin,
+          teamId: parallelTeamId || null,
+          leaderId: parallelLeaderId || null,
+        });
+      } else {
+        res = await addParallelServiceToCurrentEvent({
+          name: parallelTitle.trim(),
+          plannedDurationMinutes: durMin,
+          prepRequiredMinutes: prepMin,
+          teamId: parallelTeamId || null,
+          leaderId: parallelLeaderId || null,
+        });
+      }
+    } catch (err) {
+      res = { success: false, error: err.message || 'Erro inesperado ao salvar apoio paralelo.' };
+    } finally {
+      setIsSavingParallel(false);
+    }
+    if (res && !res.success) {
+      setParallelError(res.error || 'Erro ao salvar apoio paralelo.');
+    } else {
+      setParallelModalOpen(false);
+    }
+  };
+
   // Abertura do Modal de Atividade
   const openNewActivityModal = () => {
     setEditingActivityId(null);
@@ -147,40 +247,129 @@ export default function PlanningView({ onBack } = {}) {
     setActivityModalOpen(true);
   };
 
+  // Estado de Remoção de Atividade (Issue #29)
+  const [isDeletingActivity, setIsDeletingActivity] = useState(false);
+  const [deleteActivityError, setDeleteActivityError] = useState('');
+  const [isReorderingActivity, setIsReorderingActivity] = useState(false);
+  const [reorderActivityError, setReorderActivityError] = useState('');
+  const [isReorderResultUncertain, setIsReorderResultUncertain] = useState(false);
+  const reorderInFlightRef = useRef(false);
+
+  useEffect(() => {
+    setReorderActivityError('');
+    setIsReorderResultUncertain(false);
+  }, [church?.id, event?.id]);
+
+  const handleRemoveActivity = async (activityId) => {
+    if (isDeletingActivity) return;
+    setDeleteActivityError('');
+    setIsDeletingActivity(true);
+    try {
+      const res = await Promise.resolve(removeActivityFromEvent(activityId));
+      if (!res?.success) {
+        setDeleteActivityError(res?.error || 'Não foi possível remover a etapa.');
+      }
+    } catch (err) {
+      setDeleteActivityError(err?.message || 'Erro inesperado ao remover a etapa.');
+    } finally {
+      setIsDeletingActivity(false);
+    }
+  };
+
+  const handleMoveActivity = async (activityId, direction) => {
+    if (reorderInFlightRef.current || isReorderingActivity || isProgramMutationsDisabled) {
+      return { success: false, error: 'A reordenação está temporariamente indisponível.' };
+    }
+
+    reorderInFlightRef.current = true;
+    setReorderActivityError('');
+    setIsReorderResultUncertain(false);
+    setIsReorderingActivity(true);
+    let res;
+    try {
+      res = direction === 'up'
+        ? await moveActivityUpInEvent(activityId)
+        : await moveActivityDownInEvent(activityId);
+
+      if (!res?.success) {
+        const uncertain = Boolean(res?.uncertain);
+        const message = uncertain
+          ? `Resultado incerto ao reordenar. Recarregue a programação para consultar o servidor ou repita exatamente o mesmo movimento. ${res?.error || ''}`.trim()
+          : (res?.error || 'Não foi possível reordenar a etapa.');
+        setIsReorderResultUncertain(uncertain);
+        setReorderActivityError(message);
+      }
+    } catch (err) {
+      res = {
+        success: false,
+        uncertain: true,
+        error: err?.message || 'Não foi possível confirmar a reordenação no servidor.',
+      };
+      setIsReorderResultUncertain(true);
+      setReorderActivityError(`Resultado incerto ao reordenar. Recarregue a programação para consultar o servidor ou repita exatamente o mesmo movimento. ${res.error}`);
+    } finally {
+      reorderInFlightRef.current = false;
+      setIsReorderingActivity(false);
+    }
+    return res;
+  };
+
   const handleSaveActivity = async () => {
-    if (!formTitle || isSavingActivity) return;
+    if (!formTitle || isSavingActivity || isProgramMutationsDisabled) return;
     setActivityError('');
 
     if (editingActivityId) {
-      // Edição
-      setEvent(prev => ({
-        ...prev,
-        activities: prev.activities.map(a => {
-          if (a.id === editingActivityId) {
-            return {
-              ...a,
-              title: formTitle,
-              category: formCategory,
-              plannedDurationMinutes: parseInt(formDuration) || 5,
-              responsibleMemberId: formResponsible,
-              notes: formNotes,
-              requiresPlayback: formRequiresPlayback
-            };
-          }
-          return a;
-        })
-      }));
-      addAuditLog("Edição de Atividade", `Atividade '${formTitle}' atualizada no planejamento.`);
+      // Edição de Atividade (Issue #29)
+      let durMin;
+      if (formDuration === undefined || formDuration === null || formDuration === '') {
+        const existingAct = event?.activities?.find(a => a.id === editingActivityId);
+        durMin = existingAct?.plannedDurationMinutes;
+      } else {
+        const parsed = Number(formDuration);
+        if (!Number.isInteger(parsed) || parsed <= 0) {
+          setActivityError('Duração da etapa deve ser um número inteiro maior que zero.');
+          return;
+        }
+        durMin = parsed;
+      }
+
+      setIsSavingActivity(true);
+      let res;
+      try {
+        res = await Promise.resolve(updateActivityInEvent(editingActivityId, {
+          title: formTitle,
+          category: formCategory,
+          plannedDurationMinutes: durMin,
+          responsibleMemberId: formResponsible,
+          notes: formNotes,
+          requiresPlayback: formRequiresPlayback
+        }));
+      } catch (err) {
+        res = { success: false, error: err.message || 'Erro inesperado ao editar a etapa.' };
+      } finally {
+        setIsSavingActivity(false);
+      }
+
+      if (!res?.success) {
+        setActivityError(res?.error || 'Não foi possível salvar a edição da etapa.');
+        return;
+      }
     } else {
       // Criação de Nova Atividade (Issue #29): no ambiente conectado, a etapa só aparece na lista
       // depois de gravada no servidor; se a gravação falhar, o erro é exibido e nada é simulado.
+      const parsed = Number(formDuration);
+      if (!Number.isInteger(parsed) || parsed <= 0) {
+        setActivityError('Duração da etapa deve ser um número inteiro maior que zero.');
+        return;
+      }
+
       setIsSavingActivity(true);
       let res;
       try {
         res = await Promise.resolve(addActivityToEvent({
           title: formTitle,
           category: formCategory,
-          plannedDurationMinutes: parseInt(formDuration) || 5,
+          plannedDurationMinutes: parsed,
           responsibleMemberId: formResponsible,
           responsibleTeamId: "liturgia",
           notes: formNotes,
@@ -432,9 +621,18 @@ export default function PlanningView({ onBack } = {}) {
     }
   };
 
+  const isPublicationBlockedByDuration = isProgramPublicationBlocked(
+    event?.durationPolicy,
+    durationOverflowMinutes
+  );
+
   const handlePublishProgram = async () => {
     setPublishError('');
     setPublishFeedback('');
+    if (isPublicationBlockedByDuration) {
+      setPublishError(`A publicação está bloqueada: a programação excede o culto em ${durationOverflowMinutes} min no modo block.`);
+      return;
+    }
     const res = await publishCurrentProgram();
     if (!res.success) {
       setPublishError(res.error);
@@ -464,6 +662,11 @@ export default function PlanningView({ onBack } = {}) {
   };
 
   const isControlsDisabled = !isOnline || isDataStale;
+  const isProgramMutationsDisabled =
+    isControlsDisabled ||
+    Boolean(event?.isProgramLoading) ||
+    Boolean(event?.programLoadError) ||
+    (Boolean(event?.loadedFromServer) && !event?.activitiesKnownInSession);
 
   return (
     <div className="planning-view-container">
@@ -482,6 +685,90 @@ export default function PlanningView({ onBack } = {}) {
           <span className="badge badge-pending" style={{ fontSize: '0.85rem' }}>
             Igreja: {church?.name || 'Igreja Conectada'}
           </span>
+        </div>
+      )}
+
+      {/* Banner de Erro na Carga da Programação (Issue #29 / #30) */}
+      {event?.programLoadError && (
+        <div
+          id="banner-program-load-error"
+          className="card"
+          style={{
+            borderLeft: '4px solid #ef4444',
+            background: '#fef2f2',
+            color: '#991b1b',
+            marginBottom: '1.25rem',
+            padding: '1rem'
+          }}
+        >
+          <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', fontWeight: 600 }}>
+            <AlertCircle size={20} color="#ef4444" />
+            <span>Falha ao carregar a programação do evento</span>
+          </div>
+          <p style={{ margin: '0.5rem 0 0 0', fontSize: '0.9rem' }}>
+            {event.programLoadError}
+          </p>
+          <p style={{ margin: '0.25rem 0 0 0', fontSize: '0.8rem', color: '#b91c1c' }}>
+            As mutações na programação deste evento estão bloqueadas até que a programação seja recarregada com sucesso, evitando inconsistências.
+          </p>
+          {loadEventProgram && (
+            <button
+              type="button"
+              id="btn-retry-load-program"
+              className="btn btn-secondary"
+              onClick={() => loadEventProgram(event.id)}
+              disabled={event?.isProgramLoading}
+              style={{ marginTop: '0.5rem', fontSize: '0.8rem', padding: '0.35rem 0.75rem' }}
+            >
+              {event?.isProgramLoading ? 'Recarregando...' : 'Recarregar Programação'}
+            </button>
+          )}
+        </div>
+      )}
+
+      {/* Banner de Erro na Remoção de Etapa Litúrgica */}
+      {deleteActivityError && (
+        <div
+          id="banner-delete-activity-error"
+          className="card"
+          style={{
+            borderLeft: '4px solid #ef4444',
+            background: '#fef2f2',
+            color: '#991b1b',
+            marginBottom: '1.25rem',
+            padding: '1rem'
+          }}
+        >
+          <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', fontWeight: 600 }}>
+            <AlertCircle size={20} color="#ef4444" />
+            <span>Não foi possível remover a etapa litúrgica</span>
+          </div>
+          <p style={{ margin: '0.5rem 0 0 0', fontSize: '0.9rem' }}>
+            {deleteActivityError}
+          </p>
+        </div>
+      )}
+
+      {reorderActivityError && (
+        <div
+          id="banner-reorder-activity-error"
+          className="card"
+          role="alert"
+          style={{
+            borderLeft: '4px solid #f59e0b',
+            background: '#fffbeb',
+            color: '#92400e',
+            marginBottom: '1.25rem',
+            padding: '1rem'
+          }}
+        >
+          <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', fontWeight: 600 }}>
+            <AlertTriangle size={20} color="#d97706" />
+            <span>{isReorderResultUncertain ? 'Não foi possível confirmar a reordenação' : 'Não foi possível reordenar a etapa'}</span>
+          </div>
+          <p style={{ margin: '0.5rem 0 0 0', fontSize: '0.9rem' }}>
+            {reorderActivityError}
+          </p>
         </div>
       )}
 
@@ -713,7 +1000,7 @@ export default function PlanningView({ onBack } = {}) {
                 className="form-select form-select-sm"
                 value={event.durationPolicy === null ? '' : (event.durationPolicy || 'warn')}
                 onChange={e => { if (e.target.value) handleChangeDurationPolicy(e.target.value); }}
-                disabled={(!isLiturgyLeader && !isAdmin) || isControlsDisabled}
+                disabled={(!isLiturgyLeader && !isAdmin) || isProgramMutationsDisabled}
                 style={{ fontSize: '12px', padding: '4px 8px' }}
               >
                 {event.durationPolicy === null && (
@@ -730,7 +1017,7 @@ export default function PlanningView({ onBack } = {}) {
                 id="btn-save-program-draft"
                 className="btn btn-sm btn-secondary"
                 onClick={handleSaveDraft}
-                disabled={(!isLiturgyLeader && !isAdmin) || isControlsDisabled}
+                disabled={(!isLiturgyLeader && !isAdmin) || isProgramMutationsDisabled}
               >
                 <Save size={13} style={{ marginRight: '4px' }} /> Salvar Rascunho
               </button>
@@ -740,7 +1027,8 @@ export default function PlanningView({ onBack } = {}) {
                 id="btn-publish-program"
                 className="btn btn-sm btn-primary"
                 onClick={handlePublishProgram}
-                disabled={(!isLiturgyLeader && !isAdmin) || isControlsDisabled}
+                disabled={(!isLiturgyLeader && !isAdmin) || isProgramMutationsDisabled || isPublicationBlockedByDuration}
+                title={isPublicationBlockedByDuration ? 'Ajuste a duração da sequência principal antes de publicar.' : undefined}
               >
                 <Send size={13} style={{ marginRight: '4px' }} /> Publicar Programação
               </button>
@@ -822,7 +1110,7 @@ export default function PlanningView({ onBack } = {}) {
               id="btn-apply-service-template"
               className="btn btn-secondary"
               onClick={handleApplyTemplate}
-              disabled={!selectedTemplateId || (!isLiturgyLeader && !isAdmin) || isControlsDisabled}
+              disabled={!selectedTemplateId || (!isLiturgyLeader && !isAdmin) || isProgramMutationsDisabled}
             >
               Aplicar Modelo ao Culto
             </button>
@@ -890,7 +1178,7 @@ export default function PlanningView({ onBack } = {}) {
           id="btn-open-new-activity-modal"
           className="btn btn-primary"
           onClick={openNewActivityModal}
-          disabled={(!isLiturgyLeader && !isAdmin) || isControlsDisabled}
+          disabled={(!isLiturgyLeader && !isAdmin) || isProgramMutationsDisabled}
         >
           <Plus size={16} /> Adicionar Nova Etapa Litúrgica
         </button>
@@ -983,8 +1271,8 @@ export default function PlanningView({ onBack } = {}) {
                     type="button"
                     id={`btn-move-up-${act.id}`}
                     className="btn btn-sm btn-secondary"
-                    onClick={() => moveActivityUpInEvent(act.id)}
-                    disabled={index === 0 || (!isLiturgyLeader && !isAdmin) || isControlsDisabled}
+                    onClick={() => handleMoveActivity(act.id, 'up')}
+                    disabled={index === 0 || (!isLiturgyLeader && !isAdmin) || isProgramMutationsDisabled || isReorderingActivity}
                     title="Mover para cima (Issue #29 CA01)"
                     style={{ padding: '4px 8px' }}
                   >
@@ -994,8 +1282,8 @@ export default function PlanningView({ onBack } = {}) {
                     type="button"
                     id={`btn-move-down-${act.id}`}
                     className="btn btn-sm btn-secondary"
-                    onClick={() => moveActivityDownInEvent(act.id)}
-                    disabled={index === event.activities.length - 1 || (!isLiturgyLeader && !isAdmin) || isControlsDisabled}
+                    onClick={() => handleMoveActivity(act.id, 'down')}
+                    disabled={index === event.activities.length - 1 || (!isLiturgyLeader && !isAdmin) || isProgramMutationsDisabled || isReorderingActivity}
                     title="Mover para baixo (Issue #29 CA01)"
                     style={{ padding: '4px 8px' }}
                   >
@@ -1004,11 +1292,25 @@ export default function PlanningView({ onBack } = {}) {
                 </div>
 
                 <button
+                  type="button"
+                  id={`btn-edit-activity-${act.id}`}
                   className="btn btn-sm btn-secondary"
                   onClick={() => openEditActivityModal(act)}
-                  disabled={(!isLiturgyLeader && !isAdmin) || isControlsDisabled}
+                  disabled={(!isLiturgyLeader && !isAdmin) || isProgramMutationsDisabled}
                 >
                   <Edit size={13} /> Editar
+                </button>
+
+                <button
+                  type="button"
+                  id={`btn-remove-activity-${act.id}`}
+                  className="btn btn-sm btn-secondary"
+                  onClick={() => handleRemoveActivity(act.id)}
+                  disabled={(!isLiturgyLeader && !isAdmin) || isProgramMutationsDisabled || isDeletingActivity}
+                  title="Excluir etapa litúrgica"
+                  style={{ color: '#ef4444', borderColor: '#fca5a5' }}
+                >
+                  <Trash2 size={13} /> Excluir
                 </button>
 
                 {/* Botão de Demonstração de Conflito Litúrgico (PRD 5.2 / Cenário M22) */}
@@ -1040,9 +1342,20 @@ export default function PlanningView({ onBack } = {}) {
             </p>
             {isRemoteConfigured && (
               <p id="notice-parallel-services-not-persisted" style={{ fontSize: '12px', color: '#92400e', margin: '6px 0 0 0', fontWeight: 600 }}>
-                {PARALLEL_SERVICES_NOT_PERSISTED_NOTICE}
+                {PARALLEL_SERVICES_PERSISTENCE_NOTICE}
               </p>
             )}
+          </div>
+          <div>
+            <button
+              type="button"
+              id="btn-open-new-parallel-service-modal"
+              className="btn btn-sm btn-primary"
+              onClick={openNewParallelModal}
+              disabled={(!isLiturgyLeader && !isAdmin) || isProgramMutationsDisabled}
+            >
+              <Plus size={13} style={{ marginRight: '4px' }} /> Adicionar Apoio Paralelo
+            </button>
           </div>
         </div>
 
@@ -1083,6 +1396,18 @@ export default function PlanningView({ onBack } = {}) {
                 <div style={{ marginTop: 'auto', paddingTop: '8px', borderTop: '1px solid var(--border-subtle)', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '6px' }}>
                   <button
                     type="button"
+                    id={`btn-edit-parallel-service-${serv.id}`}
+                    className="btn btn-sm btn-secondary"
+                    onClick={() => openEditParallelModal(serv)}
+                    disabled={(!isLiturgyLeader && !isAdmin) || isProgramMutationsDisabled}
+                    style={{ fontSize: '11px' }}
+                    title="Editar apoio paralelo"
+                  >
+                    <Edit size={12} style={{ marginRight: '4px' }} /> Editar
+                  </button>
+
+                  <button
+                    type="button"
                     id={`btn-test-prep-conflict-${serv.teamId || serv.id}`}
                     className="btn btn-sm btn-secondary"
                     onClick={() => {
@@ -1099,7 +1424,7 @@ export default function PlanningView({ onBack } = {}) {
                     id={`btn-remove-parallel-service-${serv.teamId || serv.id}`}
                     className="btn btn-sm btn-secondary"
                     onClick={() => removeParallelServiceFromCurrentEvent(serv.id)}
-                    disabled={(!isLiturgyLeader && !isAdmin) || isControlsDisabled}
+                    disabled={(!isLiturgyLeader && !isAdmin) || isProgramMutationsDisabled}
                     style={{ color: '#ef4444', fontSize: '11px' }}
                     title="Retira este serviço apenas desta edição de culto (PRD CA02)"
                   >
@@ -1230,7 +1555,7 @@ export default function PlanningView({ onBack } = {}) {
 
             {editingActivityId && isRemoteConfigured && (
               <div id="notice-activity-edit-local" style={{ marginBottom: '12px', padding: '8px 12px', fontSize: '12px', background: '#fffbeb', border: '1px solid #fcd34d', color: '#92400e', borderRadius: '6px' }}>
-                A edição de etapa ainda não é gravada no servidor: esta alteração vale apenas nesta sessão.
+                Ao salvar uma etapa já sincronizada, título, duração e responsável são gravados no servidor. Em etapas ainda locais, as alterações permanecem somente nesta sessão. Categoria, observações e playback também permanecem somente nesta sessão.
               </div>
             )}
 
@@ -1245,7 +1570,7 @@ export default function PlanningView({ onBack } = {}) {
               <button className="btn btn-secondary" onClick={() => setActivityModalOpen(false)}>
                 Cancelar
               </button>
-              <button id="btn-save-activity" className="btn btn-primary" onClick={handleSaveActivity} disabled={isSavingActivity}>
+              <button id="btn-save-activity" className="btn btn-primary" onClick={handleSaveActivity} disabled={isSavingActivity || isProgramMutationsDisabled}>
                 {isSavingActivity ? 'Gravando etapa...' : 'Salvar Etapa no Planejamento'}
               </button>
             </div>
@@ -1619,6 +1944,127 @@ export default function PlanningView({ onBack } = {}) {
                   disabled={isCreatingEvent || Boolean(createEventSuccess) || Boolean(pendingCreateEvent) || (isRemoteConfigured && eventTypes.length === 0)}
                 >
                   {isCreatingEvent ? 'Criando edição...' : 'Criar Edição de Culto (CA01-CA04)'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL DE CRIAÇÃO / EDIÇÃO DE APOIO PARALELO */}
+      {parallelModalOpen && (
+        <div className="modal-overlay">
+          <div className="modal-content" style={{ maxWidth: '480px' }}>
+            <div className="modal-header">
+              <h3 className="modal-title">
+                {editingParallelId ? 'Editar Apoio Paralelo' : 'Novo Apoio Paralelo'}
+              </h3>
+              <button className="close-btn" onClick={() => setParallelModalOpen(false)}>✕</button>
+            </div>
+
+            {parallelError && (
+              <div id="msg-parallel-service-error" className="alert alert-danger" style={{ marginBottom: '12px', padding: '8px 12px', fontSize: '12px' }}>
+                <AlertCircle size={14} style={{ marginRight: '6px', verticalAlign: 'middle' }} />
+                {parallelError}
+              </div>
+            )}
+
+            <form onSubmit={handleSaveParallel}>
+              <div className="form-group">
+                <label className="form-label">Título / Serviço:</label>
+                <input
+                  type="text"
+                  id="input-parallel-title"
+                  className="form-input"
+                  placeholder="Ex: Transmissão ao Vivo, Sonoplastia, Mídia"
+                  value={parallelTitle}
+                  onChange={e => setParallelTitle(e.target.value)}
+                  maxLength={150}
+                  required
+                />
+              </div>
+
+              <div className="grid-2">
+                <div className="form-group">
+                  <label className="form-label">Duração Planejada (min):</label>
+                  <input
+                    type="number"
+                    id="input-parallel-duration"
+                    className="form-input"
+                    value={parallelDuration}
+                    onChange={e => setParallelDuration(e.target.value)}
+                    min={1}
+                    step={1}
+                    required
+                  />
+                  <span style={{ fontSize: '11px', color: 'var(--text-muted)' }}>Maior que zero (minutos)</span>
+                </div>
+
+                <div className="form-group">
+                  <label className="form-label">Preparação Antecedente (min):</label>
+                  <input
+                    type="number"
+                    id="input-parallel-prep"
+                    className="form-input"
+                    value={parallelPrepMinutes}
+                    onChange={e => setParallelPrepMinutes(e.target.value)}
+                    min={0}
+                    max={180}
+                    step={1}
+                    required
+                  />
+                  <span style={{ fontSize: '11px', color: 'var(--text-muted)' }}>Entre 0 e 180 min</span>
+                </div>
+              </div>
+
+              <div className="grid-2">
+                <div className="form-group">
+                  <label className="form-label">Equipe Responsável:</label>
+                  <select
+                    id="select-parallel-team"
+                    className="form-select"
+                    value={parallelTeamId}
+                    onChange={e => setParallelTeamId(e.target.value)}
+                  >
+                    <option value="">-- Nenhuma / Geral --</option>
+                    {(teams || []).map(t => (
+                      <option key={t.id} value={t.id}>{t.name}</option>
+                    ))}
+                  </select>
+                </div>
+
+                <div className="form-group">
+                  <label className="form-label">Líder / Responsável:</label>
+                  <select
+                    id="select-parallel-leader"
+                    className="form-select"
+                    value={parallelLeaderId}
+                    onChange={e => setParallelLeaderId(e.target.value)}
+                  >
+                    <option value="">-- Selecionar voluntário --</option>
+                    {(members || []).map(m => (
+                      <option key={m.id} value={m.id}>{m.name}</option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+
+              <div className="modal-footer">
+                <button
+                  type="button"
+                  id="btn-cancel-parallel-service"
+                  className="btn btn-secondary"
+                  onClick={() => setParallelModalOpen(false)}
+                >
+                  Cancelar
+                </button>
+                <button
+                  type="submit"
+                  id="btn-save-parallel-service"
+                  className="btn btn-primary"
+                  disabled={isSavingParallel || isProgramMutationsDisabled}
+                >
+                  {isSavingParallel ? 'Salvando...' : (editingParallelId ? 'Atualizar Apoio' : 'Adicionar Apoio')}
                 </button>
               </div>
             </form>
