@@ -40,6 +40,11 @@ export function validateLiturgicalReceipt(data, commandId, churchId, action) {
   // Ação é obrigatória e deve coincidir estritamente com a esperada
   if (!receipt.action || (action && receipt.action !== action)) return null;
 
+  // receipt.created_at deve ser string ISO válida não vazia
+  if (!receipt.created_at || typeof receipt.created_at !== 'string' || Number.isNaN(Date.parse(receipt.created_at))) {
+    return null;
+  }
+
   // Entidade e payload são obrigatórios para comprovação de efeito (B2-05)
   if (!receipt.result_entity_id) return null;
   if (!receipt.result_payload || typeof receipt.result_payload !== 'object' || Array.isArray(receipt.result_payload)) return null;
@@ -47,8 +52,9 @@ export function validateLiturgicalReceipt(data, commandId, churchId, action) {
   // Coerência estrita entre entidade principal e identificador no payload (B2-05)
   const payload = receipt.result_payload;
   let payloadEntityId = null;
+  const resolvedAction = action || receipt.action;
 
-  switch (action || receipt.action) {
+  switch (resolvedAction) {
     case 'create_church_team':
     case 'assign_team_leader':
       payloadEntityId = payload.team_id ?? payload.id;
@@ -72,7 +78,45 @@ export function validateLiturgicalReceipt(data, commandId, churchId, action) {
       payloadEntityId = payload.event_id ?? payload.id;
       break;
     case 'create_event_item':
-      payloadEntityId = payload.item_id ?? payload.event_item_id ?? payload.id;
+    case 'update_event_item':
+    case 'remove_event_item':
+      payloadEntityId = payload.item_id ?? payload.event_item_id ?? payload.id ?? receipt.result_entity_id;
+      break;
+    case 'reorder_event_items':
+      payloadEntityId = payload.event_id ?? payload.id;
+      break;
+    case 'set_event_duration_policy':
+      payloadEntityId = payload.event_id;
+      if (payload.duration_policy !== 'warn' && payload.duration_policy !== 'block') {
+        return null;
+      }
+      break;
+    case 'publish_event_program':
+      payloadEntityId = payload.event_id;
+      if (
+        payload.program_status !== 'published' ||
+        typeof payload.program_version !== 'number' ||
+        !Number.isInteger(payload.program_version) ||
+        payload.program_version <= 0 ||
+        (payload.duration_policy !== 'warn' && payload.duration_policy !== 'block') ||
+        typeof payload.published_at !== 'string' ||
+        Number.isNaN(Date.parse(payload.published_at))
+      ) {
+        return null;
+      }
+      break;
+    case 'save_event_program_draft':
+      payloadEntityId = payload.event_id;
+      if (
+        payload.program_status !== 'draft' ||
+        typeof payload.program_version !== 'number' ||
+        !Number.isInteger(payload.program_version) ||
+        payload.program_version <= 0 ||
+        (payload.published_at !== null &&
+          (typeof payload.published_at !== 'string' || Number.isNaN(Date.parse(payload.published_at))))
+      ) {
+        return null;
+      }
       break;
     case 'assign_event_participant':
       payloadEntityId = payload.assignment_id ?? payload.id;
@@ -116,8 +160,21 @@ export function isDefinitiveLiturgicalError(error) {
   // P0023 = Membro lidera liturgia em evento ativo
   // P0024 = Membro escalado ou nominalmente responsável em evento ativo
   // P0025 = Evento com horário expirado sem encerramento formal ou conflito de agenda
+  // 40001 = Conflito de serialização / concorrência otimista (B2)
+  // 42501 = Privilégio insuficiente / não autorizado
+  // 22000 = Validação de regra de dados (ex: término antes de início, comprimento)
+  // 22004 = Parâmetro obrigatório ausente
+  // 23505 = Unicidade violada ou parâmetros divergentes para mesmo command_id
+  // 23514 = Check constraint violada
+  // P0002 = Entidade não encontrada ou inativa
+  // P0019 = Conflito de versão ou estado
+  // P0020 = Membro não possui aptidão homologada para a função / Alocação já substituída
+  // P0022 = Membro lidera ministério ativo
+  // P0023 = Membro lidera liturgia em evento ativo
+  // P0024 = Membro escalado ou nominalmente responsável em evento ativo
+  // P0025 = Evento com horário expirado sem encerramento formal ou conflito de agenda
   if ([
-    '42501', '22000', '22004', '23505', '23514',
+    '40001', '42501', '22000', '22004', '23505', '23514',
     'P0002', 'P0004', 'P0015', 'P0016', 'P0018',
     'P0019', 'P0020', 'P0021', 'P0022', 'P0023', 'P0024', 'P0025'
   ].includes(code)) {
@@ -218,9 +275,13 @@ async function dispatchLiturgicalRpc({ supabase, rpcName, action, churchId, comm
     const { data, error } = await supabase.rpc(rpcName, params);
 
     if (error) {
+      const code = error.code ? String(error.code) : null;
+      const isConcurrency = code === '40001' || /concorr|serialization_failure/i.test(error.message || '');
       return {
         status: isDefinitiveLiturgicalError(error) ? 'DEFINITIVE_ERROR' : 'UNCERTAIN',
         error,
+        code,
+        concurrencyConflict: isConcurrency,
         message: error.message || `Erro ao executar ${action}.`,
       };
     }
@@ -239,10 +300,14 @@ async function dispatchLiturgicalRpc({ supabase, rpcName, action, churchId, comm
       data: receipt.result_payload || receipt,
     };
   } catch (err) {
+    const code = err?.code ? String(err.code) : null;
+    const isConcurrency = code === '40001' || /concorr|serialization_failure/i.test(err?.message || '');
     return {
       status: isDefinitiveLiturgicalError(err) ? 'DEFINITIVE_ERROR' : 'UNCERTAIN',
       error: err,
-      message: err.message || `Falha de comunicação ao executar ${action}.`,
+      code,
+      concurrencyConflict: isConcurrency,
+      message: err?.message || `Falha de comunicação ao executar ${action}.`,
     };
   }
 }
@@ -633,9 +698,10 @@ export async function createEventItem({
   title,
   itemNature = 'liturgical',
   sequenceOrder = 1,
-  plannedDurationSeconds = 300,
+  plannedDurationSeconds,
   designatedTeamId = null,
   nominalLeaderMemberId = null,
+  prepRequiredMinutes = 0,
 }) {
   if (!supabase || !churchId || !commandId || !eventId || !title) {
     return {
@@ -643,6 +709,29 @@ export async function createEventItem({
       message: 'Parâmetros obrigatórios ausentes para criação de item do evento.',
     };
   }
+
+  const nature = itemNature === 'parallel_support' ? 'parallel_support' : 'liturgical';
+  const duration = Number(plannedDurationSeconds);
+
+  if (!Number.isFinite(duration) || duration <= 0) {
+    return {
+      status: 'DEFINITIVE_ERROR',
+      message: nature === 'parallel_support'
+        ? 'Duração planejada de apoio paralelo deve ser um número inteiro e estritamente maior que zero.'
+        : 'Duração planejada da etapa litúrgica é obrigatória e deve ser maior que zero.',
+    };
+  }
+
+  const prepNum = Number(prepRequiredMinutes);
+  if (nature === 'parallel_support' && (!Number.isInteger(prepNum) || prepNum < 0 || prepNum > 180)) {
+    return {
+      status: 'DEFINITIVE_ERROR',
+      message: 'Tempo de preparação antecedente do apoio paralelo deve ser um número inteiro entre 0 e 180 minutos.',
+    };
+  }
+
+  const finalDuration = Math.round(duration);
+  const prep = nature === 'liturgical' ? 0 : prepNum;
 
   return dispatchLiturgicalRpc({
     supabase,
@@ -655,11 +744,149 @@ export async function createEventItem({
       p_command_id: commandId,
       p_event_id: eventId,
       p_title: title,
-      p_item_nature: itemNature,
+      p_item_nature: nature,
       p_sequence_order: Number(sequenceOrder) || 1,
-      p_planned_duration_seconds: Number(plannedDurationSeconds) || 300,
+      p_planned_duration_seconds: finalDuration,
       p_designated_team_id: designatedTeamId || null,
       p_nominal_leader_member_id: nominalLeaderMemberId || null,
+      p_prep_required_minutes: prep,
+    },
+  });
+}
+
+/**
+ * Atualiza item de cronograma de culto ou apoio paralelo (Líder da Liturgia ou Admin).
+ */
+export async function updateEventItem({
+  supabase,
+  churchId,
+  commandId,
+  eventId,
+  itemId,
+  title,
+  itemNature = 'liturgical',
+  plannedDurationSeconds,
+  prepRequiredMinutes = 0,
+  designatedTeamId = null,
+  nominalLeaderMemberId = null,
+  expectedUpdatedAt,
+}) {
+  if (!supabase || !churchId || !commandId || !eventId || !itemId || !title || !expectedUpdatedAt) {
+    return {
+      status: 'DEFINITIVE_ERROR',
+      message: 'Parâmetros obrigatórios ausentes para atualização de item do evento.',
+    };
+  }
+
+  const nature = itemNature === 'parallel_support' ? 'parallel_support' : 'liturgical';
+  const duration = Number(plannedDurationSeconds);
+
+  if (!Number.isFinite(duration) || duration <= 0) {
+    return {
+      status: 'DEFINITIVE_ERROR',
+      message: nature === 'parallel_support'
+        ? 'Duração planejada de apoio paralelo deve ser um número inteiro e estritamente maior que zero.'
+        : 'Duração planejada da etapa litúrgica é obrigatória e deve ser maior que zero.',
+    };
+  }
+
+  const prepNum = Number(prepRequiredMinutes);
+  if (nature === 'parallel_support' && (!Number.isInteger(prepNum) || prepNum < 0 || prepNum > 180)) {
+    return {
+      status: 'DEFINITIVE_ERROR',
+      message: 'Tempo de preparação antecedente do apoio paralelo deve ser um número inteiro entre 0 e 180 minutos.',
+    };
+  }
+
+  const finalDuration = Math.round(duration);
+  const prep = nature === 'liturgical' ? 0 : prepNum;
+
+  return dispatchLiturgicalRpc({
+    supabase,
+    rpcName: 'update_event_item',
+    action: 'update_event_item',
+    churchId,
+    commandId,
+    params: {
+      p_church_id: churchId,
+      p_command_id: commandId,
+      p_event_id: eventId,
+      p_item_id: itemId,
+      p_title: title,
+      p_planned_duration_seconds: finalDuration,
+      p_prep_required_minutes: prep,
+      p_designated_team_id: designatedTeamId || null,
+      p_nominal_leader_member_id: nominalLeaderMemberId || null,
+      p_expected_updated_at: expectedUpdatedAt,
+    },
+  });
+}
+
+/**
+ * Remove fisicamente item de cronograma de culto no planejamento (Líder da Liturgia ou Admin).
+ */
+export async function removeEventItem({
+  supabase,
+  churchId,
+  commandId,
+  eventId,
+  itemId,
+  expectedUpdatedAt,
+}) {
+  if (!supabase || !churchId || !commandId || !eventId || !itemId || !expectedUpdatedAt) {
+    return {
+      status: 'DEFINITIVE_ERROR',
+      message: 'Parâmetros obrigatórios ausentes para remoção de item do evento.',
+    };
+  }
+
+  return dispatchLiturgicalRpc({
+    supabase,
+    rpcName: 'remove_event_item',
+    action: 'remove_event_item',
+    churchId,
+    commandId,
+    params: {
+      p_church_id: churchId,
+      p_command_id: commandId,
+      p_event_id: eventId,
+      p_item_id: itemId,
+      p_expected_updated_at: expectedUpdatedAt,
+    },
+  });
+}
+
+/**
+ * Reordena itens de uma mesma natureza no planejamento (Líder da Liturgia ou Admin).
+ */
+export async function reorderEventItems({
+  supabase,
+  churchId,
+  commandId,
+  eventId,
+  itemIds = [],
+  itemNature = 'liturgical',
+}) {
+  if (!supabase || !churchId || !commandId || !eventId || !Array.isArray(itemIds) || itemIds.length === 0) {
+    return {
+      status: 'DEFINITIVE_ERROR',
+      message: 'Parâmetros obrigatórios ausentes para reordenação de itens do evento.',
+    };
+  }
+
+  const nature = itemNature === 'parallel_support' ? 'parallel_support' : 'liturgical';
+
+  return dispatchLiturgicalRpc({
+    supabase,
+    rpcName: 'reorder_event_items',
+    action: 'reorder_event_items',
+    churchId,
+    commandId,
+    params: {
+      p_church_id: churchId,
+      p_command_id: commandId,
+      p_event_id: eventId,
+      p_ordered_item_ids: itemIds,
     },
   });
 }

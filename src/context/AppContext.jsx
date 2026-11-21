@@ -73,6 +73,9 @@ import {
   saveEventProgramDraft,
   updateEventDurationPolicy,
   createChurchEventEditionRemote,
+  getEventProgramRemote,
+  updateEventItemRemote,
+  removeEventItemRemote,
   reorderEventItemsRemote,
   setEventDurationPolicyRemote,
   publishEventProgramRemote,
@@ -86,12 +89,16 @@ import {
 } from '../utils/eventPlanningService';
 import {
   buildLiturgicalItemDrafts,
+  buildParallelServiceDrafts,
   buildEventItemDraftKey,
+  buildEventItemUpdateKey,
+  buildEventItemRemoveKey,
   saveEventItemsSequentially,
   describeEventItemsOutcome,
   toPersistedActivities,
+  toPersistedParallelServices,
   EVENT_ITEMS_PERSISTENCE_NOTICE,
-  PARALLEL_SERVICES_NOT_PERSISTED_NOTICE,
+  PARALLEL_SERVICES_PERSISTENCE_NOTICE,
   TEMPLATE_APPEND_NOTICE,
   UNKNOWN_SERVER_ITEMS_BLOCK_REASON,
   canAppendEventItemsToEvent,
@@ -134,6 +141,16 @@ export function AppProvider({
   const editingDraftsRef = useRef(new Map());
   // Comandos de gravação de etapa sem confirmação do servidor, para repetir com o mesmo command_id (Issue #29)
   const pendingEventItemCommandsRef = useRef(new Map());
+  // Comandos de atualização e remoção sem confirmação do servidor (idempotência pós-026)
+  const pendingUpdateCommandsRef = useRef(new Map());
+  const pendingRemoveCommandsRef = useRef(new Map());
+  // Comandos de reordenação sem confirmação, indexados por evento e ordem pretendida.
+  const pendingReorderCommandsRef = useRef(new Map());
+  // Comandos de ciclo de vida da programação sem confirmação (idempotência B3)
+  const pendingProgramLifecycleCommandsRef = useRef(new Map());
+  // Mapa de requisições ativas de carregamento indexado por churchId:eventId
+  const programLoadRequestsRef = useRef(new Map());
+  const currentEventIdRef = useRef(null);
   // Comando de criação de edição sem confirmação do servidor, para evitar duplicação (Issue #28)
   const pendingCreateEventCommandRef = useRef(null);
   const [pendingCreateEvent, setPendingCreateEvent] = useState(null);
@@ -208,6 +225,7 @@ export function AppProvider({
       loadRequestSeqRef.current += 1;
       setPendingCreateCommand(null);
       pendingEventItemCommandsRef.current.clear();
+      pendingReorderCommandsRef.current.clear();
       setTeamsLoadStatus(effectiveClient && effectiveChurchId ? 'loading' : 'loaded');
       if (effectiveChurchId) {
         setCancelReasons([]);
@@ -426,6 +444,24 @@ export function AppProvider({
   const [events, setEvents] = useState(() => (isRealEnvironment ? [] : [INITIAL_EVENT]));
   const [currentEventId, setCurrentEventId] = useState(() => (isRealEnvironment ? null : INITIAL_EVENT.id));
 
+  useEffect(() => {
+    currentEventIdRef.current = currentEventId;
+  }, [currentEventId]);
+
+  const getProgramMutationBlockReason = (ev) => {
+    if (!ev) return "Nenhum evento selecionado.";
+    if (ev.isProgramLoading) {
+      return "A programação do evento está sendo carregada do servidor. Aguarde a conclusão antes de realizar alterações.";
+    }
+    if (ev.programLoadError) {
+      return `A programação do evento não foi carregada com sucesso (${ev.programLoadError}). Mutações bloqueadas para evitar inconsistências.`;
+    }
+    if (ev.loadedFromServer && !ev.activitiesKnownInSession) {
+      return "Não é possível realizar mutações antes de carregar com sucesso o programa existente do servidor. Recarregue a página.";
+    }
+    return null;
+  };
+
   // Evento Ativo
   const event = events.find(e => e.id === currentEventId) || events[0] || (isRealEnvironment ? null : INITIAL_EVENT);
 
@@ -594,7 +630,7 @@ export function AppProvider({
     setEvent(prev => {
       const updatedActivities = [...prev.activities];
       const target = { ...updatedActivities[activityIndex] };
-      
+
       target.status = "em_execucao";
       target.realStartTime = timeStr;
       updatedActivities[activityIndex] = target;
@@ -891,8 +927,8 @@ export function AppProvider({
         return {
           hasConflict: true,
           reason: `Bloqueio Litúrgico (PRD 5.2): ${member.name} já está escalado(a) como "${existingInRoster.role}" no mesmo bloco de Louvor. Não é permitido acumular funções entre canto, instrumentos e dança no mesmo louvor.`,
-          eligibleCandidates: members.filter(m => 
-            m.active && 
+          eligibleCandidates: members.filter(m =>
+            m.active &&
             m.id !== memberId &&
             m.skills.some(s => s.toLowerCase().includes(targetRole.toLowerCase().split(' ')[0])) &&
             !currentRoster.some(r => r.memberId === m.id)
@@ -912,8 +948,8 @@ export function AppProvider({
       return {
         hasConflict: true,
         reason: `Bloqueio Litúrgico (PRD 5.2 / M24 & Issue #29 CA03): ${member.name} está escalado(a) no serviço de apoio '${parallelService.name}'${prepNote}.`,
-        eligibleCandidates: members.filter(m => 
-          m.active && 
+        eligibleCandidates: members.filter(m =>
+          m.active &&
           m.id !== memberId &&
           !(event.parallelServices || []).some(s => (s.volunteers || []).includes(m.id) || s.leaderId === m.id)
         )
@@ -2032,8 +2068,12 @@ export function AppProvider({
     const authCheck = ensureAuthorizedContext();
     if (!authCheck.allowed) return { success: false, error: authCheck.error };
 
+    const targetEv = event;
+    const mutationBlock = getProgramMutationBlockReason(targetEv);
+    if (mutationBlock) return { success: false, error: mutationBlock };
+
     const updatedEvent = {
-      ...instantiateTemplateForEvent(template, event),
+      ...instantiateTemplateForEvent(template, targetEv),
       isDraftPreview: true,
       templateApplied: true,
     };
@@ -2042,46 +2082,87 @@ export function AppProvider({
       return (async () => {
         try {
           // Issue #29: bloqueia acréscimo em evento carregado do servidor sem leitura (B2) ou com comando incerto pendente.
-          const blockReason = getAppendEventItemsBlockReason(event, pendingEventItemCommandsRef.current);
+          const blockReason = getAppendEventItemsBlockReason(targetEv, pendingEventItemCommandsRef.current);
           if (blockReason) {
             return { success: false, persisted: false, error: blockReason };
           }
           // Issue #29: instantiate_service_template(p_command_id, p_church_id, p_template_id) não recebe evento
-          // e devolve a estrutura canônica atual do modelo no servidor; cada etapa é gravada com create_event_item.
-          const targetEventId = event.id;
-          const existingActivities = Array.isArray(event.activities) ? event.activities : [];
-          const existingParallelServices = Array.isArray(event.parallelServices) ? event.parallelServices : [];
+          // e devolve a estrutura canônica atual do modelo no servidor; cada item é gravado com create_event_item.
+          const targetEventId = targetEv.id;
+          const existingActivities = Array.isArray(targetEv.activities) ? targetEv.activities : [];
+          const existingParallelServices = Array.isArray(targetEv.parallelServices) ? targetEv.parallelServices : [];
 
           const res = await instantiateServiceTemplateRemote(effectiveClient, effectiveChurchId, templateId);
           if (!res.success) {
             return { success: false, error: res.error };
           }
 
-          // Não há RPC para remover etapas: as do modelo devolvido pelo servidor são acrescentadas após as já existentes.
-          const drafts = buildLiturgicalItemDrafts(res.activities, existingActivities.length);
+          const templateActivities = Array.isArray(res.activities) ? res.activities : [];
+          const templateParallelServices = Array.isArray(res.parallelServices) ? res.parallelServices : [];
+
+          let eventWindowDurationSeconds = null;
+          if (templateParallelServices.length > 0) {
+            if (!targetEv?.plannedStartAt || !targetEv?.plannedEndAt) {
+              return {
+                success: false,
+                error: "O evento não possui data/hora de início e término planejadas para derivar a duração dos apoios do modelo."
+              };
+            }
+            const startMs = new Date(targetEv.plannedStartAt).getTime();
+            const endMs = new Date(targetEv.plannedEndAt).getTime();
+            if (isNaN(startMs) || isNaN(endMs)) {
+              return {
+                success: false,
+                error: "O evento possui formato inválido de início ou término para derivar a duração dos apoios do modelo."
+              };
+            }
+            if (endMs <= startMs) {
+              return {
+                success: false,
+                error: "A janela de planejamento do evento é inválida (término anterior ou igual ao início) para derivar a duração dos apoios do modelo."
+              };
+            }
+            eventWindowDurationSeconds = Math.round((endMs - startMs) / 1000);
+            if (eventWindowDurationSeconds <= 0) {
+              return {
+                success: false,
+                error: "A janela de duração planejada do evento deve ser estritamente positiva para derivar a duração dos apoios do modelo."
+              };
+            }
+          }
+
+          // Transforma etapas litúrgicas e apoios paralelos em drafts com sequência própria
+          const liturgicalDrafts = buildLiturgicalItemDrafts(templateActivities, existingActivities.length);
+          const parallelDrafts = buildParallelServiceDrafts(templateParallelServices, existingParallelServices.length, {
+            fallbackDurationSeconds: eventWindowDurationSeconds,
+          });
+          const allDrafts = [...liturgicalDrafts, ...parallelDrafts];
+
           const outcome = await saveEventItemsSequentially({
             supabase: effectiveClient,
             churchId: effectiveChurchId,
             eventId: targetEventId,
-            drafts,
+            drafts: allDrafts,
             pendingCommandIds: pendingEventItemCommandsRef.current,
           });
-          const savedActivities = toPersistedActivities(outcome.saved);
-          const templateParallelServices = Array.isArray(res.parallelServices) ? res.parallelServices : [];
+
+          const savedLiturgical = outcome.saved.filter(s => s.draft?.itemNature === 'liturgical');
+          const savedParallel = outcome.saved.filter(s => s.draft?.itemNature === 'parallel_support');
+
+          const savedActivities = toPersistedActivities(savedLiturgical);
+          const savedParallelServices = toPersistedParallelServices(savedParallel);
+
           const hasFailure = Boolean(outcome.failed);
           const appended = existingActivities.length > 0;
 
-          if (!hasFailure || savedActivities.length > 0) {
+          if (savedActivities.length > 0 || savedParallelServices.length > 0) {
             setEvents(prev => prev.map(ev => ev.id === targetEventId ? {
               ...ev,
               templateId: updatedEvent.templateId,
               templateName: updatedEvent.templateName,
               templateApplied: true,
               activities: [...(ev.activities || []), ...savedActivities],
-              // Serviços paralelos não são gravados no servidor: permanecem só na memória da sessão.
-              parallelServices: hasFailure
-                ? (ev.parallelServices || [])
-                : [...(ev.parallelServices || []), ...templateParallelServices],
+              parallelServices: [...(ev.parallelServices || []), ...savedParallelServices],
             } : ev));
           }
 
@@ -2089,30 +2170,30 @@ export function AppProvider({
           if (hasFailure) {
             addAuditLog(
               "Aplicação de Modelo no Culto",
-              `Modelo '${template.name}' aplicado parcialmente: ${savedActivities.length} de ${drafts.length} etapa(s) gravada(s) no servidor.`
+              `Modelo '${template.name}' aplicado parcialmente: ${outcome.saved.length} de ${allDrafts.length} item(ns) gravado(s) no servidor.`
             );
             return {
               success: false,
               remote: true,
-              persisted: savedActivities.length > 0 ? 'partial' : false,
+              persisted: outcome.saved.length > 0 ? 'partial' : false,
               itemsOutcome: outcome,
-              error: `O modelo não foi aplicado por completo. ${details} Os serviços paralelos do modelo não foram carregados.`
-                + (savedActivities.length > 0 && !outcome.failed?.uncertain
-                  ? ' Não reaplique o modelo inteiro: as etapas já gravadas seriam duplicadas. Adicione as etapas faltantes manualmente.'
-                  : savedActivities.length > 0
-                    ? ' Não reaplique o modelo inteiro: as etapas já gravadas seriam duplicadas.'
+              error: `O modelo não foi aplicado por completo. ${details}`
+                + (outcome.saved.length > 0 && !outcome.failed?.uncertain
+                  ? ' Não reaplique o modelo inteiro: os itens já gravados seriam duplicados. Adicione os itens faltantes manualmente.'
+                  : outcome.saved.length > 0
+                    ? ' Não reaplique o modelo inteiro: os itens já gravados seriam duplicados.'
                     : '')
             };
           }
 
           addAuditLog(
             "Aplicação de Modelo no Culto",
-            `Modelo '${template.name}': ${savedActivities.length} etapa(s) gravada(s) no servidor. Serviços paralelos mantidos apenas em memória.`
+            `Modelo '${template.name}': ${savedActivities.length} etapa(s) e ${savedParallelServices.length} apoio(s) gravados no servidor.`
           );
           const notices = [EVENT_ITEMS_PERSISTENCE_NOTICE];
           if (appended && savedActivities.length > 0) notices.unshift(TEMPLATE_APPEND_NOTICE);
-          if (templateParallelServices.length > 0 || existingParallelServices.length > 0) {
-            notices.push(PARALLEL_SERVICES_NOT_PERSISTED_NOTICE);
+          if (savedParallelServices.length > 0) {
+            notices.push(PARALLEL_SERVICES_PERSISTENCE_NOTICE);
           }
           return {
             success: true,
@@ -2120,7 +2201,8 @@ export function AppProvider({
             persisted: true,
             appended,
             savedItemsCount: savedActivities.length,
-            parallelServicesPersisted: false,
+            savedParallelCount: savedParallelServices.length,
+            parallelServicesPersisted: true,
             itemsOutcome: outcome,
             warning: notices.join(' ')
           };
@@ -2138,17 +2220,344 @@ export function AppProvider({
     return { success: true, persisted: false };
   };
 
-  const removeParallelServiceFromCurrentEvent = (serviceId) => {
+  // Criação de Apoio Paralelo Persistente (Issue #29, #30, #51)
+  const addParallelServiceToCurrentEvent = async (serviceData, targetEventId = null) => {
+    if (!isAdmin && !isLiturgyLeader) {
+      return { success: false, error: "Apenas administradores ou líderes da liturgia podem adicionar apoios." };
+    }
+    const targetId = targetEventId || currentEventId;
+    const targetEv = events.find(ev => ev.id === targetId) || event;
+    const blockReason = getProgramMutationBlockReason(targetEv);
+    if (blockReason) return { success: false, error: blockReason };
+
+    const authCheck = ensureAuthorizedContext();
+    if (!authCheck.allowed) return { success: false, error: authCheck.error };
+
+    const title = normalizeNfcText(serviceData?.name || serviceData?.title || '');
+    if (!title) return { success: false, error: "Título do apoio paralelo é obrigatório." };
+
+    const rawMinutes = serviceData?.durationMinutes ?? serviceData?.plannedDurationMinutes;
+    const minutes = Number.isFinite(Number(rawMinutes)) ? Number(rawMinutes) : NaN;
+    const durationSeconds = Number.isFinite(Number(serviceData?.plannedDurationSeconds)) && Number(serviceData.plannedDurationSeconds) > 0
+      ? Math.round(Number(serviceData.plannedDurationSeconds))
+      : (Number.isFinite(minutes) && minutes > 0 ? Math.round(minutes * 60) : 0);
+
+    if (durationSeconds <= 0) {
+      return { success: false, error: "A duração planejada do apoio paralelo deve ser um número inteiro maior que zero." };
+    }
+
+    const rawPrep = serviceData?.prepRequiredMinutes ?? serviceData?.prepLeadMinutes;
+    let prepMinutes = 0;
+    if (rawPrep !== undefined && rawPrep !== null && rawPrep !== '') {
+      const parsed = Number(rawPrep);
+      if (!Number.isInteger(parsed) || parsed < 0 || parsed > 180) {
+        return { success: false, error: "Tempo de preparação antecedente deve ser um número inteiro entre 0 e 180 minutos." };
+      }
+      prepMinutes = parsed;
+    }
+
+    const isValidUuid = (val) => typeof val === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(val);
+    const teamId = isValidUuid(serviceData?.teamId) ? serviceData.teamId : (isValidUuid(serviceData?.responsibleTeamId) ? serviceData.responsibleTeamId : null);
+    const leaderId = isValidUuid(serviceData?.leaderId) ? serviceData.leaderId : (isValidUuid(serviceData?.responsibleMemberId) ? serviceData.responsibleMemberId : null);
+
+    const existingParallel = Array.isArray(targetEv?.parallelServices) ? targetEv.parallelServices : [];
+    const seqOrder = existingParallel.length + 1;
+
+    const draft = {
+      localId: `serv-${Date.now()}`,
+      title,
+      itemNature: 'parallel_support',
+      sequenceOrder: seqOrder,
+      plannedDurationSeconds: durationSeconds,
+      prepRequiredMinutes: prepMinutes,
+      designatedTeamId: teamId,
+      nominalLeaderMemberId: leaderId,
+      source: serviceData,
+    };
+
+    if (!authCheck.inMemory) {
+      try {
+        const draftKeyVal = buildEventItemDraftKey(targetId, draft);
+        const appendBlock = getAppendEventItemsBlockReason(targetEv, pendingEventItemCommandsRef.current, draftKeyVal);
+        if (appendBlock) {
+          return { success: false, error: appendBlock };
+        }
+
+        const outcome = await saveEventItemsSequentially({
+          supabase: effectiveClient,
+          churchId: effectiveChurchId,
+          eventId: targetId,
+          drafts: [draft],
+          pendingCommandIds: pendingEventItemCommandsRef.current,
+        });
+
+        if (outcome.failed) {
+          return {
+            success: false,
+            uncertain: outcome.failed.uncertain,
+            error: outcome.failed.message,
+          };
+        }
+
+        const savedItem = toPersistedParallelServices(outcome.saved)[0];
+        setEvents(prev => prev.map(ev => ev.id === targetId ? {
+          ...ev,
+          parallelServices: [...(ev.parallelServices || []), savedItem],
+        } : ev));
+
+        addAuditLog("Apoio Paralelo", `Apoio '${title}' adicionado ao evento '${targetEv.title}'.`);
+        return { success: true, remote: true, service: savedItem };
+      } catch (err) {
+        return { success: false, error: err.message || "Erro ao gravar apoio paralelo." };
+      }
+    }
+
+    const localService = {
+      id: draft.localId,
+      name: title,
+      title,
+      teamId,
+      leaderId,
+      prepLeadMinutes: prepMinutes,
+      prepRequiredMinutes: prepMinutes,
+      durationMinutes: Math.round(durationSeconds / 60),
+      plannedDurationSeconds: durationSeconds,
+      sequenceOrder: seqOrder,
+      itemNature: 'parallel_support',
+      persisted: false,
+      status: 'Aguardando culto',
+      volunteers: [],
+    };
+
+    setEvents(prev => prev.map(ev => ev.id === targetId ? {
+      ...ev,
+      parallelServices: [...(ev.parallelServices || []), localService],
+    } : ev));
+
+    return { success: true, service: localService };
+  };
+
+  // Edição de Apoio Paralelo Persistente (Issue #29, #30, #51)
+  const updateParallelServiceInCurrentEvent = async (serviceId, updatedData, targetEventId = null) => {
+    if (!isAdmin && !isLiturgyLeader) {
+      return { success: false, error: "Apenas administradores ou líderes da liturgia podem editar apoios." };
+    }
+    const targetId = targetEventId || currentEventId;
+    const targetEv = events.find(ev => ev.id === targetId) || event;
+    const blockReason = getProgramMutationBlockReason(targetEv);
+    if (blockReason) return { success: false, error: blockReason };
+
+    const authCheck = ensureAuthorizedContext();
+    if (!authCheck.allowed) return { success: false, error: authCheck.error };
+
+    const serv = targetEv?.parallelServices?.find(s => s.id === serviceId);
+    if (!serv) return { success: false, error: "Serviço de apoio não encontrado." };
+
+    const title = normalizeNfcText(updatedData?.name || updatedData?.title || serv.name || serv.title || '');
+    if (!title) return { success: false, error: "Título do apoio paralelo é obrigatório." };
+
+    const rawMinutes = updatedData?.durationMinutes ?? updatedData?.plannedDurationMinutes;
+    const minutes = Number.isFinite(Number(rawMinutes)) ? Number(rawMinutes) : NaN;
+    let durationSeconds = 0;
+    if (updatedData?.plannedDurationSeconds !== undefined) {
+      durationSeconds = Number.isFinite(Number(updatedData.plannedDurationSeconds)) && Number(updatedData.plannedDurationSeconds) > 0
+        ? Math.round(Number(updatedData.plannedDurationSeconds))
+        : 0;
+    } else if (rawMinutes !== undefined) {
+      durationSeconds = Number.isFinite(minutes) && minutes > 0 ? Math.round(minutes * 60) : 0;
+    } else {
+      durationSeconds = serv.plannedDurationSeconds || Math.round((serv.durationMinutes || 0) * 60);
+    }
+
+    if (durationSeconds <= 0) {
+      return { success: false, error: "A duração planejada do apoio paralelo deve ser um número inteiro maior que zero." };
+    }
+
+    const rawPrep = updatedData?.prepRequiredMinutes ?? updatedData?.prepLeadMinutes;
+    let prepMinutes = serv.prepRequiredMinutes ?? 0;
+    if (rawPrep !== undefined && rawPrep !== null && rawPrep !== '') {
+      const parsed = Number(rawPrep);
+      if (!Number.isInteger(parsed) || parsed < 0 || parsed > 180) {
+        return { success: false, error: "Tempo de preparação antecedente deve ser um número inteiro entre 0 e 180 minutos." };
+      }
+      prepMinutes = parsed;
+    }
+
+    const isValidUuid = (val) => typeof val === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(val);
+    const teamId = isValidUuid(updatedData?.teamId) ? updatedData.teamId : (isValidUuid(updatedData?.responsibleTeamId) ? updatedData.responsibleTeamId : (serv.teamId || null));
+    const leaderId = isValidUuid(updatedData?.leaderId) ? updatedData.leaderId : (isValidUuid(updatedData?.responsibleMemberId) ? updatedData.responsibleMemberId : (serv.leaderId || null));
+
+    if (!authCheck.inMemory && serv.persisted) {
+      const payload = {
+        title,
+        plannedDurationSeconds: durationSeconds,
+        prepRequiredMinutes: prepMinutes,
+        designatedTeamId: teamId,
+        nominalLeaderMemberId: leaderId,
+      };
+      const updateKey = buildEventItemUpdateKey(targetId, serviceId, payload, serv.updatedAt);
+      const pendingCmd = pendingUpdateCommandsRef.current.get(serviceId);
+      let commandId;
+      if (pendingCmd) {
+        if (pendingCmd.key !== updateKey) {
+          return {
+            success: false,
+            error: "Existe uma alteração pendente de confirmação para este apoio. Aguarde ou repita a alteração idêntica.",
+          };
+        }
+        commandId = pendingCmd.commandId;
+      } else {
+        commandId = generateCommandUuid();
+      }
+
+      try {
+        const res = await updateEventItemRemote(effectiveClient, {
+          churchId: effectiveChurchId,
+          commandId,
+          eventId: targetId,
+          itemId: serviceId,
+          title,
+          itemNature: 'parallel_support',
+          plannedDurationSeconds: durationSeconds,
+          prepRequiredMinutes: prepMinutes,
+          designatedTeamId: teamId,
+          nominalLeaderMemberId: leaderId,
+          expectedUpdatedAt: serv.updatedAt,
+        });
+
+        if (res.uncertain) {
+          pendingUpdateCommandsRef.current.set(serviceId, { key: updateKey, commandId });
+          return { success: false, uncertain: true, error: res.error };
+        }
+
+        pendingUpdateCommandsRef.current.delete(serviceId);
+
+        if (!res.success) {
+          return { success: false, error: res.error, concurrencyConflict: res.concurrencyConflict };
+        }
+
+        const newUpdatedAt = res.updatedAt || serv.updatedAt;
+        setEvents(prev => prev.map(ev => ev.id === targetId ? {
+          ...ev,
+          parallelServices: (ev.parallelServices || []).map(s => s.id === serviceId ? {
+            ...s,
+            name: title,
+            title,
+            teamId,
+            leaderId,
+            prepLeadMinutes: prepMinutes,
+            prepRequiredMinutes: prepMinutes,
+            durationMinutes: Math.round(durationSeconds / 60),
+            plannedDurationSeconds: durationSeconds,
+            updatedAt: newUpdatedAt,
+          } : s),
+        } : ev));
+
+        addAuditLog("Edição de Apoio", `Apoio '${title}' atualizado no servidor.`);
+        return { success: true, remote: true, updatedAt: newUpdatedAt };
+      } catch (err) {
+        pendingUpdateCommandsRef.current.set(serviceId, { key: updateKey, commandId });
+        return { success: false, uncertain: true, error: err.message || "Erro inesperado ao atualizar apoio." };
+      }
+    }
+
+    setEvents(prev => prev.map(ev => ev.id === targetId ? {
+      ...ev,
+      parallelServices: (ev.parallelServices || []).map(s => s.id === serviceId ? {
+        ...s,
+        name: title,
+        title,
+        teamId,
+        leaderId,
+        prepLeadMinutes: prepMinutes,
+        prepRequiredMinutes: prepMinutes,
+        durationMinutes: Math.round(durationSeconds / 60),
+        plannedDurationSeconds: durationSeconds,
+      } : s),
+    } : ev));
+
+    return { success: true, remote: false };
+  };
+
+  const removeParallelServiceFromCurrentEvent = async (serviceId, targetEventId = null) => {
     if (!isAdmin && !isLiturgyLeader) {
       return { success: false, error: "Permissão insuficiente." };
     }
-    const updatedEvent = removeParallelServiceFromEvent(event, serviceId);
+    const targetId = targetEventId || currentEventId;
+    const targetEv = events.find(ev => ev.id === targetId) || event;
+    const blockReason = getProgramMutationBlockReason(targetEv);
+    if (blockReason) return { success: false, error: blockReason };
+
+    const authCheck = ensureAuthorizedContext();
+    if (!authCheck.allowed) return { success: false, error: authCheck.error };
+
+    if (!targetEv) return { success: false, error: "Nenhum evento selecionado." };
+    const serv = targetEv.parallelServices?.find(s => s.id === serviceId);
+    if (!serv) return { success: false, error: "Serviço de apoio não encontrado." };
+
+    if (!authCheck.inMemory && serv?.persisted) {
+      const removeKey = buildEventItemRemoveKey(targetId, serviceId, serv.updatedAt);
+      const pendingCmd = pendingRemoveCommandsRef.current.get(serviceId);
+      let commandId;
+      if (pendingCmd) {
+        if (pendingCmd.key !== removeKey) {
+          return {
+            success: false,
+            error: "Existe uma remoção pendente de confirmação para este apoio.",
+          };
+        }
+        commandId = pendingCmd.commandId;
+      } else {
+        commandId = generateCommandUuid();
+      }
+
+      try {
+        const res = await removeEventItemRemote(effectiveClient, {
+          churchId: effectiveChurchId,
+          commandId,
+          eventId: targetEv.id,
+          itemId: serviceId,
+          expectedUpdatedAt: serv.updatedAt,
+        });
+
+        if (res.uncertain) {
+          pendingRemoveCommandsRef.current.set(serviceId, { key: removeKey, commandId });
+          return { success: false, uncertain: true, error: res.error };
+        }
+
+        pendingRemoveCommandsRef.current.delete(serviceId);
+
+        if (!res.success) {
+          return {
+            success: false,
+            error: res.error,
+            concurrencyConflict: res.concurrencyConflict,
+            blockedByAssignment: res.blockedByAssignment,
+          };
+        }
+
+        const updatedEvent = removeParallelServiceFromEvent(targetEv, serviceId);
+        setEvent(updatedEvent);
+        setEvents(prev => prev.map(ev => ev.id === targetEv.id ? updatedEvent : ev));
+        addAuditLog(
+          "Ajuste de Apoio no Culto",
+          `Serviço de apoio removido do servidor sem alterar o modelo original.`
+        );
+        return { success: true, remote: true };
+      } catch (err) {
+        pendingRemoveCommandsRef.current.set(serviceId, { key: removeKey, commandId });
+        return { success: false, uncertain: true, error: err.message || "Falha ao remover apoio do servidor." };
+      }
+    }
+
+    const updatedEvent = removeParallelServiceFromEvent(targetEv, serviceId);
     setEvent(updatedEvent);
+    setEvents(prev => prev.map(ev => ev.id === targetEv.id ? updatedEvent : ev));
     addAuditLog(
       "Ajuste de Apoio no Culto",
       `Serviço de apoio removido desta edição do culto sem alterar o modelo original (PRD CA02).`
     );
-    return { success: true };
+    return { success: true, remote: false };
   };
 
   const sendAccessInvite = (email, memberName) => {
@@ -2230,6 +2639,33 @@ export function AppProvider({
               return { success: false, error: "Selecione o tipo de evento antes de criar a edição de culto." };
             }
 
+            // Validação de apoios paralelos antes da criação do evento (se houver apoios)
+            let eventWindowDurationSeconds = 0;
+            const requestedParallelServices = newEvent.parallelServices || [];
+            if (requestedParallelServices.length > 0) {
+              if (!newEvent.plannedStartAt || !newEvent.plannedEndAt) {
+                return {
+                  success: false,
+                  error: 'O evento precisa de horário de início e término definidos para derivar a duração dos apoios paralelos.',
+                };
+              }
+              const startMs = new Date(newEvent.plannedStartAt).getTime();
+              const endMs = new Date(newEvent.plannedEndAt).getTime();
+              if (isNaN(startMs) || isNaN(endMs) || endMs <= startMs) {
+                return {
+                  success: false,
+                  error: 'A janela de planejamento do evento é inválida (término anterior ou igual ao início) para derivar a duração dos apoios paralelos.',
+                };
+              }
+              eventWindowDurationSeconds = Math.round((endMs - startMs) / 1000);
+              if (eventWindowDurationSeconds <= 0 || !Number.isInteger(eventWindowDurationSeconds)) {
+                return {
+                  success: false,
+                  error: 'A duração calculada da janela do evento deve ser um número inteiro maior que zero para os apoios.',
+                };
+              }
+            }
+
             // Opção B (#28): somente administrador designa dirigente (validação acima já recusa valor preenchido por não-admin).
             const effectiveLiturgyLeaderId = isAdmin ? (eventData.liturgyLeaderId || null) : null;
             const creationFingerprint = JSON.stringify([
@@ -2289,39 +2725,49 @@ export function AppProvider({
 
             setPendingCreateCommand(null);
 
-            // Issue #29: etapas informadas na criação são gravadas uma a uma com create_event_item.
-            // No estado ficam apenas as etapas confirmadas pelo servidor, com o id devolvido por ele.
+            // Issue #29, #30, #51: etapas litúrgicas e apoios paralelos informados na criação são gravados
+            // sequencialmente com create_event_item, cada qual com sua sequência independente iniciada em 1.
+            // No estado do evento ficam apenas os itens confirmados pelo servidor com os IDs devolvidos por ele.
             const requestedActivities = newEvent.activities || [];
-            const requestedParallelServices = newEvent.parallelServices || [];
-            const serverEventId = res.receipt?.result_entity_id || null;
-            const drafts = buildLiturgicalItemDrafts(requestedActivities, 0);
+            const serverEventId = res.eventId || res.receipt?.result_entity_id || null;
+            const liturgicalDrafts = buildLiturgicalItemDrafts(requestedActivities, 0);
+            const parallelDrafts = buildParallelServiceDrafts(requestedParallelServices, 0, {
+              fallbackDurationSeconds: eventWindowDurationSeconds,
+            });
+            const allDrafts = [...liturgicalDrafts, ...parallelDrafts];
             let outcome = { saved: [], failed: null, notAttempted: [] };
             let itemsWarning = null;
 
-            if (drafts.length > 0 && !isAdmin) {
-              outcome = { saved: [], failed: null, notAttempted: drafts };
-              itemsWarning = 'A edição foi criada sem dirigente de liturgia designado. As etapas iniciais não foram enviadas e poderão ser gravadas depois que o administrador designar o dirigente.';
-            } else if (drafts.length > 0 && !serverEventId) {
-              outcome = { saved: [], failed: null, notAttempted: drafts };
-              itemsWarning = "O servidor não devolveu o identificador do evento criado; as etapas não foram enviadas. " + describeEventItemsOutcome(outcome);
-            } else if (drafts.length > 0) {
+            if (allDrafts.length > 0 && !isAdmin) {
+              outcome = { saved: [], failed: null, notAttempted: allDrafts };
+              itemsWarning = 'A edição foi criada sem dirigente de liturgia designado. Os itens iniciais não foram enviados e poderão ser gravados depois que o administrador designar o dirigente.';
+            } else if (allDrafts.length > 0 && !serverEventId) {
+              outcome = { saved: [], failed: null, notAttempted: allDrafts };
+              itemsWarning = "O servidor não devolveu o identificador do evento criado; os itens não foram enviados. " + describeEventItemsOutcome(outcome);
+            } else if (allDrafts.length > 0) {
               outcome = await saveEventItemsSequentially({
                 supabase: effectiveClient,
                 churchId: effectiveChurchId,
                 eventId: serverEventId,
-                drafts,
+                drafts: allDrafts,
                 pendingCommandIds: pendingEventItemCommandsRef.current,
               });
               if (outcome.failed) {
-                itemsWarning = "A edição foi criada, mas nem todas as etapas foram gravadas. " + describeEventItemsOutcome(outcome)
-                  + (!outcome.failed.uncertain ? " Adicione as etapas faltantes manualmente." : "");
+                itemsWarning = "A edição foi criada, mas nem todos os itens foram gravados. " + describeEventItemsOutcome(outcome)
+                  + (!outcome.failed.uncertain ? " Adicione os itens faltantes manualmente." : "");
               }
             }
 
+            const savedLiturgical = outcome.saved.filter(s => s.draft?.itemNature === 'liturgical');
+            const savedParallel = outcome.saved.filter(s => s.draft?.itemNature === 'parallel_support');
+
+            const savedActivities = toPersistedActivities(savedLiturgical);
+            const savedParallelServices = toPersistedParallelServices(savedParallel);
+
             const notices = [];
             if (itemsWarning) notices.push(itemsWarning);
-            if (outcome.saved.length > 0) notices.push(EVENT_ITEMS_PERSISTENCE_NOTICE);
-            if (requestedParallelServices.length > 0) notices.push(PARALLEL_SERVICES_NOT_PERSISTED_NOTICE);
+            if (savedActivities.length > 0) notices.push(EVENT_ITEMS_PERSISTENCE_NOTICE);
+            if (savedParallelServices.length > 0) notices.push(PARALLEL_SERVICES_PERSISTENCE_NOTICE);
 
             const createdEvent = {
               ...newEvent,
@@ -2329,15 +2775,15 @@ export function AppProvider({
               type: selectedEventType,
               loadedFromServer: false,
               activitiesKnownInSession: true,
-              activities: toPersistedActivities(outcome.saved),
-              parallelServices: requestedParallelServices
+              activities: savedActivities,
+              parallelServices: savedParallelServices,
             };
 
             setEvents(prev => [createdEvent, ...prev]);
             setCurrentEventId(createdEvent.id);
             addAuditLog(
               "Criação de Edição de Culto",
-              `${currentUser.name} criou a edição '${createdEvent.title}' (${createdEvent.date} às ${createdEvent.scheduledStartTime}, duração prevista: ${createdEvent.plannedDurationMinutes} min; etapas gravadas no servidor: ${outcome.saved.length} de ${drafts.length}).`
+              `${currentUser.name} criou a edição '${createdEvent.title}' (${createdEvent.date} às ${createdEvent.scheduledStartTime}, duração prevista: ${createdEvent.plannedDurationMinutes} min; etapas gravadas no servidor: ${savedActivities.length} de ${liturgicalDrafts.length}; apoios gravados no servidor: ${savedParallelServices.length} de ${parallelDrafts.length}).`
             );
             return {
               success: true,
@@ -2345,7 +2791,11 @@ export function AppProvider({
               remote: true,
               itemsOutcome: outcome,
               itemsFailed: Boolean(itemsWarning),
-              warning: notices.length > 0 ? notices.join(' ') : null
+              warning: notices.length > 0 ? notices.join(' ') : null,
+              liturgicalSavedCount: savedActivities.length,
+              liturgicalRequestedCount: liturgicalDrafts.length,
+              parallelSavedCount: savedParallelServices.length,
+              parallelRequestedCount: parallelDrafts.length,
             };
           } catch (err) {
             return { success: false, error: err.message || "Falha ao criar edição de evento no servidor." };
@@ -2390,14 +2840,26 @@ export function AppProvider({
     const targetEv = events.find(ev => ev.id === targetId) || event;
     if (!targetEv) return { success: false, error: "Nenhum evento selecionado para receber a etapa." };
 
+    const mutationBlock = getProgramMutationBlockReason(targetEv);
+    if (mutationBlock) return { success: false, error: mutationBlock };
+
     const title = normalizeNfcText(activityData?.title || '');
     if (!title) return { success: false, error: "Título da etapa é obrigatório." };
+
+    const rawMinutes = activityData?.plannedDurationMinutes;
+    const parsedMinutes = Number(rawMinutes);
+    if (!Number.isInteger(parsedMinutes) || parsedMinutes <= 0) {
+      return { success: false, error: "Duração planejada da etapa litúrgica é obrigatória e deve ser um número inteiro maior que zero." };
+    }
+    const durationMinutes = parsedMinutes;
+    const durationSeconds = durationMinutes * 60;
 
     const localActivity = {
       id: "act-" + Date.now(),
       title,
       category: activityData?.category || 'Liturgia',
-      plannedDurationMinutes: parseInt(activityData?.plannedDurationMinutes, 10) || 5,
+      plannedDurationMinutes: durationMinutes,
+      plannedDurationSeconds: durationSeconds,
       responsibleMemberId: activityData?.responsibleMemberId || null,
       responsibleTeamId: activityData?.responsibleTeamId || null,
       status: "pendente",
@@ -2454,36 +2916,264 @@ export function AppProvider({
     return { success: true, persisted: false, activity: localActivity };
   };
 
+  // Carrega e hidrata o programa de evento remoto (pós-026 / B2)
+  const loadEventProgram = useCallback(async (eventId, targetChurchId = null, options = {}) => {
+    const { force = false } = options;
+    const cid = targetChurchId || effectiveChurchId;
+    if (!effectiveClient || !cid || !eventId || authContext?.isLocalAuth) {
+      return { success: true, inMemory: true };
+    }
+
+    const key = `${cid}:${eventId}`;
+    const existingReq = programLoadRequestsRef.current.get(key);
+
+    if (existingReq && !force) {
+      return existingReq.promise;
+    }
+
+    const nextSeq = (existingReq?.seq || 0) + 1;
+
+    setEvents(prev => prev.map(ev => ev.id === eventId
+      ? { ...ev, isProgramLoading: true, programLoadError: null }
+      : ev));
+
+    const loadPromise = (async () => {
+      try {
+        const res = await getEventProgramRemote(effectiveClient, cid, eventId);
+        const currentEntry = programLoadRequestsRef.current.get(key);
+        if (!currentEntry || nextSeq < currentEntry.seq) {
+          return { success: false, error: 'Carregamento substituído por solicitação mais recente.' };
+        }
+
+        if (!res.success) {
+          setEvents(prev => prev.map(ev => ev.id === eventId
+            ? { ...ev, programLoadError: res.error, activitiesKnownInSession: false }
+            : ev));
+          return { success: false, error: res.error };
+        }
+
+        const serverEvent = res.event || {};
+        const rawItems = Array.isArray(res.items) ? res.items : [];
+
+        for (const item of rawItems) {
+          const durSec = Number(item.planned_duration_seconds);
+          if (!Number.isFinite(durSec) || durSec <= 0 || !Number.isInteger(durSec)) {
+            const err = `Item '${item.title || item.id}' possui duração inválida (${item.planned_duration_seconds}s). O programa do evento foi rejeitado.`;
+            setEvents(prev => prev.map(ev => ev.id === eventId
+              ? { ...ev, programLoadError: err, activitiesKnownInSession: false }
+              : ev));
+            return { success: false, error: err };
+          }
+        }
+
+        const liturgicalItems = rawItems
+          .filter(item => item.item_nature === 'liturgical')
+          .sort((a, b) => a.sequence_order - b.sequence_order)
+          .map(item => ({
+            id: item.id,
+            title: item.title,
+            category: 'Liturgia',
+            plannedDurationMinutes: Math.round(item.planned_duration_seconds / 60),
+            plannedDurationSeconds: item.planned_duration_seconds,
+            prepRequiredMinutes: 0,
+            responsibleTeamId: item.designated_team_id || null,
+            responsibleMemberId: item.nominal_leader_member_id || null,
+            sequenceOrder: item.sequence_order,
+            updatedAt: item.updated_at,
+            createdAt: item.created_at,
+            status: item.status === 'pending' ? 'pendente' : (item.status || 'pendente'),
+            persisted: true,
+            itemNature: 'liturgical',
+            notes: '',
+            requiresPlayback: false,
+            musics: [],
+            roster: []
+          }));
+
+        const parallelServices = rawItems
+          .filter(item => item.item_nature === 'parallel_support')
+          .sort((a, b) => a.sequence_order - b.sequence_order)
+          .map(item => ({
+            id: item.id,
+            name: item.title,
+            title: item.title,
+            teamId: item.designated_team_id || null,
+            leaderId: item.nominal_leader_member_id || null,
+            designatedTeamId: item.designated_team_id || null,
+            nominalLeaderMemberId: item.nominal_leader_member_id || null,
+            prepLeadMinutes: item.prep_required_minutes || 0,
+            prepRequiredMinutes: item.prep_required_minutes || 0,
+            durationMinutes: Math.round(item.planned_duration_seconds / 60),
+            plannedDurationSeconds: item.planned_duration_seconds,
+            sequenceOrder: item.sequence_order,
+            updatedAt: item.updated_at,
+            createdAt: item.created_at,
+            serverStatus: item.status,
+            persisted: true,
+            itemNature: 'parallel_support',
+            roster: []
+          }));
+
+        setEvents(prev => prev.map(ev => {
+          if (ev.id !== eventId) return ev;
+          return {
+            ...ev,
+            programStatus: serverEvent.program_status || ev.programStatus || 'draft',
+            durationPolicy: serverEvent.duration_policy || ev.durationPolicy || 'warn',
+            programVersion: serverEvent.program_version ?? ev.programVersion ?? 1,
+            publishedAt: serverEvent.published_at || ev.publishedAt || null,
+            publishedByMemberId: serverEvent.published_by_member_id || ev.publishedByMemberId || null,
+            activities: liturgicalItems,
+            parallelServices: parallelServices,
+            activitiesKnownInSession: true,
+            programLoadedFromServer: true,
+            programLoadError: null,
+          };
+        }));
+
+        return {
+          success: true,
+          event: serverEvent,
+          activities: liturgicalItems,
+          parallelServices
+        };
+      } catch (err) {
+        const currentEntry = programLoadRequestsRef.current.get(key);
+        if (currentEntry && nextSeq >= currentEntry.seq) {
+          setEvents(prev => prev.map(ev => ev.id === eventId
+            ? { ...ev, programLoadError: err.message, activitiesKnownInSession: false }
+            : ev));
+        }
+        return { success: false, error: err.message };
+      } finally {
+        const currentEntry = programLoadRequestsRef.current.get(key);
+        if (currentEntry && currentEntry.seq === nextSeq) {
+          programLoadRequestsRef.current.delete(key);
+          setEvents(prev => prev.map(ev => ev.id === eventId ? { ...ev, isProgramLoading: false } : ev));
+        }
+      }
+    })();
+
+    programLoadRequestsRef.current.set(key, { seq: nextSeq, promise: loadPromise });
+    return loadPromise;
+  }, [effectiveClient, effectiveChurchId, authContext?.isLocalAuth]);
+
+  useEffect(() => {
+    if (currentEventId && effectiveClient && !authContext?.isLocalAuth) {
+      const currentEv = events.find(e => e.id === currentEventId);
+      if (currentEv && currentEv.loadedFromServer && !currentEv.programLoadedFromServer && !currentEv.programLoadError && !currentEv.isProgramLoading) {
+        loadEventProgram(currentEventId);
+      }
+    }
+  }, [currentEventId, effectiveClient, authContext?.isLocalAuth, events, loadEventProgram]);
+
   // Selecionar Edição Ativa (Issue #28)
   const selectEvent = (eventId) => {
     const target = events.find(e => e.id === eventId);
     if (target) {
       setCurrentEventId(eventId);
+      if (effectiveClient && !authContext?.isLocalAuth && !target.programLoadedFromServer && !target.isProgramLoading) {
+        loadEventProgram(eventId);
+      }
+    }
+  };
+
+  const executeRemoteActivityReorder = async (targetEventId, itemIds) => {
+    const reorderKey = JSON.stringify({
+      eventId: targetEventId,
+      itemNature: 'liturgical',
+      itemIds,
+    });
+    const pendingCommand = pendingReorderCommandsRef.current.get(targetEventId);
+    let commandId;
+
+    if (pendingCommand) {
+      if (pendingCommand.key !== reorderKey) {
+        return {
+          success: false,
+          uncertain: true,
+          pendingConflict: true,
+          error: 'Existe uma reordenação pendente de confirmação para este evento. Recarregue a programação ou repita exatamente o mesmo movimento.',
+        };
+      }
+      commandId = pendingCommand.commandId;
+    } else {
+      commandId = generateCommandUuid();
+    }
+
+    try {
+      const res = await reorderEventItemsRemote(effectiveClient, {
+        churchId: effectiveChurchId,
+        commandId,
+        eventId: targetEventId,
+        itemIds,
+        itemNature: 'liturgical',
+      });
+
+      if (res.uncertain) {
+        pendingReorderCommandsRef.current.set(targetEventId, { key: reorderKey, commandId });
+        return { ...res, success: false, uncertain: true };
+      }
+
+      pendingReorderCommandsRef.current.delete(targetEventId);
+      return res;
+    } catch (err) {
+      pendingReorderCommandsRef.current.set(targetEventId, { key: reorderKey, commandId });
+      return {
+        success: false,
+        uncertain: true,
+        commandId,
+        error: err.message || 'Não foi possível confirmar a reordenação no servidor.',
+      };
     }
   };
 
   // Reordenação de Atividades na Programação (Issue #29, CA01)
-  const reorderActivities = async (fromIndex, toIndex) => {
+  const reorderActivities = async (fromIndexOrOrderedIds, toIndex) => {
+    const targetEv = event;
+    const blockReason = getProgramMutationBlockReason(targetEv);
+    if (blockReason) return { success: false, error: blockReason };
+
     const authCheck = ensureAuthorizedContext();
     if (!authCheck.allowed) return { success: false, error: authCheck.error };
 
-    const nextActivities = reorderEventActivities(event.activities, fromIndex, toIndex);
+    let nextActivities;
+    if (Array.isArray(fromIndexOrOrderedIds)) {
+      const orderedIds = fromIndexOrOrderedIds;
+      const actMap = new Map((targetEv.activities || []).map(a => [a.id, a]));
+      nextActivities = orderedIds.map(id => actMap.get(id)).filter(Boolean);
+      for (const act of targetEv.activities || []) {
+        if (!orderedIds.includes(act.id)) {
+          nextActivities.push(act);
+        }
+      }
+    } else {
+      nextActivities = reorderEventActivities(targetEv.activities, fromIndexOrOrderedIds, toIndex);
+    }
 
     if (!authCheck.inMemory) {
       try {
-        const itemOrders = nextActivities.map((act, idx) => ({
-          item_id: act.id,
-          new_position: idx + 1
-        }));
-        const res = await reorderEventItemsRemote(effectiveClient, effectiveChurchId, event.id, itemOrders);
+        const itemIds = nextActivities.map(act => act.id);
+        const res = await executeRemoteActivityReorder(targetEv.id, itemIds);
         if (!res.success) {
-          return { success: false, error: res.error };
+          return res;
         }
         setEvent(prev => ({
           ...prev,
           activities: nextActivities
         }));
-        addAuditLog("Reordenação de Atividades", `Sequência de atividades reordenada na edição '${event.title}'.`);
+        addAuditLog("Reordenação de Atividades", `Sequência de atividades reordenada na edição '${targetEv.title}'.`);
+
+        const reloadRes = await loadEventProgram(targetEv.id, effectiveChurchId, { force: true });
+        if (!reloadRes.success) {
+          return {
+            success: true,
+            remote: true,
+            syncError: reloadRes.error,
+            warning: 'Reordenação gravada no servidor, mas a atualização dos tokens falhou. Recarregue a página antes de editar as etapas.'
+          };
+        }
+
         return { success: true, remote: true };
       } catch (err) {
         return { success: false, error: err.message || "Falha ao sincronizar reordenação com o servidor." };
@@ -2494,29 +3184,40 @@ export function AppProvider({
       ...prev,
       activities: nextActivities
     }));
-    addAuditLog("Reordenação de Atividades", `Sequência de atividades reordenada na edição '${event.title}'.`);
+    addAuditLog("Reordenação de Atividades", `Sequência de atividades reordenada na edição '${targetEv.title}'.`);
     return { success: true };
   };
 
   const moveActivityUpInEvent = async (activityId, targetEventId = null) => {
+    const targetId = targetEventId || currentEventId;
+    const targetEv = events.find(ev => ev.id === targetId) || event;
+    const blockReason = getProgramMutationBlockReason(targetEv);
+    if (blockReason) return { success: false, error: blockReason };
+
     const authCheck = ensureAuthorizedContext();
     if (!authCheck.allowed) return { success: false, error: authCheck.error };
 
-    const targetId = targetEventId || currentEventId;
-    const targetEv = events.find(ev => ev.id === targetId) || event;
     const reordered = moveActivityUp(targetEv.activities, activityId);
 
     if (!authCheck.inMemory) {
       try {
-        const itemOrders = reordered.map((act, idx) => ({
-          item_id: act.id,
-          new_position: idx + 1
-        }));
-        const res = await reorderEventItemsRemote(effectiveClient, effectiveChurchId, targetId, itemOrders);
+        const itemIds = reordered.map(act => act.id);
+        const res = await executeRemoteActivityReorder(targetId, itemIds);
         if (!res.success) {
-          return { success: false, error: res.error };
+          return res;
         }
         setEvents(prev => prev.map(ev => ev.id === targetId ? { ...ev, activities: reordered } : ev));
+
+        const reloadRes = await loadEventProgram(targetId, effectiveChurchId, { force: true });
+        if (!reloadRes.success) {
+          return {
+            success: true,
+            remote: true,
+            syncError: reloadRes.error,
+            warning: 'Reordenação gravada no servidor, mas a atualização dos tokens falhou. Recarregue a página antes de editar as etapas.'
+          };
+        }
+
         return { success: true, remote: true };
       } catch (err) {
         return { success: false, error: err.message || "Falha ao mover atividade no servidor." };
@@ -2528,24 +3229,35 @@ export function AppProvider({
   };
 
   const moveActivityDownInEvent = async (activityId, targetEventId = null) => {
+    const targetId = targetEventId || currentEventId;
+    const targetEv = events.find(ev => ev.id === targetId) || event;
+    const blockReason = getProgramMutationBlockReason(targetEv);
+    if (blockReason) return { success: false, error: blockReason };
+
     const authCheck = ensureAuthorizedContext();
     if (!authCheck.allowed) return { success: false, error: authCheck.error };
 
-    const targetId = targetEventId || currentEventId;
-    const targetEv = events.find(ev => ev.id === targetId) || event;
     const reordered = moveActivityDown(targetEv.activities, activityId);
 
     if (!authCheck.inMemory) {
       try {
-        const itemOrders = reordered.map((act, idx) => ({
-          item_id: act.id,
-          new_position: idx + 1
-        }));
-        const res = await reorderEventItemsRemote(effectiveClient, effectiveChurchId, targetId, itemOrders);
+        const itemIds = reordered.map(act => act.id);
+        const res = await executeRemoteActivityReorder(targetId, itemIds);
         if (!res.success) {
-          return { success: false, error: res.error };
+          return res;
         }
         setEvents(prev => prev.map(ev => ev.id === targetId ? { ...ev, activities: reordered } : ev));
+
+        const reloadRes = await loadEventProgram(targetId, effectiveChurchId, { force: true });
+        if (!reloadRes.success) {
+          return {
+            success: true,
+            remote: true,
+            syncError: reloadRes.error,
+            warning: 'Reordenação gravada no servidor, mas a atualização dos tokens falhou. Recarregue a página antes de editar as etapas.'
+          };
+        }
+
         return { success: true, remote: true };
       } catch (err) {
         return { success: false, error: err.message || "Falha ao mover atividade no servidor." };
@@ -2556,37 +3268,293 @@ export function AppProvider({
     return { success: true };
   };
 
+  // Edição de Atividade no Planejamento (Issue #29)
+  const updateActivityInEvent = async (activityId, updatedData, targetEventId = null) => {
+    if (!isAdmin && !isLiturgyLeader) {
+      return { success: false, error: "Apenas administradores ou líderes da liturgia podem editar etapas." };
+    }
+    const targetId = targetEventId || currentEventId;
+    const targetEv = events.find(ev => ev.id === targetId) || event;
+    const blockReason = getProgramMutationBlockReason(targetEv);
+    if (blockReason) return { success: false, error: blockReason };
+
+    const authCheck = ensureAuthorizedContext();
+    if (!authCheck.allowed) return { success: false, error: authCheck.error };
+
+    if (!targetEv) return { success: false, error: "Nenhum evento selecionado para editar a etapa." };
+
+    const existingAct = targetEv.activities?.find(a => a.id === activityId);
+    if (!existingAct) {
+      return { success: false, error: "Atividade não encontrada no evento." };
+    }
+
+    const title = normalizeNfcText(updatedData?.title || existingAct.title);
+    if (!title) return { success: false, error: "Título da etapa é obrigatório." };
+
+    let durationMinutes;
+    if (updatedData?.plannedDurationMinutes === undefined || updatedData?.plannedDurationMinutes === null || updatedData?.plannedDurationMinutes === '') {
+      durationMinutes = existingAct.plannedDurationMinutes;
+    } else {
+      const parsed = Number(updatedData.plannedDurationMinutes);
+      if (!Number.isInteger(parsed) || parsed <= 0) {
+        return { success: false, error: "Duração planejada da etapa litúrgica deve ser um número inteiro maior que zero." };
+      }
+      durationMinutes = parsed;
+    }
+    const durationSeconds = durationMinutes * 60;
+    const prepMinutes = 0; // Etapas litúrgicas sempre têm preparação 0
+    const isValidUuid = (val) => typeof val === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(val);
+    const teamId = isValidUuid(updatedData?.responsibleTeamId) ? updatedData.responsibleTeamId : (isValidUuid(existingAct.responsibleTeamId) ? existingAct.responsibleTeamId : null);
+    const leaderId = isValidUuid(updatedData?.responsibleMemberId) ? updatedData.responsibleMemberId : (isValidUuid(existingAct.responsibleMemberId) ? existingAct.responsibleMemberId : null);
+
+    if (!authCheck.inMemory && existingAct.persisted) {
+      const payload = {
+        title,
+        plannedDurationSeconds: durationSeconds,
+        prepRequiredMinutes: prepMinutes,
+        designatedTeamId: teamId,
+        nominalLeaderMemberId: leaderId,
+      };
+      const updateKey = buildEventItemUpdateKey(targetId, activityId, payload, existingAct.updatedAt);
+      const pendingCmd = pendingUpdateCommandsRef.current.get(activityId);
+      let commandId;
+      if (pendingCmd) {
+        if (pendingCmd.key !== updateKey) {
+          return {
+            success: false,
+            error: "Existe uma alteração pendente de confirmação para esta etapa. Aguarde ou repita a alteração idêntica.",
+          };
+        }
+        commandId = pendingCmd.commandId;
+      } else {
+        commandId = generateCommandUuid();
+      }
+
+      try {
+        const res = await updateEventItemRemote(effectiveClient, {
+          churchId: effectiveChurchId,
+          commandId,
+          eventId: targetId,
+          itemId: activityId,
+          title,
+          itemNature: 'liturgical',
+          plannedDurationSeconds: durationSeconds,
+          prepRequiredMinutes: prepMinutes,
+          designatedTeamId: teamId,
+          nominalLeaderMemberId: leaderId,
+          expectedUpdatedAt: existingAct.updatedAt,
+        });
+
+        if (res.uncertain) {
+          pendingUpdateCommandsRef.current.set(activityId, { key: updateKey, commandId });
+          return { success: false, uncertain: true, error: res.error };
+        }
+
+        pendingUpdateCommandsRef.current.delete(activityId);
+
+        if (!res.success) {
+          return {
+            success: false,
+            error: res.error,
+            concurrencyConflict: res.concurrencyConflict
+          };
+        }
+
+        const newUpdatedAt = res.updatedAt || existingAct.updatedAt;
+        const updatedActivity = {
+          ...existingAct,
+          title,
+          category: updatedData?.category || existingAct.category,
+          plannedDurationMinutes: durationMinutes,
+          plannedDurationSeconds: durationSeconds,
+          prepRequiredMinutes: prepMinutes,
+          responsibleTeamId: teamId,
+          responsibleMemberId: leaderId,
+          notes: updatedData?.notes ?? existingAct.notes,
+          requiresPlayback: updatedData?.requiresPlayback !== undefined ? updatedData.requiresPlayback : existingAct.requiresPlayback,
+          updatedAt: newUpdatedAt,
+        };
+
+        setEvents(prev => prev.map(ev => ev.id === targetId
+          ? {
+              ...ev,
+              activities: ev.activities.map(a => a.id === activityId ? updatedActivity : a)
+            }
+          : ev));
+
+        addAuditLog("Edição de Atividade", `Atividade '${title}' atualizada no servidor.`);
+        return { success: true, remote: true, activity: updatedActivity };
+      } catch (err) {
+        pendingUpdateCommandsRef.current.set(activityId, { key: updateKey, commandId });
+        return { success: false, uncertain: true, error: err.message || "Falha ao atualizar atividade no servidor." };
+      }
+    }
+
+    // Modo local / em memória
+    const updatedActivity = {
+      ...existingAct,
+      title,
+      category: updatedData?.category || existingAct.category,
+      plannedDurationMinutes: durationMinutes,
+      plannedDurationSeconds: durationSeconds,
+      prepRequiredMinutes: prepMinutes,
+      responsibleTeamId: teamId,
+      responsibleMemberId: leaderId,
+      notes: updatedData?.notes ?? existingAct.notes,
+      requiresPlayback: updatedData?.requiresPlayback !== undefined ? updatedData.requiresPlayback : existingAct.requiresPlayback,
+    };
+
+    setEvents(prev => prev.map(ev => ev.id === targetId
+      ? {
+          ...ev,
+          activities: ev.activities.map(a => a.id === activityId ? updatedActivity : a)
+        }
+      : ev));
+
+    addAuditLog("Edição de Atividade", `Atividade '${title}' atualizada localmente.`);
+    return { success: true, remote: false, activity: updatedActivity };
+  };
+
+  // Remoção de Atividade no Planejamento (Issue #29)
+  const removeActivityFromEvent = async (activityId, targetEventId = null) => {
+    if (!isAdmin && !isLiturgyLeader) {
+      return { success: false, error: "Apenas administradores ou líderes da liturgia podem remover etapas." };
+    }
+    const targetId = targetEventId || currentEventId;
+    const targetEv = events.find(ev => ev.id === targetId) || event;
+    const blockReason = getProgramMutationBlockReason(targetEv);
+    if (blockReason) return { success: false, error: blockReason };
+
+    const authCheck = ensureAuthorizedContext();
+    if (!authCheck.allowed) return { success: false, error: authCheck.error };
+
+    if (!targetEv) return { success: false, error: "Nenhum evento selecionado para remover a etapa." };
+
+    const existingAct = targetEv.activities?.find(a => a.id === activityId);
+    if (!existingAct) {
+      return { success: false, error: "Atividade não encontrada no evento." };
+    }
+
+    if (!authCheck.inMemory && existingAct.persisted) {
+      const removeKey = buildEventItemRemoveKey(targetId, activityId, existingAct.updatedAt);
+      const pendingCmd = pendingRemoveCommandsRef.current.get(activityId);
+      let commandId;
+      if (pendingCmd) {
+        if (pendingCmd.key !== removeKey) {
+          return {
+            success: false,
+            error: "Existe uma remoção pendente de confirmação para esta etapa.",
+          };
+        }
+        commandId = pendingCmd.commandId;
+      } else {
+        commandId = generateCommandUuid();
+      }
+
+      try {
+        const res = await removeEventItemRemote(effectiveClient, {
+          churchId: effectiveChurchId,
+          commandId,
+          eventId: targetId,
+          itemId: activityId,
+          expectedUpdatedAt: existingAct.updatedAt,
+        });
+
+        if (res.uncertain) {
+          pendingRemoveCommandsRef.current.set(activityId, { key: removeKey, commandId });
+          return { success: false, uncertain: true, error: res.error };
+        }
+
+        pendingRemoveCommandsRef.current.delete(activityId);
+
+        if (!res.success) {
+          return {
+            success: false,
+            error: res.error,
+            concurrencyConflict: res.concurrencyConflict,
+            blockedByAssignment: res.blockedByAssignment
+          };
+        }
+
+        setEvents(prev => prev.map(ev => ev.id === targetId
+          ? {
+              ...ev,
+              activities: ev.activities.filter(a => a.id !== activityId)
+            }
+          : ev));
+
+        addAuditLog("Remoção de Atividade", `Atividade '${existingAct.title}' removida do servidor.`);
+        return { success: true, remote: true };
+      } catch (err) {
+        pendingRemoveCommandsRef.current.set(activityId, { key: removeKey, commandId });
+        return { success: false, uncertain: true, error: err.message || "Falha ao remover atividade no servidor." };
+      }
+    }
+
+    // Modo local / em memória
+    setEvents(prev => prev.map(ev => ev.id === targetId
+      ? {
+          ...ev,
+          activities: ev.activities.filter(a => a.id !== activityId)
+        }
+      : ev));
+
+    addAuditLog("Remoção de Atividade", `Atividade '${existingAct.title}' removida localmente.`);
+    return { success: true, remote: false };
+  };
+
   // Configuração da Política de Duração do Evento (Issue #30, CA04)
   const setEventDurationPolicy = (newPolicy, targetEventId = null) => {
     if (!isAdmin && !isLiturgyLeader) {
       return { success: false, error: "Permissão insuficiente para alterar a política de duração." };
     }
+    const targetId = targetEventId || currentEventId;
+    const targetEv = events.find(e => e.id === targetId) || event;
+    const blockReason = getProgramMutationBlockReason(targetEv);
+    if (blockReason) return { success: false, error: blockReason };
+
     const authCheck = ensureAuthorizedContext();
     if (!authCheck.allowed) return { success: false, error: authCheck.error };
 
     try {
-      const targetId = targetEventId || currentEventId;
-      const targetEv = events.find(e => e.id === targetId) || event;
       const updated = updateEventDurationPolicy(targetEv, newPolicy, isAdmin || isLiturgyLeader);
 
       if (!authCheck.inMemory) {
         return (async () => {
+          const lifecycleKey = `policy:${effectiveChurchId}:${targetId}`;
+          let cmdId = pendingProgramLifecycleCommandsRef.current.get(lifecycleKey);
+          if (!cmdId) {
+            cmdId = generateCommandUuid();
+          }
+
           try {
             const res = await setEventDurationPolicyRemote(
               effectiveClient,
-              effectiveChurchId,
-              targetId,
-              newPolicy,
-              updated.targetEndTime || null
+              {
+                churchId: effectiveChurchId,
+                commandId: cmdId,
+                eventId: targetId,
+                durationPolicy: newPolicy,
+              }
             );
+
+            if (res.uncertain) {
+              pendingProgramLifecycleCommandsRef.current.set(lifecycleKey, cmdId);
+              return { success: false, uncertain: true, error: res.error };
+            }
+
+            pendingProgramLifecycleCommandsRef.current.delete(lifecycleKey);
+
             if (!res.success) {
               return { success: false, error: res.error };
             }
+
             setEvents(prev => prev.map(ev => ev.id === targetId ? updated : ev));
             addAuditLog("Política de Duração", `Política de duração alterada para '${newPolicy}'.`);
-            return { success: true, remote: true };
+            return { success: true, remote: true, receipt: res.receipt };
           } catch (err) {
-            return { success: false, error: err.message || "Falha ao atualizar política de duração no servidor." };
+            pendingProgramLifecycleCommandsRef.current.set(lifecycleKey, cmdId);
+            return { success: false, uncertain: true, error: err.message || "Falha ao atualizar política de duração no servidor." };
           }
         })();
       }
@@ -2606,34 +3574,80 @@ export function AppProvider({
 
   // Publicar Programação Litúrgica (Issue #30, CA01 a CA04)
   const publishCurrentProgram = () => {
+    if (!isAdmin && !isLiturgyLeader) {
+      return { success: false, error: "Apenas administradores ou líderes da liturgia podem publicar a programação." };
+    }
+    const targetEv = event;
+    const blockReason = getProgramMutationBlockReason(targetEv);
+    if (blockReason) return { success: false, error: blockReason };
+
     const authCheck = ensureAuthorizedContext();
     if (!authCheck.allowed) return { success: false, error: authCheck.error };
-    if (!event) return { success: false, error: 'Nenhum evento selecionado para publicação.' };
+    if (!targetEv) return { success: false, error: 'Nenhum evento selecionado para publicação.' };
 
     try {
-      const published = publishEventProgram(event, currentUser.id);
+      const published = publishEventProgram(targetEv, currentUser?.id);
 
       if (!authCheck.inMemory) {
         return (async () => {
+          const lifecycleKey = `publish:${effectiveChurchId}:${targetEv.id}`;
+          let cmdId = pendingProgramLifecycleCommandsRef.current.get(lifecycleKey);
+          if (!cmdId) {
+            cmdId = generateCommandUuid();
+          }
+
           try {
             const res = await publishEventProgramRemote(
               effectiveClient,
-              effectiveChurchId,
-              event.id,
-              event.programVersion || 1,
-              event.activities || []
+              {
+                churchId: effectiveChurchId,
+                commandId: cmdId,
+                eventId: targetEv.id,
+                expectedVersion: targetEv.programVersion || 1,
+              }
             );
+
+            if (res.uncertain) {
+              pendingProgramLifecycleCommandsRef.current.set(lifecycleKey, cmdId);
+              return { success: false, uncertain: true, error: res.error };
+            }
+
             if (!res.success) {
+              pendingProgramLifecycleCommandsRef.current.delete(lifecycleKey);
               return { success: false, error: res.error };
             }
-            setEvent(published);
+
+            const payload = res.payload || {};
+            const nextVersion = payload.program_version;
+            if (typeof nextVersion !== 'number' || !Number.isInteger(nextVersion) || nextVersion <= 0) {
+              pendingProgramLifecycleCommandsRef.current.set(lifecycleKey, cmdId);
+              return {
+                success: false,
+                uncertain: true,
+                error: 'Resposta remota de publicação sem program_version válido retornado pelo servidor.',
+              };
+            }
+
+            pendingProgramLifecycleCommandsRef.current.delete(lifecycleKey);
+
+            const serverPublished = {
+              ...published,
+              programStatus: 'published',
+              programVersion: nextVersion,
+              publishedAt: payload.published_at || res.receipt?.created_at,
+              publishedByMemberId: payload.published_by_member_id || currentUser?.id,
+              updatedAt: payload.updated_at || res.receipt?.created_at || targetEv.updatedAt,
+            };
+            setEvent(serverPublished);
+            setEvents(prev => prev.map(ev => ev.id === targetEv.id ? serverPublished : ev));
             addAuditLog(
               "Publicação da Programação",
-              `Programação litúrgica da edição '${event.title}' publicada com sucesso (Versão ${published.programVersion}).`
+              `Programação litúrgica da edição '${targetEv.title}' publicada com sucesso (Versão ${nextVersion}).`
             );
-            return { success: true, remote: true };
+            return { success: true, remote: true, receipt: res.receipt };
           } catch (err) {
-            return { success: false, error: err.message || "Falha ao publicar programação no servidor." };
+            pendingProgramLifecycleCommandsRef.current.set(lifecycleKey, cmdId);
+            return { success: false, uncertain: true, error: err.message || "Falha ao publicar programação no servidor." };
           }
         })();
       }
@@ -2641,7 +3655,7 @@ export function AppProvider({
       setEvent(published);
       addAuditLog(
         "Publicação da Programação",
-        `Programação litúrgica da edição '${event.title}' publicada com sucesso (Versão ${published.programVersion}).`
+        `Programação litúrgica da edição '${targetEv.title}' publicada com sucesso (Versão ${published.programVersion}).`
       );
       return { success: true };
     } catch (err) {
@@ -2651,33 +3665,77 @@ export function AppProvider({
 
   // Salvar Rascunho da Programação (Issue #30, CA02 e CA03)
   const saveCurrentProgramDraft = () => {
+    if (!isAdmin && !isLiturgyLeader) {
+      return { success: false, error: "Apenas administradores ou líderes da liturgia podem salvar rascunho da programação." };
+    }
+    const targetEv = event;
+    const blockReason = getProgramMutationBlockReason(targetEv);
+    if (blockReason) return { success: false, error: blockReason };
+
     const authCheck = ensureAuthorizedContext();
     if (!authCheck.allowed) return { success: false, error: authCheck.error };
-    if (!event) return { success: false, error: 'Nenhum evento selecionado para salvar rascunho.' };
+    if (!targetEv) return { success: false, error: 'Nenhum evento selecionado para salvar rascunho.' };
 
     try {
-      const draft = saveEventProgramDraft(event);
+      const draft = saveEventProgramDraft(targetEv);
 
       if (!authCheck.inMemory) {
         return (async () => {
+          const lifecycleKey = `draft:${effectiveChurchId}:${targetEv.id}`;
+          let cmdId = pendingProgramLifecycleCommandsRef.current.get(lifecycleKey);
+          if (!cmdId) {
+            cmdId = generateCommandUuid();
+          }
+
           try {
             const res = await saveEventProgramDraftRemote(
               effectiveClient,
-              effectiveChurchId,
-              event.id,
-              event.activities || []
+              {
+                churchId: effectiveChurchId,
+                commandId: cmdId,
+                eventId: targetEv.id,
+              }
             );
+
+            if (res.uncertain) {
+              pendingProgramLifecycleCommandsRef.current.set(lifecycleKey, cmdId);
+              return { success: false, uncertain: true, error: res.error };
+            }
+
             if (!res.success) {
+              pendingProgramLifecycleCommandsRef.current.delete(lifecycleKey);
               return { success: false, error: res.error };
             }
-            setEvent(draft);
+
+            const payload = res.payload || {};
+            const draftVersion = payload.program_version;
+            if (typeof draftVersion !== 'number' || !Number.isInteger(draftVersion) || draftVersion <= 0) {
+              pendingProgramLifecycleCommandsRef.current.set(lifecycleKey, cmdId);
+              return {
+                success: false,
+                uncertain: true,
+                error: 'Resposta do servidor sem program_version válido.',
+              };
+            }
+
+            pendingProgramLifecycleCommandsRef.current.delete(lifecycleKey);
+
+            const serverDraft = {
+              ...draft,
+              programStatus: 'draft',
+              programVersion: draftVersion,
+              updatedAt: payload.updated_at || payload.draft_saved_at || res.receipt?.created_at || targetEv.updatedAt,
+            };
+            setEvent(serverDraft);
+            setEvents(prev => prev.map(ev => ev.id === targetEv.id ? serverDraft : ev));
             addAuditLog(
               "Rascunho da Programação",
-              `Rascunho da programação da edição '${event.title}' salvo com sucesso.`
+              `Rascunho da programação da edição '${targetEv.title}' salvo com sucesso.`
             );
-            return { success: true, remote: true };
+            return { success: true, remote: true, receipt: res.receipt };
           } catch (err) {
-            return { success: false, error: err.message || "Falha ao salvar rascunho no servidor." };
+            pendingProgramLifecycleCommandsRef.current.set(lifecycleKey, cmdId);
+            return { success: false, uncertain: true, error: err.message || "Falha ao salvar rascunho no servidor." };
           }
         })();
       }
@@ -2685,7 +3743,7 @@ export function AppProvider({
       setEvent(draft);
       addAuditLog(
         "Rascunho da Programação",
-        `Rascunho da programação da edição '${event.title}' salvo com sucesso.`
+        `Rascunho da programação da edição '${targetEv.title}' salvo com sucesso.`
       );
       return { success: true };
     } catch (err) {
@@ -2732,7 +3790,10 @@ export function AppProvider({
         pendingCreateEvent,
         retryPendingCreateEvent,
         teamsLoadStatus,
+        loadEventProgram,
         addActivityToEvent,
+        updateActivityInEvent,
+        removeActivityFromEvent,
         reorderActivities,
         moveActivityUpInEvent,
         moveActivityDownInEvent,
@@ -2795,6 +3856,8 @@ export function AppProvider({
         toggleServiceTemplateStatus,
         deleteServiceTemplate,
         applyServiceTemplateToEvent,
+        addParallelServiceToCurrentEvent,
+        updateParallelServiceInCurrentEvent,
         removeParallelServiceFromCurrentEvent,
         sendAccessInvite,
         designateLiturgyLeader,

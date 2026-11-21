@@ -1,15 +1,17 @@
 /**
- * eventItemService.js — Gravação das etapas litúrgicas de um evento no servidor (Issue #29).
+ * eventItemService.js — Gerenciamento e persistência de itens do programa do evento (Issue #29, #30, #51).
  *
- * Usa a RPC public.create_event_item (via createEventItem de liturgicalCommandService), uma chamada
- * por etapa, cada uma com seu próprio command_id.
+ * Usa as RPCs do pacote SQL 026 pós-B2:
+ * - public.create_event_item (via createEventItem) para criar etapas litúrgicas e apoios paralelos.
+ * - public.update_event_item (via updateEventItem) para edição concorrente com expected_updated_at.
+ * - public.remove_event_item (via removeEventItem) para remoção protegida contra concorrência e dependências.
+ * - public.reorder_event_items (via reorderEventItems) para reordenação com lista completa de IDs da natureza litúrgica.
+ * - public.get_event_program para hidratação durável e leitura de etapas e apoios.
  *
- * Limites conhecidos desta entrega (dependem do pacote B2), que este módulo não contorna:
- * - A RPC grava somente título, natureza, ordem, duração, equipe designada e responsável nominal.
- *   Categoria, observações, playback, músicas e atividade padrão não são gravados.
- * - Não existe RPC para ler etapas de volta, editar ou remover etapa.
- * - Serviços paralelos NÃO são gravados: a RPC exige duração maior que zero e não tem campo para o
- *   tempo de preparação, e não se inventa duração. Eles permanecem apenas na memória da sessão.
+ * Contrato vigente:
+ * - Etapas litúrgicas e apoios paralelos são gravados no backend com suas naturezas específicas ('liturgical' e 'parallel_support').
+ * - Todos os itens exigem planned_duration_seconds > 0 no banco.
+ * - Cada item possui sequência independente iniciada em 1 por natureza.
  */
 
 import { createEventItem } from './liturgicalCommandService.js';
@@ -19,26 +21,21 @@ const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12
 
 /** Aviso permanente da tela sobre o que é e o que não é gravado no servidor. */
 export const EVENT_ITEMS_PERSISTENCE_NOTICE =
-  'Cada etapa litúrgica adicionada é gravada no servidor (título, ordem, duração e responsável). ' +
-  'Categoria, observações, playback e músicas ficam apenas nesta sessão. ' +
-  'Ainda não é possível ler, editar ou remover etapas no servidor: as etapas gravadas não reaparecem ' +
-  'nesta tela depois de recarregar a página, e alterações feitas em etapas já gravadas valem só nesta sessão.';
+  'Cada etapa litúrgica e apoio adicionado é gravado e lido diretamente do servidor (título, ordem, duração, preparação e responsável). ' +
+  'Campos como categoria, observações, playback e músicas são mantidos no cliente nesta sessão.';
 
 /** Aviso permanente da tela sobre serviços paralelos. */
-export const PARALLEL_SERVICES_NOT_PERSISTED_NOTICE =
-  'Serviços paralelos e apoios técnicos não são gravados no servidor nesta versão: ' +
-  'ficam apenas nesta sessão e somem ao recarregar a página.';
+export const PARALLEL_SERVICES_PERSISTENCE_NOTICE =
+  'Apoios técnicos e serviços paralelos desta edição são gravados com natureza própria no servidor, incluindo o tempo de preparação antecedente.';
 
 /** Aviso exibido ao aplicar modelo a um evento que já tem etapas. */
 export const TEMPLATE_APPEND_NOTICE =
-  'Este culto já tinha etapas: as etapas do modelo foram acrescentadas ao final, sem substituir as existentes, ' +
-  'porque ainda não é possível remover etapas no servidor.';
+  'Este culto já tinha etapas: as etapas do modelo foram acrescentadas ao final, mantendo as existentes.';
 
-/** Motivo de bloqueio ao tentar acrescentar etapas em evento carregado do servidor sem leitura de etapas (B2). */
+/** Motivo de bloqueio ao tentar acrescentar etapas em evento carregado do servidor sem leitura bem-sucedida de etapas. */
 export const UNKNOWN_SERVER_ITEMS_BLOCK_REASON =
-  'Não é possível acrescentar novas etapas a um evento carregado do servidor após recarregar a página: ' +
-  'este evento pode já ter etapas gravadas que ainda não são lidas nesta versão (depende do pacote B2), ' +
-  'o que poderia gerar conflito na ordem das etapas no servidor.';
+  'Não é possível acrescentar novas etapas antes de carregar com sucesso o programa existente do servidor (B2) para preservar a ordem das etapas. ' +
+  'Recarregue a página para sincronizar o programa antes de novas adições.';
 
 /** Motivo de bloqueio ao tentar acrescentar etapas em evento com resposta incerta pendente (#29). */
 export const UNCERTAIN_EVENT_ITEMS_BLOCK_REASON =
@@ -54,8 +51,32 @@ export function buildEventItemDraftKey(eventId, draft) {
     draft.sequenceOrder,
     draft.title,
     draft.plannedDurationSeconds,
+    draft.prepRequiredMinutes ?? 0,
     draft.designatedTeamId,
     draft.nominalLeaderMemberId,
+  ]);
+}
+
+export function buildEventItemUpdateKey(eventId, itemId, payload, expectedUpdatedAt) {
+  return JSON.stringify([
+    'update_event_item',
+    eventId,
+    itemId,
+    payload?.title,
+    payload?.plannedDurationSeconds,
+    payload?.prepRequiredMinutes,
+    payload?.designatedTeamId,
+    payload?.nominalLeaderMemberId,
+    expectedUpdatedAt,
+  ]);
+}
+
+export function buildEventItemRemoveKey(eventId, itemId, expectedUpdatedAt) {
+  return JSON.stringify([
+    'remove_event_item',
+    eventId,
+    itemId,
+    expectedUpdatedAt,
   ]);
 }
 
@@ -112,16 +133,72 @@ export function isUuid(value) {
  */
 export function buildLiturgicalItemDrafts(activities = [], orderOffset = 0) {
   return (Array.isArray(activities) ? activities : []).map((act, idx) => {
-    const minutes = Number(act?.plannedDurationMinutes);
+    const rawMinutes = act?.plannedDurationMinutes;
+    const minutes = Number.isFinite(Number(rawMinutes)) ? Number(rawMinutes) : NaN;
+    const durationSeconds = Number.isFinite(minutes) && minutes > 0
+      ? Math.round(minutes * 60)
+      : (Number.isFinite(Number(act?.plannedDurationSeconds)) && Number(act.plannedDurationSeconds) > 0
+        ? Math.round(Number(act.plannedDurationSeconds))
+        : 0);
+
     return {
       localId: act?.id ?? null,
-      title: normalizeNfcText(act?.title || ''),
+      title: normalizeNfcText(act?.title || act?.name || ''),
       itemNature: 'liturgical',
       sequenceOrder: orderOffset + idx + 1,
-      plannedDurationSeconds: Number.isFinite(minutes) && minutes > 0 ? Math.round(minutes * 60) : null,
-      designatedTeamId: isUuid(act?.responsibleTeamId) ? act.responsibleTeamId : null,
-      nominalLeaderMemberId: isUuid(act?.responsibleMemberId) ? act.responsibleMemberId : null,
+      plannedDurationSeconds: durationSeconds,
+      prepRequiredMinutes: 0,
+      designatedTeamId: isUuid(act?.responsibleTeamId || act?.teamId) ? (act.responsibleTeamId || act.teamId) : null,
+      nominalLeaderMemberId: isUuid(act?.responsibleMemberId || act?.leaderId) ? (act.responsibleMemberId || act.leaderId) : null,
       source: act,
+    };
+  });
+}
+
+/**
+ * Monta os rascunhos de gravação de serviços paralelos e apoios, na ordem recebida.
+ * orderOffset é a quantidade de apoios que o evento já possui (a ordem continua a partir dela).
+ * options.fallbackDurationSeconds: duração derivada da janela do evento quando o modelo não possui duração própria.
+ */
+export function buildParallelServiceDrafts(services = [], orderOffset = 0, options = {}) {
+  const fallbackDurationSeconds = Number(options?.fallbackDurationSeconds);
+  return (Array.isArray(services) ? services : []).map((serv, idx) => {
+    const rawMinutes = serv?.durationMinutes ?? serv?.plannedDurationMinutes;
+    let durationSeconds = 0;
+    if (Number.isFinite(Number(serv?.plannedDurationSeconds)) && Number(serv.plannedDurationSeconds) > 0) {
+      durationSeconds = Math.round(Number(serv.plannedDurationSeconds));
+    } else if (Number.isFinite(Number(rawMinutes)) && Number(rawMinutes) > 0) {
+      durationSeconds = Math.round(Number(rawMinutes) * 60);
+    } else if (Number.isFinite(fallbackDurationSeconds) && fallbackDurationSeconds > 0) {
+      durationSeconds = Math.round(fallbackDurationSeconds);
+    } else {
+      durationSeconds = 0;
+    }
+
+    let prepMinutes = 0;
+    const rawPrep = serv?.prepRequiredMinutes ?? serv?.prepLeadMinutes;
+    if (rawPrep !== undefined && rawPrep !== null && rawPrep !== '') {
+      const parsed = Number(rawPrep);
+      prepMinutes = Number.isInteger(parsed) ? parsed : NaN;
+    }
+
+    const teamId = isUuid(serv?.responsibleTeamId || serv?.teamId || serv?.designatedTeamId)
+      ? (serv.responsibleTeamId || serv.teamId || serv.designatedTeamId)
+      : null;
+    const leaderId = isUuid(serv?.responsibleMemberId || serv?.leaderId || serv?.nominalLeaderMemberId)
+      ? (serv.responsibleMemberId || serv.leaderId || serv.nominalLeaderMemberId)
+      : null;
+
+    return {
+      localId: serv?.id ?? null,
+      title: normalizeNfcText(serv?.name || serv?.title || ''),
+      itemNature: 'parallel_support',
+      sequenceOrder: orderOffset + idx + 1,
+      plannedDurationSeconds: durationSeconds,
+      prepRequiredMinutes: prepMinutes,
+      designatedTeamId: teamId,
+      nominalLeaderMemberId: leaderId,
+      source: serv,
     };
   });
 }
@@ -166,9 +243,25 @@ export async function saveEventItemsSequentially({
       failed = { draft, message: 'Título da etapa não informado.', uncertain: false };
       continue;
     }
-    if (!draft.plannedDurationSeconds || draft.plannedDurationSeconds <= 0) {
-      failed = { draft, message: 'Duração planejada da etapa inválida (deve ser maior que zero).', uncertain: false };
+
+    if (!Number.isFinite(draft.plannedDurationSeconds) || draft.plannedDurationSeconds <= 0 || !Number.isInteger(draft.plannedDurationSeconds)) {
+      const msg = draft.itemNature === 'parallel_support'
+        ? 'Duração planejada de apoio paralelo deve ser um número inteiro e estritamente maior que zero.'
+        : 'Duração planejada da etapa litúrgica é obrigatória e deve ser maior que zero.';
+      failed = { draft, message: msg, uncertain: false };
       continue;
+    }
+
+    if (draft.itemNature === 'parallel_support') {
+      const prep = draft.prepRequiredMinutes;
+      if (!Number.isInteger(prep) || prep < 0 || prep > 180) {
+        failed = {
+          draft,
+          message: 'Tempo de preparação antecedente deve ser um número inteiro entre 0 e 180 minutos.',
+          uncertain: false,
+        };
+        continue;
+      }
     }
 
     const key = draftKey(eventId, draft);
@@ -187,6 +280,7 @@ export async function saveEventItemsSequentially({
         plannedDurationSeconds: draft.plannedDurationSeconds,
         designatedTeamId: draft.designatedTeamId,
         nominalLeaderMemberId: draft.nominalLeaderMemberId,
+        prepRequiredMinutes: draft.prepRequiredMinutes,
       });
     } catch (err) {
       result = { status: 'UNCERTAIN', message: err?.message || 'Falha de comunicação ao gravar a etapa.' };
@@ -252,11 +346,49 @@ export function describeEventItemsOutcome(outcome) {
  * substituindo o identificador local (act-…) pelo result_entity_id devolvido.
  */
 export function toPersistedActivities(saved = []) {
-  return saved.map(({ draft, itemId }) => ({
+  return saved.map(({ draft, itemId, receipt }) => ({
     ...(draft.source || {}),
     id: itemId,
     title: draft.title,
     persisted: true,
     sequenceOrder: draft.sequenceOrder,
+    plannedDurationMinutes: Math.round((draft.plannedDurationSeconds || 0) / 60),
+    plannedDurationSeconds: draft.plannedDurationSeconds,
+    prepRequiredMinutes: draft.prepRequiredMinutes || 0,
+    itemNature: draft.itemNature,
+    updatedAt: receipt?.result_payload?.updated_at || receipt?.created_at || new Date().toISOString(),
   }));
+}
+
+/**
+ * Converte os apoios paralelos confirmados pelo servidor em objetos do estado local do evento.
+ */
+export function toPersistedParallelServices(saved = []) {
+  return (Array.isArray(saved) ? saved : []).map(({ draft, itemId, receipt }) => {
+    const source = draft.source || {};
+    const payload = receipt?.result_payload || {};
+    const duration = Number.isFinite(Number(draft.plannedDurationSeconds))
+      ? draft.plannedDurationSeconds
+      : (Number.isFinite(Number(payload.planned_duration_seconds)) ? payload.planned_duration_seconds : 0);
+    return {
+      ...source,
+      id: itemId,
+      name: draft.title || source.name || '',
+      title: draft.title || source.title || '',
+      teamId: draft.designatedTeamId,
+      leaderId: draft.nominalLeaderMemberId,
+      designatedTeamId: draft.designatedTeamId,
+      nominalLeaderMemberId: draft.nominalLeaderMemberId,
+      prepLeadMinutes: draft.prepRequiredMinutes,
+      prepRequiredMinutes: draft.prepRequiredMinutes,
+      durationMinutes: Math.round(duration / 60),
+      plannedDurationSeconds: duration,
+      sequenceOrder: draft.sequenceOrder,
+      itemNature: 'parallel_support',
+      persisted: true,
+      updatedAt: payload.updated_at || receipt?.created_at || new Date().toISOString(),
+      status: source.status || 'Aguardando culto',
+      volunteers: source.volunteers || [],
+    };
+  });
 }
