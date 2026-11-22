@@ -85,6 +85,10 @@ import {
   toPlanningEventFromServer,
   mergeServerEventsWithSession,
   generateCommandUuid,
+  calculateParallelServiceWindow,
+  checkScaleConflictWithParallelPrep,
+  getEventAssignmentsRemote,
+  calculateEditionScaleConflicts,
   DEFAULT_TIMEZONE,
 } from '../utils/eventPlanningService';
 import {
@@ -937,23 +941,26 @@ export function AppProvider({
       }
     }
 
-    // Regra: Membro escalado em Sonoplastia, Transmissão ou outro apoio ocupa todo o intervalo com preparação antecedente (PRD 5.2 / M24, M50 & Issue #29 CA03)
-    const parallelService = (event.parallelServices || []).find(s =>
-      (s.volunteers || []).includes(memberId) || s.leaderId === memberId
-    );
-    if (parallelService && targetActivity && targetActivity.category === "Louvor") {
-      const prepNote = parallelService.prepRequiredMinutes > 0
-        ? ` (ocupação contínua incluindo ${parallelService.prepRequiredMinutes} min de preparação antecedente)`
-        : ' (ocupação contínua durante todo o culto)';
-      return {
-        hasConflict: true,
-        reason: `Bloqueio Litúrgico (PRD 5.2 / M24 & Issue #29 CA03): ${member.name} está escalado(a) no serviço de apoio '${parallelService.name}'${prepNote}.`,
-        eligibleCandidates: members.filter(m =>
-          m.active &&
-          m.id !== memberId &&
-          !(event.parallelServices || []).some(s => (s.volunteers || []).includes(m.id) || s.leaderId === m.id)
-        )
+    // Regra: Membro escalado em apoio técnico ocupa todo o intervalo com preparação antecedente (PRD §5.2 / M24, M50 & Issue #29 CA03, CA04).
+    // Conflito de apoio com preparação é SINAL: não bloqueia e não substitui pessoa.
+    // O intervalo é derivado exclusivamente pela função pura calculateParallelServiceWindow / checkScaleConflictWithParallelPrep.
+    const plannedStart = event.plannedStartAt || event.planned_start_at;
+    const plannedEnd = event.plannedEndAt || event.planned_end_at;
+    if (plannedStart && plannedEnd && targetActivity) {
+      const candWindow = {
+        startAt: plannedStart,
+        endAt: plannedEnd,
       };
+      const prepConflict = checkScaleConflictWithParallelPrep(memberId, candWindow, event, targetRole);
+      if (prepConflict.hasConflict) {
+        return {
+          hasConflict: false, // Conflito de apoio é SINAL: não bloqueia a alocação!
+          hasScaleSignal: true,
+          isLiturgicalBlock: false,
+          signalReason: `Sinal de Conflito de Escala (PRD §5.2 / M24 & Issue #29 CA03): ${prepConflict.reason}`,
+          scaleConflict: prepConflict,
+        };
+      }
     }
 
     return { hasConflict: false };
@@ -3058,14 +3065,30 @@ export function AppProvider({
     return loadPromise;
   }, [effectiveClient, effectiveChurchId, authContext?.isLocalAuth]);
 
+  // Consulta as alocações da edição via RPC list_event_assignments (SQL 015)
+  const loadEventAssignments = useCallback(async (eventId, targetChurchId = null) => {
+    const cid = targetChurchId || effectiveChurchId;
+    if (!effectiveClient || !cid || !eventId || authContext?.isLocalAuth) {
+      return { success: true, inMemory: true, assignments: [] };
+    }
+    try {
+      const assignments = await getEventAssignmentsRemote(effectiveClient, cid, eventId);
+      setEvents(prev => prev.map(ev => ev.id === eventId ? { ...ev, assignments } : ev));
+      return { success: true, assignments };
+    } catch (err) {
+      return { success: false, error: err.message || 'Falha ao consultar alocações da edição.' };
+    }
+  }, [effectiveClient, effectiveChurchId, authContext?.isLocalAuth]);
+
   useEffect(() => {
     if (currentEventId && effectiveClient && !authContext?.isLocalAuth) {
       const currentEv = events.find(e => e.id === currentEventId);
       if (currentEv && currentEv.loadedFromServer && !currentEv.programLoadedFromServer && !currentEv.programLoadError && !currentEv.isProgramLoading) {
         loadEventProgram(currentEventId);
+        loadEventAssignments(currentEventId);
       }
     }
-  }, [currentEventId, effectiveClient, authContext?.isLocalAuth, events, loadEventProgram]);
+  }, [currentEventId, effectiveClient, authContext?.isLocalAuth, events, loadEventProgram, loadEventAssignments]);
 
   // Selecionar Edição Ativa (Issue #28)
   const selectEvent = (eventId) => {
@@ -3764,6 +3787,7 @@ export function AppProvider({
       value={{
         church,
         members,
+        setMembers,
         teams,
         cancelReasons,
         eventTypes,
@@ -3791,6 +3815,9 @@ export function AppProvider({
         retryPendingCreateEvent,
         teamsLoadStatus,
         loadEventProgram,
+        loadEventAssignments,
+        getEventAssignmentsRemote,
+        calculateEditionScaleConflicts,
         addActivityToEvent,
         updateActivityInEvent,
         removeActivityFromEvent,

@@ -10,6 +10,7 @@ import {
   removeEventItem,
   reorderEventItems,
   validateLiturgicalReceipt,
+  fetchEventAssignments,
 } from './liturgicalCommandService.js';
 
 export const MAX_TITLE_LENGTH = 200;
@@ -460,11 +461,19 @@ export function calculateProgramDurations(event) {
 /**
  * Calcula a janela de ocupação de um serviço paralelo com tempo de preparação antecedente (Issue #29, CA03).
  * A preparação pode começar antes do horário previsto de início do culto (PRD §6 e §7.7 / M50).
+ * Regras:
+ * - A preparação é só prep_required_minutes (0–180) do apoio. Sem início/fim próprio, turno, cronômetro ou controle individual.
+ * - O intervalo de ocupação é derivado e NÃO gravado: de planned_start_at menos a preparação até planned_end_at do culto.
+ * - Retorna null se não houver horário de início ou fim previsto válido (end > start).
  */
 export function calculateParallelServiceWindow(eventPlannedStartAt, eventPlannedEndAt, prepRequiredMinutes = 0) {
+  if (!eventPlannedStartAt || !eventPlannedEndAt) return null;
   const start = new Date(eventPlannedStartAt);
   const end = new Date(eventPlannedEndAt);
-  const prep = Math.max(0, parseInt(prepRequiredMinutes, 10) || 0);
+  if (isNaN(start.getTime()) || isNaN(end.getTime()) || end.getTime() <= start.getTime()) {
+    return null;
+  }
+  const prep = Math.min(180, Math.max(0, parseInt(prepRequiredMinutes, 10) || 0));
 
   const prepStart = new Date(start.getTime() - (prep * 60 * 1000));
 
@@ -480,39 +489,342 @@ export function calculateParallelServiceWindow(eventPlannedStartAt, eventPlanned
 /**
  * Verifica se uma alocação em serviço paralelo ou atividade gera conflito de escala (Issue #29, CA03 e CA04).
  * Sinaliza compromissos e lideranças envolvidas sem substituir pessoas silenciosamente.
+ * Conflito é SINAL: não bloqueia e não substitui pessoa.
+ * Sem início ou sem fim definido, NÃO se calcula conflito (retorna calculable: false, sem padrão fixo de 21:00).
  */
 export function checkScaleConflictWithParallelPrep(memberId, candidateWindow, event, targetRole = '') {
-  if (!memberId || !event) return { hasConflict: false };
+  if (!memberId || !event) {
+    return { hasConflict: false, calculable: false, reason: 'Sem conflito calculável: voluntário ou evento não informado.' };
+  }
 
-  const candStart = new Date(candidateWindow.startAt || candidateWindow.prepStartAt).getTime();
-  const candEnd = new Date(candidateWindow.endAt || candidateWindow.eventEndAt).getTime();
+  const plannedStart = event.plannedStartAt || event.planned_start_at;
+  const plannedEnd = event.plannedEndAt || event.planned_end_at;
+
+  // Sem início ou sem fim definido, NÃO se calcula conflito. Remover o padrão fixo de 21:00.
+  if (!plannedStart || !plannedEnd) {
+    return {
+      hasConflict: false,
+      calculable: false,
+      reason: 'Sem conflito calculável: início ou término previsto do evento não definido.'
+    };
+  }
+
+  if (!candidateWindow) {
+    return {
+      hasConflict: false,
+      calculable: false,
+      reason: 'Sem conflito calculável: janela da atividade ou serviço não definida.'
+    };
+  }
+
+  const candStartRaw = candidateWindow.prepStartAt || candidateWindow.startAt || candidateWindow.planned_start_at || candidateWindow.eventStartAt;
+  const candEndRaw = candidateWindow.eventEndAt || candidateWindow.endAt || candidateWindow.planned_end_at;
+
+  if (!candStartRaw || !candEndRaw) {
+    return {
+      hasConflict: false,
+      calculable: false,
+      reason: 'Sem conflito calculável: horário de início ou término da janela candidata não definido.'
+    };
+  }
+
+  const candStart = new Date(candStartRaw).getTime();
+  const candEnd = new Date(candEndRaw).getTime();
+  if (isNaN(candStart) || isNaN(candEnd) || candEnd <= candStart) {
+    return {
+      hasConflict: false,
+      calculable: false,
+      reason: 'Sem conflito calculável: horários da janela candidata são inválidos.'
+    };
+  }
 
   // Verifica se o membro já está alocado em algum serviço paralelo da edição
   const parallelServices = Array.isArray(event.parallelServices) ? event.parallelServices : [];
   for (const serv of parallelServices) {
+    if (candidateWindow.serviceId && (candidateWindow.serviceId === serv.id || candidateWindow.serviceId === serv.teamId)) {
+      continue;
+    }
+
     const isVol = Array.isArray(serv.volunteers) && serv.volunteers.includes(memberId);
     const isLead = serv.leaderId === memberId;
-    if (isVol || isLead) {
+    const isAssigned = Array.isArray(event.assignments) && event.assignments.some(
+      a => (a.member_id === memberId || a.memberId === memberId) &&
+           (a.item_id === serv.id || a.itemId === serv.id || a.team_id === serv.teamId || a.teamId === serv.teamId)
+    );
+
+    if (isVol || isLead || isAssigned) {
       const servWindow = calculateParallelServiceWindow(
-        event.plannedStartAt || `${event.date}T${event.scheduledStartTime}:00`,
-        event.plannedEndAt || `${event.date}T21:00:00`,
+        plannedStart,
+        plannedEnd,
         serv.prepRequiredMinutes
       );
+
+      if (!servWindow) {
+        return {
+          hasConflict: false,
+          calculable: false,
+          reason: 'Sem conflito calculável: intervalo do serviço paralelo não pôde ser calculado.'
+        };
+      }
+
       const servStart = new Date(servWindow.prepStartAt).getTime();
       const servEnd = new Date(servWindow.eventEndAt).getTime();
 
-      // Sobreposição de horários
+      // Sobreposição estrita de horários: max(candStart, servStart) < min(candEnd, servEnd)
+      // Janelas adjacentes (candEnd === servStart ou servEnd === candStart) NÃO sobrepõem.
       if (Math.max(candStart, servStart) < Math.min(candEnd, servEnd)) {
+        const servStartFormatted = new Date(servStart).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
+        const servEndFormatted = new Date(servEnd).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
         return {
           hasConflict: true,
-          conflictingService: serv.name,
-          reason: `Membro já está escalado no apoio '${serv.name}' (ocupação com preparação antecedente das ${new Date(servStart).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })} até ${new Date(servEnd).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}).`
+          calculable: true,
+          conflictingService: serv.name || serv.title,
+          conflictingWindow: servWindow,
+          reason: `Membro já está escalado no apoio '${serv.name || serv.title}' (ocupação com preparação antecedente das ${servStartFormatted} até ${servEndFormatted}).`
         };
       }
     }
   }
 
-  return { hasConflict: false };
+  return { hasConflict: false, calculable: true };
+}
+
+/**
+ * Consulta as alocações da edição via RPC list_event_assignments (SQL 015).
+ * Serviço de cliente para leitura das escalas existentes.
+ */
+export async function getEventAssignmentsRemote(supabase, churchId, eventId) {
+  return fetchEventAssignments({ supabase, churchId, eventId });
+}
+
+/**
+ * Calcula as sobreposições e sinais de conflito de escala dentro da mesma edição (Issue #29, CA03 e CA04).
+ * Inclui tempo de preparação antecedente (prep_required_minutes) derivado exclusivamente
+ * por calculateParallelServiceWindow.
+ * 
+ * Regras:
+ * - O intervalo de ocupação é derivado e NÃO gravado: de planned_start_at menos a preparação até planned_end_at.
+ * - Sem planned_end_at definido, NÃO calcula conflito (retorna calculable: false).
+ * - Conflito é SINAL: não bloqueia e não substitui pessoa.
+ * - Compara apenas dentro da mesma edição.
+ */
+export function calculateEditionScaleConflicts(event, assignments = [], members = []) {
+  if (!event) return { calculable: false, reason: 'Evento não informado.', conflicts: [] };
+
+  const plannedStart = event.plannedStartAt || event.planned_start_at;
+  const plannedEnd = event.plannedEndAt || event.planned_end_at;
+
+  if (!plannedStart || !plannedEnd) {
+    return {
+      calculable: false,
+      reason: 'Sem conflito calculável: início ou término previsto do evento não definido.',
+      conflicts: []
+    };
+  }
+
+  const conflicts = [];
+  const parallelServices = Array.isArray(event.parallelServices) ? event.parallelServices : [];
+  const activities = Array.isArray(event.activities) ? event.activities : [];
+
+  // Mapear janelas de cada serviço paralelo usando calculateParallelServiceWindow
+  const serviceWindows = new Map();
+  for (const serv of parallelServices) {
+    const window = calculateParallelServiceWindow(plannedStart, plannedEnd, serv.prepRequiredMinutes);
+    if (window) {
+      serviceWindows.set(serv.id || serv.teamId || serv.name, {
+        service: serv,
+        window,
+        startMs: new Date(window.prepStartAt).getTime(),
+        endMs: new Date(window.eventEndAt).getTime(),
+      });
+    }
+  }
+
+  // Mapear janelas sequenciais das atividades litúrgicas da edição
+  const activityWindows = new Map();
+  let currentCursorMs = new Date(plannedStart).getTime();
+  for (const act of activities) {
+    if (act.itemNature === 'parallel_support' || act.isParallelSupport === true) {
+      continue;
+    }
+    const durationMin = parseInt(act.plannedDurationMinutes, 10) || 0;
+    const actStartMs = currentCursorMs;
+    const actEndMs = actStartMs + (durationMin * 60 * 1000);
+    activityWindows.set(act.id, {
+      activity: act,
+      startMs: actStartMs,
+      endMs: actEndMs,
+      startIso: new Date(actStartMs).toISOString(),
+      endIso: new Date(actEndMs).toISOString(),
+    });
+    currentCursorMs = actEndMs;
+  }
+
+  const memberCommitments = new Map();
+
+  function addCommitment(memberId, commitment) {
+    if (!memberId) return;
+    if (!memberCommitments.has(memberId)) {
+      memberCommitments.set(memberId, []);
+    }
+    memberCommitments.get(memberId).push(commitment);
+  }
+
+  // Do estado do evento:
+  for (const serv of parallelServices) {
+    const sw = serviceWindows.get(serv.id || serv.teamId || serv.name);
+    if (!sw) continue;
+    const vols = Array.isArray(serv.volunteers) ? serv.volunteers : [];
+    for (const vId of vols) {
+      addCommitment(vId, {
+        type: 'parallel_service',
+        sourceId: serv.id,
+        name: serv.name || 'Serviço Paralelo',
+        startMs: sw.startMs,
+        endMs: sw.endMs,
+        window: sw.window,
+        prepRequiredMinutes: serv.prepRequiredMinutes || 0,
+      });
+    }
+    if (serv.leaderId) {
+      addCommitment(serv.leaderId, {
+        type: 'parallel_service',
+        sourceId: serv.id,
+        name: `${serv.name || 'Serviço Paralelo'} (Líder)`,
+        startMs: sw.startMs,
+        endMs: sw.endMs,
+        window: sw.window,
+        prepRequiredMinutes: serv.prepRequiredMinutes || 0,
+      });
+    }
+  }
+
+  for (const act of activities) {
+    const aw = activityWindows.get(act.id);
+    if (!aw) continue;
+    const roster = Array.isArray(act.roster) ? act.roster : [];
+    for (const r of roster) {
+      if (r.memberId) {
+        addCommitment(r.memberId, {
+          type: 'activity',
+          sourceId: act.id,
+          name: `${act.title || 'Atividade'} (${r.role || 'Participante'})`,
+          startMs: aw.startMs,
+          endMs: aw.endMs,
+          window: { prepStartAt: aw.startIso, eventEndAt: aw.endIso },
+          prepRequiredMinutes: 0,
+        });
+      }
+    }
+    if (act.responsibleMemberId) {
+      addCommitment(act.responsibleMemberId, {
+        type: 'activity',
+        sourceId: act.id,
+        name: `${act.title || 'Atividade'} (Responsável)`,
+        startMs: aw.startMs,
+        endMs: aw.endMs,
+        window: { prepStartAt: aw.startIso, eventEndAt: aw.endIso },
+        prepRequiredMinutes: 0,
+      });
+    }
+  }
+
+  // Das alocações de list_event_assignments:
+  for (const asg of assignments) {
+    const mId = asg.member_id || asg.memberId;
+    if (!mId) continue;
+    const itemId = asg.item_id || asg.itemId;
+    const teamId = asg.team_id || asg.teamId;
+
+    const servEntry = Array.from(serviceWindows.values()).find(
+      sw => (itemId && sw.service.id === itemId) || (teamId && sw.service.teamId === teamId)
+    );
+    if (servEntry) {
+      addCommitment(mId, {
+        type: 'parallel_service',
+        sourceId: servEntry.service.id,
+        name: servEntry.service.name || asg.team_name || 'Serviço Paralelo',
+        startMs: servEntry.startMs,
+        endMs: servEntry.endMs,
+        window: servEntry.window,
+        prepRequiredMinutes: servEntry.service.prepRequiredMinutes || 0,
+        assignmentId: asg.id,
+      });
+      continue;
+    }
+
+    const actEntry = activityWindows.get(itemId);
+    if (actEntry) {
+      addCommitment(mId, {
+        type: 'activity',
+        sourceId: actEntry.activity.id,
+        name: `${actEntry.activity.title || asg.item_title || 'Atividade'} (${asg.role_name || 'Função'})`,
+        startMs: actEntry.startMs,
+        endMs: actEntry.endMs,
+        window: { prepStartAt: actEntry.startIso, eventEndAt: actEntry.endIso },
+        prepRequiredMinutes: 0,
+        assignmentId: asg.id,
+      });
+    }
+  }
+
+  // Compara os compromissos de cada membro na edição
+  for (const [mId, commitments] of memberCommitments.entries()) {
+    if (commitments.length < 2) continue;
+
+    const memberObj = members.find(m => m.id === mId) || { id: mId, name: commitments[0]?.memberName || mId };
+    const memberName = memberObj.name || memberObj.displayName || mId;
+
+    for (let i = 0; i < commitments.length; i++) {
+      for (let j = i + 1; j < commitments.length; j++) {
+        const c1 = commitments[i];
+        const c2 = commitments[j];
+
+        if (c1.sourceId && c2.sourceId && c1.sourceId === c2.sourceId) continue;
+
+        // Sobreposição estrita de horários: max(start1, start2) < min(end1, end2)
+        if (Math.max(c1.startMs, c2.startMs) < Math.min(c1.endMs, c2.endMs)) {
+          const overlapStart = Math.max(c1.startMs, c2.startMs);
+          const overlapEnd = Math.min(c1.endMs, c2.endMs);
+          const servCommitment = c1.type === 'parallel_service' ? c1 : (c2.type === 'parallel_service' ? c2 : null);
+          const otherCommitment = servCommitment === c1 ? c2 : c1;
+
+          const startFmt = new Date(overlapStart).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
+          const endFmt = new Date(overlapEnd).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
+
+          const c1StartFmt = new Date(c1.startMs).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
+          const c1EndFmt = new Date(c1.endMs).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
+          const c2StartFmt = new Date(c2.startMs).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
+          const c2EndFmt = new Date(c2.endMs).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
+
+          conflicts.push({
+            memberId: mId,
+            memberName,
+            sourceId: servCommitment ? servCommitment.sourceId : c1.sourceId,
+            serviceId: servCommitment ? servCommitment.sourceId : c1.sourceId,
+            c1SourceId: c1.sourceId,
+            c2SourceId: c2.sourceId,
+            serviceName: servCommitment ? servCommitment.name : c1.name,
+            otherName: otherCommitment.name,
+            prepRequiredMinutes: servCommitment?.prepRequiredMinutes || 0,
+            interval: `${startFmt} às ${endFmt}`,
+            overlapWindow: {
+              startAt: new Date(overlapStart).toISOString(),
+              endAt: new Date(overlapEnd).toISOString(),
+            },
+            c1Window: { name: c1.name, interval: `${c1StartFmt} às ${c1EndFmt}`, window: c1.window },
+            c2Window: { name: c2.name, interval: `${c2StartFmt} às ${c2EndFmt}`, window: c2.window },
+            reason: `Sinal de Conflito de Escala (CA03/CA04): ${memberName} está alocado(a) simultaneamente em '${c1.name}' (${c1StartFmt}–${c1EndFmt}) e '${c2.name}' (${c2StartFmt}–${c2EndFmt}), com sobreposição no intervalo ${startFmt} às ${endFmt}.`
+          });
+        }
+      }
+    }
+  }
+
+  return {
+    calculable: true,
+    conflicts
+  };
 }
 
 /**

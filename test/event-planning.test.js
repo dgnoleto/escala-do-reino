@@ -18,6 +18,8 @@ import {
   calculateProgramDurations,
   calculateParallelServiceWindow,
   checkScaleConflictWithParallelPrep,
+  calculateEditionScaleConflicts,
+  getEventAssignmentsRemote,
   validateProgramPublication,
   publishEventProgram,
   saveEventProgramDraft,
@@ -279,8 +281,8 @@ describe('Issue #29: Programação Principal e Serviços Paralelos de Apoio (CA0
     assert.equal(durations.overflowMinutes, 0);
   });
 
-  test('CA04: Detecção de conflito de escala considerando a janela de preparação do serviço paralelo', () => {
-    const event = {
+  describe('CA03 e CA04: Detecção e Sinalização de Conflito de Escala com Preparação Antecedente', () => {
+    const baseEvent = {
       plannedStartAt: '2026-10-25T19:00:00-03:00',
       plannedEndAt: '2026-10-25T21:00:00-03:00',
       parallelServices: [
@@ -288,29 +290,216 @@ describe('Issue #29: Programação Principal e Serviços Paralelos de Apoio (CA0
           id: 'serv-recepcao',
           name: 'Equipe de Boas-Vindas',
           volunteers: ['vol-joao-01'],
-          prepRequiredMinutes: 30, // 18:30 às 21:00
+          prepRequiredMinutes: 30, // Ocupação: 18:30 às 21:00
         }
       ]
     };
 
-    // Candidato a ensaio ou escala das 18:00 às 18:45 (colide com a prep das 18:30 às 21:00)
-    const candidateWindowOverlap = {
-      startAt: '2026-10-25T18:00:00-03:00',
-      endAt: '2026-10-25T18:45:00-03:00',
-    };
+    test('1. Com preparação: sobreposição durante a janela de ocupação gera sinal de conflito', () => {
+      // Candidato das 18:00 às 19:00 (sobrepõe com a janela de ocupação 18:30 às 21:00)
+      const candidateWindow = {
+        startAt: '2026-10-25T18:00:00-03:00',
+        endAt: '2026-10-25T19:00:00-03:00',
+      };
+      const result = checkScaleConflictWithParallelPrep('vol-joao-01', candidateWindow, baseEvent);
+      assert.equal(result.hasConflict, true);
+      assert.equal(result.calculable, true);
+      assert.equal(result.conflictingService, 'Equipe de Boas-Vindas');
+      assert.match(result.reason, /ocupação com preparação antecedente/i);
+    });
 
-    const check1 = checkScaleConflictWithParallelPrep('vol-joao-01', candidateWindowOverlap, event);
-    assert.equal(check1.hasConflict, true);
-    assert.match(check1.reason, /ocupação com preparação antecedente/i);
+    test('2. Sem preparação (prepRequiredMinutes = 0): janela de ocupação coincide com o culto e não sobrepõe antes do início', () => {
+      const eventNoPrep = {
+        plannedStartAt: '2026-10-25T19:00:00-03:00',
+        plannedEndAt: '2026-10-25T21:00:00-03:00',
+        parallelServices: [
+          {
+            id: 'serv-portaria',
+            name: 'Portaria',
+            volunteers: ['vol-ana-01'],
+            prepRequiredMinutes: 0, // Ocupação: 19:00 às 21:00
+          }
+        ]
+      };
+      // Janela candidata antes do culto: 18:00 às 18:45
+      const candidateWindow = {
+        startAt: '2026-10-25T18:00:00-03:00',
+        endAt: '2026-10-25T18:45:00-03:00',
+      };
+      const result = checkScaleConflictWithParallelPrep('vol-ana-01', candidateWindow, eventNoPrep);
+      assert.equal(result.hasConflict, false);
+      assert.equal(result.calculable, true);
+    });
 
-    // Candidato a escala terminando às 18:20 (sem sobreposição com a preparação das 18:30)
-    const candidateWindowNoOverlap = {
-      startAt: '2026-10-25T17:00:00-03:00',
-      endAt: '2026-10-25T18:20:00-03:00',
-    };
+    test('3. Sem horário final (plannedEndAt não definido): retorna sem conflito calculável e não usa fallback 21:00', () => {
+      const eventNoEnd = {
+        plannedStartAt: '2026-10-25T19:00:00-03:00',
+        plannedEndAt: null, // Sem horário final definido
+        date: '2026-10-25',
+        scheduledStartTime: '19:00',
+        parallelServices: [
+          {
+            id: 'serv-som',
+            name: 'Sonoplastia',
+            volunteers: ['vol-pedro-01'],
+            prepRequiredMinutes: 30,
+          }
+        ]
+      };
+      const candidateWindow = {
+        startAt: '2026-10-25T18:00:00-03:00',
+        endAt: '2026-10-25T20:00:00-03:00',
+      };
+      const result = checkScaleConflictWithParallelPrep('vol-pedro-01', candidateWindow, eventNoEnd);
+      assert.equal(result.hasConflict, false);
+      assert.equal(result.calculable, false);
+      assert.match(result.reason, /Sem conflito calculável/i);
+      assert.match(result.reason, /término previsto.*não definido/i);
+    });
 
-    const check2 = checkScaleConflictWithParallelPrep('vol-joao-01', candidateWindowNoOverlap, event);
-    assert.equal(check2.hasConflict, false);
+    test('4. Mesmo membro em dois apoios: detecta conflito de sobreposição entre apoios paralelos', () => {
+      const eventWithTwoServices = {
+        plannedStartAt: '2026-10-25T19:00:00-03:00',
+        plannedEndAt: '2026-10-25T21:00:00-03:00',
+        parallelServices: [
+          {
+            id: 'serv-transmissao',
+            name: 'Transmissão',
+            volunteers: ['vol-marcos-01'],
+            prepRequiredMinutes: 15, // 18:45 às 21:00
+          },
+          {
+            id: 'serv-som',
+            name: 'Sonoplastia',
+            volunteers: [],
+            prepRequiredMinutes: 30, // 18:30 às 21:00
+          }
+        ]
+      };
+      // Tenta escalar Marcos também em Sonoplastia
+      const candidateSonoplastiaWindow = calculateParallelServiceWindow(
+        eventWithTwoServices.plannedStartAt,
+        eventWithTwoServices.plannedEndAt,
+        30
+      );
+      const result = checkScaleConflictWithParallelPrep('vol-marcos-01', {
+        ...candidateSonoplastiaWindow,
+        serviceId: 'serv-som'
+      }, eventWithTwoServices);
+      assert.equal(result.hasConflict, true);
+      assert.equal(result.conflictingService, 'Transmissão');
+      assert.match(result.reason, /Transmissão/i);
+    });
+
+    test('5. Sobreposição só na janela de preparação antecedente (antes do culto)', () => {
+      // Culto 19:00 às 21:00, preparação de 30 min (18:30 às 21:00).
+      // Atividade candidata termina antes do início do culto (18:15 às 18:45),
+      // sobrepondo estritamente na janela de preparação antecedente (18:30 às 18:45).
+      const candidateWindowPrepOnly = {
+        startAt: '2026-10-25T18:15:00-03:00',
+        endAt: '2026-10-25T18:45:00-03:00',
+      };
+      const result = checkScaleConflictWithParallelPrep('vol-joao-01', candidateWindowPrepOnly, baseEvent);
+      assert.equal(result.hasConflict, true);
+      assert.match(result.reason, /ocupação com preparação antecedente/i);
+    });
+
+    test('6. Janela adjacente sem sobreposição: término da atividade coincide com o início da preparação', () => {
+      // Culto 19:00 às 21:00, preparação de 30 min (início às 18:30).
+      // Atividade termina exatamente às 18:30 (17:30 às 18:30).
+      // max(17:30, 18:30) = 18:30; min(18:30, 21:00) = 18:30. 18:30 < 18:30 é falso.
+      const candidateWindowAdjacent = {
+        startAt: '2026-10-25T17:30:00-03:00',
+        endAt: '2026-10-25T18:30:00-03:00',
+      };
+      const result = checkScaleConflictWithParallelPrep('vol-joao-01', candidateWindowAdjacent, baseEvent);
+      assert.equal(result.hasConflict, false);
+      assert.equal(result.calculable, true);
+    });
+
+    test('7. Alocações da edição: calculateEditionScaleConflicts lê alocações (list_event_assignments) e calcula sobreposições com preparação', () => {
+      const editionEvent = {
+        id: 'evt-edition-01',
+        plannedStartAt: '2026-10-25T19:00:00-03:00',
+        plannedEndAt: '2026-10-25T21:00:00-03:00',
+        parallelServices: [
+          {
+            id: 'serv-transmissao',
+            name: 'Transmissão ao Vivo',
+            prepRequiredMinutes: 30, // 18:30 às 21:00
+            volunteers: ['vol-lucas-01'],
+          }
+        ],
+        activities: [
+          {
+            id: 'act-louvor-1',
+            title: 'Louvor e Adoração',
+            plannedDurationMinutes: 30, // 19:00 às 19:30
+            roster: [],
+          }
+        ]
+      };
+
+      // Alocação vinda de list_event_assignments atribuindo Lucas também ao louvor
+      const assignments = [
+        {
+          id: 'asg-01',
+          member_id: 'vol-lucas-01',
+          member_name: 'Lucas Silva',
+          item_id: 'act-louvor-1',
+          item_title: 'Louvor e Adoração',
+          role_name: 'Vocal',
+        }
+      ];
+
+      const members = [
+        { id: 'vol-lucas-01', name: 'Lucas Silva' }
+      ];
+
+      const outcome = calculateEditionScaleConflicts(editionEvent, assignments, members);
+      assert.equal(outcome.calculable, true);
+      assert.equal(outcome.conflicts.length, 1);
+      const conf = outcome.conflicts[0];
+      assert.equal(conf.memberId, 'vol-lucas-01');
+      assert.equal(conf.memberName, 'Lucas Silva');
+      assert.equal(conf.sourceId, 'serv-transmissao');
+      assert.equal(conf.serviceName, 'Transmissão ao Vivo');
+      assert.match(conf.otherName, /Louvor e Adoração/);
+      assert.equal(conf.prepRequiredMinutes, 30);
+      assert.match(conf.interval, /19:00 às 19:30/);
+    });
+
+    test('8. Ajuste 2: calculateEditionScaleConflicts inclui sourceId e serviceId para conflito de líder', () => {
+      const editionEvent = {
+        id: 'evt-lead-01',
+        plannedStartAt: '2026-10-25T19:00:00-03:00',
+        plannedEndAt: '2026-10-25T21:00:00-03:00',
+        parallelServices: [
+          {
+            id: 'serv-som-01',
+            name: 'Sonoplastia',
+            prepRequiredMinutes: 30,
+            leaderId: 'vol-lead-01',
+            volunteers: [],
+          }
+        ],
+        activities: [
+          {
+            id: 'act-01',
+            title: 'Palavra',
+            plannedDurationMinutes: 40,
+            roster: [{ memberId: 'vol-lead-01', role: 'Ministro' }],
+          }
+        ]
+      };
+      const outcome = calculateEditionScaleConflicts(editionEvent, [], [{ id: 'vol-lead-01', name: 'Líder João' }]);
+      assert.equal(outcome.calculable, true);
+      assert.equal(outcome.conflicts.length, 1);
+      assert.equal(outcome.conflicts[0].sourceId, 'serv-som-01');
+      assert.equal(outcome.conflicts[0].serviceId, 'serv-som-01');
+      assert.equal(outcome.conflicts[0].memberName, 'Líder João');
+      assert.match(outcome.conflicts[0].serviceName, /Sonoplastia \(Líder\)/);
+    });
   });
 });
 

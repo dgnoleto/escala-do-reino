@@ -1,9 +1,13 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { useApp } from '../context/AppContext';
 import {
   EVENT_ITEMS_PERSISTENCE_NOTICE,
   PARALLEL_SERVICES_PERSISTENCE_NOTICE,
 } from '../utils/eventItemService';
+import {
+  calculateEditionScaleConflicts,
+  calculateParallelServiceWindow,
+} from '../utils/eventPlanningService';
 import {
   Sliders,
   Plus,
@@ -133,6 +137,13 @@ export default function PlanningView({ onBack } = {}) {
   // Modal de Conflito de Alocação de Escala (PRD 5.2 / Cenário M22)
   const [conflictModalOpen, setConflictModalOpen] = useState(false);
   const [conflictData, setConflictData] = useState({ reason: '', candidates: [] });
+
+  // Sinais de Conflito de Escala com Preparação Antecedente (Issue #29 CA03/CA04)
+  const [scaleSignalNotice, setScaleSignalNotice] = useState('');
+  const editionScaleConflictsResult = useMemo(() => {
+    return calculateEditionScaleConflicts(event, event?.assignments || [], members);
+  }, [event, members]);
+  const editionScaleConflicts = editionScaleConflictsResult?.conflicts || [];
 
   // Modal de Criação / Edição de Apoio Paralelo (Issue #29 / #30)
   const [parallelModalOpen, setParallelModalOpen] = useState(false);
@@ -424,9 +435,10 @@ export default function PlanningView({ onBack } = {}) {
     setMusicModalOpen(false);
   };
 
-  // Testar Simulação de Alocação de Escala com Conflito (PRD 5.2 & Cenário M22)
+  // Testar Simulação de Alocação de Escala com Conflito (PRD 5.2 & Cenário M22 / CA03)
   const simulateAssignVolunteer = (activityId, memberId, role) => {
     const conflict = checkAssignmentConflict(memberId, role, activityId);
+    // Bloqueio Litúrgico estrito (M22: acumular funções canto/instrumento/dança no mesmo louvor)
     if (conflict.hasConflict) {
       setConflictData({
         reason: conflict.reason,
@@ -436,10 +448,15 @@ export default function PlanningView({ onBack } = {}) {
       return;
     }
 
-    // Se não tiver conflito, insere no roster
+    // Sinal de Conflito de Escala com apoio/preparação (CA03/CA04): não bloqueia, registra aviso
+    if (conflict.hasScaleSignal) {
+      setScaleSignalNotice(conflict.signalReason || 'Sinal de sobreposição de escala detectado.');
+    }
+
+    // Se não tiver bloqueio, insere no roster
     setEvent(prev => ({
       ...prev,
-      activities: prev.activities.map(a => {
+      activities: (prev.activities || []).map(a => {
         if (a.id === activityId) {
           return {
             ...a,
@@ -1359,6 +1376,89 @@ export default function PlanningView({ onBack } = {}) {
           </div>
         </div>
 
+        {/* SINAIS DE CONFLITO DE ESCALA COM PREPARAÇÃO ANTECEDENTE (PRD §5.2, M24, M50 & Issue #29 CA03, CA04) */}
+        {editionScaleConflicts.length > 0 && (
+          <div
+            id="panel-edition-scale-conflicts"
+            style={{
+              padding: '12px 16px',
+              background: '#fffbeb',
+              border: '1px solid #fde68a',
+              borderRadius: 'var(--radius-md)',
+              marginBottom: '16px',
+              color: '#92400e',
+            }}
+          >
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '6px' }}>
+              <AlertTriangle size={16} color="#d97706" />
+              <strong style={{ fontSize: '13px' }}>
+                Sinais de Conflito de Escala na Edição ({editionScaleConflicts.length})
+              </strong>
+            </div>
+            <p style={{ fontSize: '12px', margin: '0 0 8px 0', color: '#78350f' }}>
+              Conforme o <strong>PRD §5.2, Cenários M24, M50 e Issue #29 (CA03/CA04)</strong>: A preparação antecedente
+              integra a janela de ocupação para detecção de conflitos. Os avisos abaixo são <strong>sinais informativos</strong>:
+              não bloqueiam a escala nem realizam substituições automáticas de pessoas.
+            </p>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+              {editionScaleConflicts.map((conf, idx) => (
+                <div
+                  key={`conf-${conf.memberId}-${idx}`}
+                  id={`scale-conflict-row-${conf.memberId}`}
+                  style={{
+                    padding: '8px 12px',
+                    background: '#ffffff',
+                    border: '1px solid #fef3c7',
+                    borderRadius: 'var(--radius-sm)',
+                    fontSize: '12px',
+                  }}
+                >
+                  <div>
+                    <strong>Quem:</strong> <span className="conflict-member-name">{conf.memberName}</span>
+                  </div>
+                  <div>
+                    <strong>Apoio / Serviço:</strong> <span className="conflict-service-name">{conf.serviceName}</span>
+                    {conf.prepRequiredMinutes > 0 && ` (preparação antecedente: ${conf.prepRequiredMinutes} min)`}
+                  </div>
+                  <div>
+                    <strong>Outro compromisso:</strong> <span className="conflict-other-name">{conf.otherName}</span>
+                  </div>
+                  <div>
+                    <strong>Intervalo conflitante:</strong> <span className="conflict-interval">{conf.interval}</span>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {scaleSignalNotice && (
+          <div
+            id="banner-scale-signal-notice"
+            style={{
+              padding: '10px 14px',
+              background: '#eff6ff',
+              border: '1px solid #bfdbfe',
+              borderRadius: 'var(--radius-md)',
+              marginBottom: '16px',
+              fontSize: '12px',
+              color: '#1e40af',
+              display: 'flex',
+              justifyContent: 'space-between',
+              alignItems: 'center',
+            }}
+          >
+            <span>{scaleSignalNotice}</span>
+            <button
+              type="button"
+              onClick={() => setScaleSignalNotice('')}
+              style={{ background: 'transparent', border: 'none', color: '#1e40af', cursor: 'pointer', fontWeight: 'bold' }}
+            >
+              ✕
+            </button>
+          </div>
+        )}
+
         {(!event.parallelServices || event.parallelServices.length === 0) ? (
           <div style={{ padding: '16px', background: 'var(--bg-inset)', borderRadius: 'var(--radius-md)', textAlign: 'center', color: 'var(--text-muted)', fontSize: '13px' }}>
             Nenhum apoio técnico ou serviço paralelo ativo nesta edição de culto.
@@ -1385,6 +1485,31 @@ export default function PlanningView({ onBack } = {}) {
                 <div style={{ fontSize: '12px', color: 'var(--text-muted)' }}>
                   Tempo de preparação: <strong>{serv.prepRequiredMinutes || 0} min</strong> antes do culto (Issue #29 CA03)
                 </div>
+                {(() => {
+                  const plannedStart = event?.plannedStartAt || event?.planned_start_at;
+                  const plannedEnd = event?.plannedEndAt || event?.planned_end_at;
+                  const servWindow = calculateParallelServiceWindow(plannedStart, plannedEnd, serv.prepRequiredMinutes);
+                  if (!servWindow) {
+                    return (
+                      <div className="parallel-service-occupancy-window" style={{ fontSize: '12px', color: '#b45309' }}>
+                        Janela de ocupação não calculável por falta de horário previsto do evento.
+                      </div>
+                    );
+                  }
+                  const tz = event?.timezone || church?.timezone || 'America/Sao_Paulo';
+                  const fmtOptions = { hour: '2-digit', minute: '2-digit' };
+                  if (tz) {
+                    try { fmtOptions.timeZone = tz; } catch { /* fallback */ }
+                  }
+                  const startFmt = new Date(servWindow.prepStartAt).toLocaleTimeString('pt-BR', fmtOptions);
+                  const endFmt = new Date(servWindow.eventEndAt).toLocaleTimeString('pt-BR', fmtOptions);
+                  return (
+                    <div className="parallel-service-occupancy-window" style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>
+                      <strong>Ocupação:</strong> {startFmt}–{endFmt}
+                      {serv.prepRequiredMinutes > 0 ? ` (inclui ${serv.prepRequiredMinutes} min de preparação antes do culto)` : ''}
+                    </div>
+                  );
+                })()}
                 {serv.prepRequiredMinutes > 0 && (
                   <div style={{ fontSize: '11px', color: 'var(--primary)', fontWeight: 600 }}>
                     Intervalo ocupado nos conflitos: preparação antecedente integrada à janela do culto.
@@ -1393,6 +1518,45 @@ export default function PlanningView({ onBack } = {}) {
                 <div style={{ fontSize: '12px', color: 'var(--text-muted)' }}>
                   Voluntários escalados: <strong>{serv.volunteers?.length || 0}</strong> (preenchimento nominal)
                 </div>
+                {(() => {
+                  const servConflicts = editionScaleConflicts.filter(
+                    c => (c.sourceId && c.sourceId === serv.id) ||
+                         (c.serviceId && c.serviceId === serv.id) ||
+                         (c.c1SourceId && c.c1SourceId === serv.id) ||
+                         (c.c2SourceId && c.c2SourceId === serv.id) ||
+                         c.serviceName === serv.name ||
+                         c.otherName === serv.name
+                  );
+                  if (servConflicts.length === 0) return null;
+                  return (
+                    <div
+                      className="service-conflict-warning"
+                      style={{
+                        padding: '8px 10px',
+                        background: '#fffbeb',
+                        border: '1px solid #fde68a',
+                        borderRadius: 'var(--radius-sm)',
+                        fontSize: '11px',
+                        color: '#92400e',
+                        lineHeight: '1.4',
+                      }}
+                    >
+                      <div style={{ fontWeight: 700, display: 'flex', alignItems: 'center', gap: '4px', marginBottom: '4px' }}>
+                        <AlertTriangle size={12} color="#d97706" /> Sinal de Conflito de Escala:
+                      </div>
+                      {servConflicts.map((sc, scIdx) => {
+                        const otherLabel = sc.c1SourceId === serv.id ? sc.c2Window?.name
+                                         : sc.c2SourceId === serv.id ? sc.c1Window?.name
+                                         : (sc.otherName === serv.name ? sc.serviceName : sc.otherName);
+                        return (
+                          <div key={scIdx} className="service-conflict-item">
+                            <strong>{sc.memberName}</strong>: sobreposição com {otherLabel} ({sc.interval})
+                          </div>
+                        );
+                      })}
+                    </div>
+                  );
+                })()}
                 <div style={{ marginTop: 'auto', paddingTop: '8px', borderTop: '1px solid var(--border-subtle)', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '6px' }}>
                   <button
                     type="button"
