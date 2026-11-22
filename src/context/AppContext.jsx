@@ -221,6 +221,7 @@ export function AppProvider({
   const [remoteLoading, setRemoteLoading] = useState(false);
   const [remoteError, setRemoteError] = useState(null);
   const [teamsLoadStatus, setTeamsLoadStatus] = useState(() => (effectiveClient && effectiveChurchId ? 'loading' : 'loaded'));
+  const [membersLoadStatus, setMembersLoadStatus] = useState(() => (effectiveClient && effectiveChurchId ? 'loading' : 'loaded'));
 
   // Isolamento Multi-Tenant: Limpa estado e cancela requisições em voo na troca de igreja
   useEffect(() => {
@@ -231,6 +232,7 @@ export function AppProvider({
       pendingEventItemCommandsRef.current.clear();
       pendingReorderCommandsRef.current.clear();
       setTeamsLoadStatus(effectiveClient && effectiveChurchId ? 'loading' : 'loaded');
+      setMembersLoadStatus(effectiveClient && effectiveChurchId ? 'loading' : 'loaded');
       if (effectiveChurchId) {
         setCancelReasons([]);
         setEventTypes([]);
@@ -247,6 +249,7 @@ export function AppProvider({
     setRemoteLoading(true);
     setRemoteError(null);
     setTeamsLoadStatus('loading');
+    setMembersLoadStatus('loading');
     try {
       const [reasonsRes, typesRes, actsRes, templatesRes] = await Promise.all([
         fetchCancellationReasonsRemote(effectiveClient, effectiveChurchId, true),
@@ -320,41 +323,72 @@ export function AppProvider({
 
       // Consulta complementar de membros e equipes reais da igreja se disponível
       try {
-        const { data: membersData, error: membersErr } = await effectiveClient.rpc('list_church_members', {
-          p_church_id: effectiveChurchId,
-          p_limit: 100,
-          p_offset: 0
-        });
-        if (!membersErr && Array.isArray(membersData)) {
-          const mappedMembers = membersData.map(m => ({
-            id: m.member_id,
-            name: m.display_name,
-            roles: ['membro'],
-            active: m.status === 'active',
-            skills: [],
-            teams: []
-          }));
-          if (authContext?.churchAccess?.is_admin && authContext?.churchAccess?.member_id) {
-            const foundMe = mappedMembers.find(m => m.id === authContext.churchAccess.member_id);
-            if (foundMe) {
-              foundMe.roles = ['admin', 'membro'];
+        if (authContext?.churchAccess?.is_admin) {
+          const { data: membersData, error: membersErr } = await effectiveClient.rpc('list_church_members', {
+            p_church_id: effectiveChurchId,
+            p_limit: 100,
+            p_offset: 0
+          });
+          if (loadRequestSeqRef.current === currentSeq) {
+            if (!membersErr && Array.isArray(membersData)) {
+              const mappedMembers = membersData.map(m => ({
+                id: m.member_id,
+                name: m.display_name,
+                roles: ['membro'],
+                active: m.status === 'active',
+                skills: [],
+                teams: []
+              }));
+              if (authContext?.churchAccess?.is_admin && authContext?.churchAccess?.member_id) {
+                const foundMe = mappedMembers.find(m => m.id === authContext.churchAccess.member_id);
+                if (foundMe) {
+                  foundMe.roles = ['admin', 'membro'];
+                } else {
+                  mappedMembers.unshift({
+                    id: authContext.churchAccess.member_id,
+                    name: authContext.churchAccess.display_name,
+                    roles: ['admin', 'membro'],
+                    active: true,
+                    skills: [],
+                    teams: []
+                  });
+                }
+              }
+              if (mappedMembers.length > 0) {
+                setMembers(mappedMembers);
+              }
+              setMembersLoadStatus('loaded');
             } else {
-              mappedMembers.unshift({
-                id: authContext.churchAccess.member_id,
-                name: authContext.churchAccess.display_name,
-                roles: ['admin', 'membro'],
+              setMembersLoadStatus('failed');
+            }
+          }
+        } else {
+          const { data: membersData, error: membersErr } = await effectiveClient.rpc('list_church_members_for_team', {
+            p_church_id: effectiveChurchId
+          });
+          if (loadRequestSeqRef.current === currentSeq) {
+            const row = Array.isArray(membersData) ? membersData[0] : membersData;
+            const raw = row?.members;
+            if (!membersErr && Array.isArray(raw)) {
+              const mappedMembers = raw.map(m => ({
+                id: m.member_id ?? m.id,
+                name: m.display_name,
+                roles: ['membro'],
                 active: true,
                 skills: [],
                 teams: []
-              });
+              }));
+              setMembers(mappedMembers);
+              setMembersLoadStatus('loaded');
+            } else {
+              setMembersLoadStatus('failed');
             }
-          }
-          if (mappedMembers.length > 0) {
-            setMembers(mappedMembers);
           }
         }
       } catch {
-        // Consulta auxiliar não-bloqueante
+        if (loadRequestSeqRef.current === currentSeq) {
+          setMembersLoadStatus('failed');
+        }
       }
 
       try {
@@ -429,6 +463,7 @@ export function AppProvider({
       if (loadRequestSeqRef.current === currentSeq) {
         setRemoteError(err.message || 'Falha ao sincronizar dados remotos.');
         setTeamsLoadStatus(prev => (prev === 'loading' ? 'failed' : prev));
+        setMembersLoadStatus(prev => (prev === 'loading' ? 'failed' : prev));
       }
     } finally {
       if (loadRequestSeqRef.current === currentSeq) {
@@ -3821,6 +3856,7 @@ export function AppProvider({
         pendingCreateEvent,
         retryPendingCreateEvent,
         teamsLoadStatus,
+        membersLoadStatus,
         loadEventProgram,
         loadEventAssignments,
         getEventAssignmentsRemote,

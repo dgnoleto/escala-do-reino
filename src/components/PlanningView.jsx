@@ -64,6 +64,7 @@ export default function PlanningView({ onBack } = {}) {
     isTeamLeader,
     members,
     teams,
+    membersLoadStatus,
     eventTypes = [],
     standardActivities = [],
     serviceTemplates = [],
@@ -857,6 +858,25 @@ export default function PlanningView({ onBack } = {}) {
               {remoteLoading ? 'Recarregando...' : 'Recarregar equipes'}
             </button>
           )}
+        </div>
+      )}
+
+      {membersLoadStatus === 'failed' && (
+        <div
+          id="notice-members-load-failed"
+          className="card"
+          style={{
+            borderLeft: '4px solid #f59e0b',
+            background: '#fffbeb',
+            color: '#92400e',
+            marginBottom: '1rem',
+            padding: '1rem'
+          }}
+        >
+          <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', fontWeight: 600 }}>
+            <AlertTriangle size={18} color="#d97706" />
+            <span>Não foi possível carregar os nomes dos membros. Responsáveis podem aparecer como 'Responsável não identificado'.</span>
+          </div>
         </div>
       )}
 
