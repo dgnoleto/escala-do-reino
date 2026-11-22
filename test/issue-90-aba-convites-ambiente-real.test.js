@@ -154,4 +154,18 @@ describe('Issue #90 — Aba Convites de Acesso local não aparece no ambiente re
     assert.equal(ctx.current.accessInvites.length, invitesBefore + 1, 'convite deve ser adicionado no não real');
     assert.equal(ctx.current.accessInvites[0].email, 'ana@example.com');
   });
+
+  test('(vi) subtítulo de Administração: no real não cita convites de acesso; na demonstração cita', async () => {
+    const real = await mountAdmin({ real: true });
+    const realText = allText(real.tree.toJSON());
+    const realLower = realText.toLowerCase();
+
+    assert.ok(realText.includes('Administração da Igreja'), 'título "Administração da Igreja" deve existir no real');
+    assert.ok(!realLower.includes('convites de acesso'), 'o texto no real não deve citar "convites de acesso"');
+    assert.ok(realLower.includes('motivos de cancelamento'), 'o texto no real deve citar motivos de cancelamento');
+    assert.ok(realLower.includes('designe a liderança da liturgia por evento'), 'o texto no real deve citar a liderança da liturgia');
+
+    const demo = await mountAdmin({ real: false });
+    assert.ok(allText(demo.tree.toJSON()).toLowerCase().includes('convites de acesso'), 'na demonstração o texto continua citando convites de acesso');
+  });
 });

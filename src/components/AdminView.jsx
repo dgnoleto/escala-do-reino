@@ -912,7 +912,9 @@ export default function AdminView({ onBack, initialTab = 'event_types' } = {}) {
           <h1 className="admin-title">Administração da Igreja</h1>
           <p className="admin-subtitle">
             Gerenciamento global restrito a administradores (PRD 3.2, 4 e 5). Configure tipos de evento, modelos de culto,
-            atividades com durações padrão, motivos de cancelamento, convites de acesso e designe a liderança da liturgia por evento.
+            {isRealEnvironment
+              ? ' atividades com durações padrão, motivos de cancelamento e designe a liderança da liturgia por evento.'
+              : ' atividades com durações padrão, motivos de cancelamento, convites de acesso e designe a liderança da liturgia por evento.'}
           </p>
         </div>
       </div>
