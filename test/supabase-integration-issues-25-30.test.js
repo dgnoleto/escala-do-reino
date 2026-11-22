@@ -220,6 +220,25 @@ describe('Integração Frontend-RPCs Supabase (Issues #25 a #30)', () => {
               error: null,
             };
           }
+          if (fn === 'publish_event_program') {
+            return {
+              data: [{
+                command_id: params.p_command_id,
+                action: 'publish_event_program',
+                church_id: params.p_church_id,
+                result_entity_id: 'ev-1',
+                result_payload: {
+                  event_id: 'ev-1',
+                  program_status: 'published',
+                  program_version: 2,
+                  duration_policy: 'warn',
+                  published_at: '2026-11-22T12:00:00.000Z',
+                },
+                created_at: '2026-11-22T12:00:00.000Z',
+              }],
+              error: null,
+            };
+          }
           return { data: { id: 'ev-1', program_version: 2 }, error: null };
         }
       };

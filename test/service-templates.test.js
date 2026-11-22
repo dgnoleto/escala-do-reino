@@ -439,7 +439,7 @@ describe('Issue #27: Preparar modelos reutilizáveis de culto', () => {
       }
     });
 
-    test('2.6 PlanningView: Retirar transmissão desta edição não altera o modelo nem outros eventos (CA02)', () => {
+    test('2.6 PlanningView: Retirar transmissão desta edição não altera o modelo nem outros eventos (CA02)', async () => {
       let contextRef;
       function TestConsumer() {
         contextRef = useApp();
@@ -460,8 +460,8 @@ describe('Issue #27: Preparar modelos reutilizáveis de culto', () => {
       assert.ok(midiaService, 'Transmissão deve existir no evento após aplicar o modelo st-1');
 
       // Remove a transmissão desta edição
-      act(() => {
-        const res = contextRef.removeParallelServiceFromCurrentEvent(midiaService.id);
+      await act(async () => {
+        const res = await contextRef.removeParallelServiceFromCurrentEvent(midiaService.id);
         assert.equal(res.success, true);
       });
 
