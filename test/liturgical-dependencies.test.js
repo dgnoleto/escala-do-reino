@@ -67,6 +67,7 @@ test('2. Validação Estrita de Recibos Litúrgicos (B2-05 / Contraprovas do Cli
     church_id: churchId,
     result_entity_id: teamId,
     result_payload: { team_id: teamId, name: 'Louvor', status: 'active' },
+    created_at: '2026-11-22T12:00:00.000Z',
   };
 
   async function dispatch(data, error = null) {
@@ -111,6 +112,12 @@ test('2. Validação Estrita de Recibos Litúrgicos (B2-05 / Contraprovas do Cli
     }]);
     assert.equal(res.status, 'UNCERTAIN');
   });
+
+  await t.test('contraprova 5: recibo coerente sem created_at retorna UNCERTAIN', async () => {
+    const { created_at, ...withoutCreatedAt } = coherent;
+    const res = await dispatch([withoutCreatedAt]);
+    assert.equal(res.status, 'UNCERTAIN');
+  });
 });
 
 test('3. Ciclo de Comandos de Equipes e Liderança', async (t) => {
@@ -138,6 +145,7 @@ test('3. Ciclo de Comandos de Equipes e Liderança', async (t) => {
             church_id: params.p_church_id,
             result_entity_id: teamId,
             result_payload: { team_id: teamId, new_leader_member_id: memberId, version: 2 },
+            created_at: '2026-11-22T12:00:00.000Z',
           }],
           error: null,
         };
@@ -169,6 +177,7 @@ test('3. Ciclo de Comandos de Equipes e Liderança', async (t) => {
             church_id: params.p_church_id,
             result_entity_id: roleId,
             result_payload: { team_role_id: roleId, name: 'Bateria' },
+            created_at: '2026-11-22T12:00:00.000Z',
           }],
           error: null,
         };
@@ -198,6 +207,7 @@ test('3. Ciclo de Comandos de Equipes e Liderança', async (t) => {
             church_id: params.p_church_id,
             result_entity_id: membershipId,
             result_payload: { membership_id: membershipId, status: name === 'add_team_member' ? 'active' : 'inactive' },
+            created_at: '2026-11-22T12:00:00.000Z',
           }],
           error: null,
         };
@@ -236,6 +246,7 @@ test('4. Ciclo de Aptidões e Qualificações (grant/revoke)', async (t) => {
         church_id: params.p_church_id,
         result_entity_id: qualId,
         result_payload: { qualification_id: qualId, status: name === 'grant_member_qualification' ? 'active' : 'inactive' },
+        created_at: '2026-11-22T12:00:00.000Z',
       }],
       error: null,
     }),
@@ -296,6 +307,7 @@ test('5. Ciclo de Eventos, Liturgia e Execução', async (t) => {
           church_id: params.p_church_id,
           result_entity_id: eventId,
           result_payload: { event_id: eventId, action: name },
+          created_at: '2026-11-22T12:00:00.000Z',
         }],
         error: null,
       }),
@@ -585,6 +597,7 @@ test('11. Contrato de Recibo por Operação — Entidade Principal vs Referênci
           action,
           result_entity_id: entityId,
           result_payload: payload,
+          created_at: '2026-11-22T12:00:00.000Z',
         }],
         error: null,
       }),
