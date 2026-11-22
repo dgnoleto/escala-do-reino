@@ -362,16 +362,23 @@ export function AppProvider({
           p_church_id: effectiveChurchId
         });
         if (loadRequestSeqRef.current === currentSeq) {
-          if (!teamsErr && Array.isArray(teamsData)) {
-            const mappedTeams = teamsData.map(t => ({
-              id: t.id,
-              name: t.name,
-              leaderId: t.leader_member_id || null
-            }));
-            setTeams(mappedTeams);
+          if (!teamsErr && Array.isArray(teamsData) && teamsData.length === 0) {
+            setTeams([]);
             setTeamsLoadStatus('loaded');
           } else {
-            setTeamsLoadStatus('failed');
+            const row = Array.isArray(teamsData) ? teamsData[0] : teamsData;
+            const rawTeams = row?.teams;
+            if (!teamsErr && Array.isArray(rawTeams)) {
+              const mappedTeams = rawTeams.map(t => ({
+                id: t.id ?? t.team_id,
+                name: t.name,
+                leaderId: t.leader_member_id || null
+              }));
+              setTeams(mappedTeams);
+              setTeamsLoadStatus('loaded');
+            } else {
+              setTeamsLoadStatus('failed');
+            }
           }
         }
       } catch {

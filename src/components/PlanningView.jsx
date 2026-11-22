@@ -1213,7 +1213,9 @@ export default function PlanningView({ onBack } = {}) {
       )}
 
       <div className="planning-activities-list">
-        {event.activities.map((act, index) => (
+        {event.activities.map((act, index) => {
+          const responsibleName = members?.find(m => m.id === act.responsibleMemberId)?.name || 'Responsável não identificado';
+          return (
           <div key={act.id} className="card planning-activity-card">
             <div className="planning-act-left">
               <span className="act-index-pill">{index + 1}</span>
@@ -1230,9 +1232,11 @@ export default function PlanningView({ onBack } = {}) {
                   )}
                 </div>
                 <h3 className="planning-act-title">{act.title}</h3>
-                <div className="planning-act-meta">
-                  Direção no altar: <strong>{act.responsibleMemberId}</strong>
-                </div>
+                {act.responsibleMemberId ? (
+                  <div className="planning-act-meta">
+                    Direção no altar: <strong>{responsibleName}</strong>
+                  </div>
+                ) : null}
                 {act.notes && <p className="planning-notes-text">"{act.notes}"</p>}
               </div>
             </div>
@@ -1343,7 +1347,8 @@ export default function PlanningView({ onBack } = {}) {
               </div>
             </div>
           </div>
-        ))}
+          );
+        })}
       </div>
 
       {/* SEÇÃO DE SERVIÇOS PARALELOS E APOIOS DA EDIÇÃO (PRD §5, §7.7, M28 & CA01, CA02) */}
