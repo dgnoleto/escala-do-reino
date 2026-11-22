@@ -2576,6 +2576,9 @@ export function AppProvider({
 
   const sendAccessInvite = (email, memberName) => {
     if (!isAdmin) return;
+    if (isRealEnvironment) {
+      return { success: false, error: 'Convite local indisponível no ambiente real. Use Membros → Convites.' };
+    }
     const newInv = {
       id: "inv-" + Date.now(),
       email,
@@ -2585,6 +2588,7 @@ export function AppProvider({
     };
     setAccessInvites(prev => [newInv, ...prev]);
     addAuditLog("Convite de Acesso", `Convite de acesso à igreja enviado para ${email} (Membro: ${memberName}).`);
+    return { success: true };
   };
 
   const designateLiturgyLeader = (newLeaderId, targetEventId = null) => {
@@ -3808,6 +3812,7 @@ export function AppProvider({
         currentUser,
         setCurrentUserId,
         isAdmin,
+        isRealEnvironment,
         isLiturgyLeader,
         isTeamLeader,
         event,

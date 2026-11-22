@@ -34,8 +34,9 @@ import {
 
 const VALID_ADMIN_TABS = ['event_types', 'templates', 'activities', 'reasons', 'invites', 'liturgy', 'members'];
 
-const resolveInitialTab = (tab) => {
+const resolveInitialTab = (tab, isRealEnvironment = false) => {
   if (!tab || tab === 'cadastros' || !VALID_ADMIN_TABS.includes(tab)) return 'event_types';
+  if (isRealEnvironment && tab === 'invites') return 'event_types';
   return tab;
 };
 
@@ -92,19 +93,25 @@ export default function AdminView({ onBack, initialTab = 'event_types' } = {}) {
     cancelEditingTemplate,
     remoteLoading,
     remoteError,
-    reloadRemoteData
+    reloadRemoteData,
+    isRealEnvironment
   } = useApp();
 
-  const [activeAdminTab, setActiveAdminTab] = useState(() => resolveInitialTab(initialTab));
+  // Convites de Acesso local só existem na demonstração; no ambiente real o fluxo oficial é Membros → Convites.
+  const visibleAdminTabs = isRealEnvironment
+    ? VALID_ADMIN_TABS.filter(tab => tab !== 'invites')
+    : VALID_ADMIN_TABS;
+
+  const [activeAdminTab, setActiveAdminTab] = useState(() => resolveInitialTab(initialTab, isRealEnvironment));
 
   React.useEffect(() => {
     if (initialTab) {
-      setActiveAdminTab(resolveInitialTab(initialTab));
+      setActiveAdminTab(resolveInitialTab(initialTab, isRealEnvironment));
     }
   }, [initialTab]);
 
   const handleTabKeyDown = (e) => {
-    const tabKeys = ['event_types', 'templates', 'activities', 'reasons', 'invites', 'liturgy', 'members'];
+    const tabKeys = visibleAdminTabs;
     const currentIdx = tabKeys.indexOf(activeAdminTab);
     if (currentIdx === -1) return;
     let nextIdx = -1;
@@ -267,7 +274,8 @@ export default function AdminView({ onBack, initialTab = 'event_types' } = {}) {
     e.preventDefault();
     if (!inviteEmail || !inviteMemberName) return;
 
-    sendAccessInvite(inviteEmail, inviteMemberName);
+    const result = sendAccessInvite(inviteEmail, inviteMemberName);
+    if (result?.success === false) return;
     setInviteEmail('');
     setInviteMemberName('');
     setInviteSuccess(true);
@@ -968,6 +976,7 @@ export default function AdminView({ onBack, initialTab = 'event_types' } = {}) {
           <Tag size={16} /> Motivos de Cancelamento Web (PRD 7.3)
         </button>
 
+        {!isRealEnvironment && (
         <button
           type="button"
           role="tab"
@@ -980,6 +989,7 @@ export default function AdminView({ onBack, initialTab = 'event_types' } = {}) {
         >
           <UserPlus size={16} /> Convites de Acesso à Igreja (PRD 3.1)
         </button>
+        )}
 
         <button
           type="button"
@@ -1009,7 +1019,7 @@ export default function AdminView({ onBack, initialTab = 'event_types' } = {}) {
       </div>
 
       {/* ABA 1: CONVITES DE ACESSO À IGREJA (PRD 3.1 & Cenário M01, M40) */}
-      {activeAdminTab === 'invites' && (
+      {!isRealEnvironment && activeAdminTab === 'invites' && (
         <div
           role="tabpanel"
           id="panel-admin-invites"
