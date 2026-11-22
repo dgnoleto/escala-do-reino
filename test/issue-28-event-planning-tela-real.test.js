@@ -913,7 +913,7 @@ describe('Issue #28 — Tela Real de Planejamento (Listagem, Fuso, Recibo, Opç�
           if (fn === 'list_event_types') return { data: [{ id: 't1', name: 'Culto', active: true }], error: null };
           if (fn === 'list_church_teams') {
             if (teamsFail) return { data: null, error: { message: 'Falha ao carregar equipes' } };
-            return { data: [{ id: 't-louvor', name: 'Louvor', leader_member_id: 'mariana' }], error: null };
+            return { data: [{ teams: [{ id: 't-louvor', name: 'Louvor', leader_member_id: 'mariana' }] }], error: null };
           }
           if (fn === 'create_church_event_edition') {
             createCalls += 1;
@@ -1120,7 +1120,7 @@ describe('Issue #28 — Tela Real de Planejamento (Listagem, Fuso, Recibo, Opç�
           rpcCalls.push({ fn, params });
           if (fn === 'list_church_events') return { data: [{ events: [], total_count: 0 }], error: null };
           if (fn === 'list_event_types') return { data: eventTypes, error: null };
-          if (fn === 'list_church_teams') return { data: [{ id: 't-louvor', name: 'Louvor', leader_member_id: 'mariana' }], error: null };
+          if (fn === 'list_church_teams') return { data: [{ teams: [{ id: 't-louvor', name: 'Louvor', leader_member_id: 'mariana' }] }], error: null };
           if (fn === 'create_church_event_edition') return canonicalCreateEventReceipt(params, 'ev-opt-b');
           return { data: [], error: null };
         },
@@ -1381,7 +1381,7 @@ describe('Issue #28 — Tela Real de Planejamento (Listagem, Fuso, Recibo, Opç�
         rpc: async (fn, params) => {
           if (fn === 'list_church_events') return { data: [{ events: [], total_count: 0 }], error: null };
           if (fn === 'list_event_types') return { data: [{ id: 't1', name: 'Culto', active: true }], error: null };
-          if (fn === 'list_church_teams') return { data: [{ id: 't-louvor', name: 'Louvor', leader_member_id: 'mariana' }], error: null };
+          if (fn === 'list_church_teams') return { data: [{ teams: [{ id: 't-louvor', name: 'Louvor', leader_member_id: 'mariana' }] }], error: null };
           if (fn === 'list_service_templates') return { data: [tpl], error: null };
           if (fn === 'get_service_template') return { data: [tpl], error: null };
           if (fn === 'create_church_event_edition') return canonicalCreateEventReceipt(params, 'ev-counter-1');
