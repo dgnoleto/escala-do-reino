@@ -1544,11 +1544,16 @@ export default function PlanningView({ onBack } = {}) {
                       <div style={{ fontWeight: 700, display: 'flex', alignItems: 'center', gap: '4px', marginBottom: '4px' }}>
                         <AlertTriangle size={12} color="#d97706" /> Sinal de Conflito de Escala:
                       </div>
-                      {servConflicts.map((sc, scIdx) => (
-                        <div key={scIdx} className="service-conflict-item">
-                          <strong>{sc.memberName}</strong>: sobreposição com {sc.otherName === serv.name ? sc.serviceName : sc.otherName} ({sc.interval})
-                        </div>
-                      ))}
+                      {servConflicts.map((sc, scIdx) => {
+                        const otherLabel = sc.c1SourceId === serv.id ? sc.c2Window?.name
+                                         : sc.c2SourceId === serv.id ? sc.c1Window?.name
+                                         : (sc.otherName === serv.name ? sc.serviceName : sc.otherName);
+                        return (
+                          <div key={scIdx} className="service-conflict-item">
+                            <strong>{sc.memberName}</strong>: sobreposição com {otherLabel} ({sc.interval})
+                          </div>
+                        );
+                      })}
                     </div>
                   );
                 })()}

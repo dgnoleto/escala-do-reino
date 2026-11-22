@@ -658,5 +658,89 @@ describe('Issue #29 (CA03 e CA04) — Conflitos de Escala com Preparação Antec
       const cardText = getNodeText(cardWarning);
       assert.match(cardText, /Rodrigo Líder/);
     });
+
+    test('(e) Dois apoios com o mesmo líder e janelas sobrepostas: cartão do Apoio B cita Apoio A (e não Apoio B) e cartão do Apoio A cita Apoio B', async () => {
+      let appCtx = null;
+      function Consumer() {
+        appCtx = useApp();
+        return null;
+      }
+
+      let renderer = null;
+      await act(async () => {
+        renderer = TestRenderer.create(
+          React.createElement(
+            AppProvider,
+            null,
+            React.createElement(
+              React.Fragment,
+              null,
+              React.createElement(Consumer),
+              React.createElement(PlanningView)
+            )
+          )
+        );
+      });
+
+      await act(async () => {
+        appCtx.setMembers([
+          { id: 'vol-lider-duplo', name: 'Lucas Supervisor', active: true, roles: ['membro'], skills: ['Apoio A', 'Apoio B'] }
+        ]);
+        appCtx.setEvents([{
+          id: 'evt-two-services-leader',
+          church_id: CHURCH_ID,
+          title: 'Culto Dois Apoios',
+          status: 'scheduled',
+          plannedStartAt: '2026-10-25T19:00:00-03:00',
+          plannedEndAt: '2026-10-25T21:00:00-03:00',
+          activitiesKnownInSession: true,
+          parallelServices: [
+            {
+              id: 'serv-apoio-a',
+              name: 'Apoio A',
+              prepRequiredMinutes: 15,
+              leaderId: 'vol-lider-duplo',
+              volunteers: [],
+            },
+            {
+              id: 'serv-apoio-b',
+              name: 'Apoio B',
+              prepRequiredMinutes: 30,
+              leaderId: 'vol-lider-duplo',
+              volunteers: [],
+            }
+          ],
+          activities: [],
+          assignments: [],
+        }]);
+        appCtx.setCurrentEventId('evt-two-services-leader');
+      });
+
+      const root = renderer.root;
+
+      // Localizar os títulos dos serviços nos cartões
+      const h3A = root.find(n => n.type === 'h3' && getNodeText(n) === 'Apoio A');
+      const h3B = root.find(n => n.type === 'h3' && getNodeText(n) === 'Apoio B');
+      assert.ok(h3A && h3B, 'Deve encontrar os títulos dos serviços Apoio A e Apoio B');
+
+      // Obter o cartão correspondente a cada serviço (avô do h3)
+      const cardA = h3A.parent.parent;
+      const cardB = h3B.parent.parent;
+
+      const itemA = cardA.find(n => n.props?.className === 'service-conflict-item');
+      const itemB = cardB.find(n => n.props?.className === 'service-conflict-item');
+      assert.ok(itemA, 'Cartão do Apoio A deve conter .service-conflict-item');
+      assert.ok(itemB, 'Cartão do Apoio B deve conter .service-conflict-item');
+
+      const textItemA = getNodeText(itemA);
+      const textItemB = getNodeText(itemB);
+
+      // O cartão do Apoio A deve citar o Apoio B
+      assert.match(textItemA, /Apoio B/);
+
+      // O cartão do Apoio B deve conter o nome do Apoio A e NÃO deve citar "Apoio B" dentro de .service-conflict-item
+      assert.match(textItemB, /Apoio A/);
+      assert.doesNotMatch(textItemB, /Apoio B/);
+    });
   });
 });
