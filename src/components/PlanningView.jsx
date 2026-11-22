@@ -1715,7 +1715,7 @@ export default function PlanningView({ onBack } = {}) {
                 onChange={e => setFormResponsible(e.target.value)}
               >
                 {members.map(m => (
-                  <option key={m.id} value={m.id}>{m.name} ({m.teams.join(', ')})</option>
+                  <option key={m.id} value={m.id}>{m.teams?.length ? `${m.name} (${m.teams.join(', ')})` : m.name}</option>
                 ))}
               </select>
             </div>

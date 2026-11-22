@@ -361,4 +361,54 @@ describe('Issue #88 — Carga de Nomes de Membros para Não-Admin e Visibilidade
     assert.equal(appCtx.membersLoadStatus, 'failed');
   });
 
+  test('(viii) não-admin: seletor de responsável da etapa exibe nome limpo sem parênteses vazios quando teams está vazio', async () => {
+    const mockClient = makeClient((fn) => {
+      if (fn === 'list_church_members_for_team') {
+        return {
+          data: [{ members: [{ member_id: RESP_MEMBER_ID, display_name: RESP_MEMBER_NAME }] }],
+          error: null,
+        };
+      }
+      return undefined;
+    });
+
+    let appCtx = null;
+    function Consumer() {
+      appCtx = useApp();
+      return null;
+    }
+
+    const authVal = {
+      churchAccess: { church_id: CHURCH_ID, is_admin: false, member_id: 'm-leader', display_name: 'Líder' },
+    };
+
+    let tree;
+    await act(async () => {
+      tree = TestRenderer.create(
+        React.createElement(AuthContext.Provider, { value: authVal },
+          React.createElement(AppProvider, { churchId: CHURCH_ID, supabaseClient: mockClient, allowMemoryFallback: false },
+            React.createElement(Consumer),
+            React.createElement(PlanningView)
+          )
+        )
+      );
+    });
+
+    await act(async () => {
+      appCtx.setEvents([{ ...baseEvent, liturgyLeaderId: 'm-leader' }]);
+      appCtx.selectEvent(EVENT_ID);
+    });
+
+    assert.equal(appCtx.membersLoadStatus, 'loaded');
+
+    const openBtn = tree.root.findByProps({ id: 'btn-open-new-activity-modal' });
+    await act(async () => {
+      openBtn.props.onClick();
+    });
+
+    const opt = tree.root.find(n => n.type === 'option' && n.props?.value === RESP_MEMBER_ID);
+    assert.ok(opt, 'Deveria encontrar a option do membro');
+    assert.equal(getNodeText(opt), 'Irmão Barnabé');
+  });
+
 });
