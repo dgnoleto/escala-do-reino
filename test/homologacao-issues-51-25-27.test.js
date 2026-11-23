@@ -172,7 +172,6 @@ describe('Homologação Funcional — Issue #51 (Responsividade e Navegação Ad
     const tabTemplates = findElementById(renderer.root, 'tab-admin-templates');
     const tabActivities = findElementById(renderer.root, 'tab-admin-activities');
     const tabReasons = findElementById(renderer.root, 'tab-admin-reasons');
-    const tabInvites = findElementById(renderer.root, 'tab-admin-invites');
     const tabLiturgy = findElementById(renderer.root, 'tab-admin-liturgy');
     const tabMembers = findElementById(renderer.root, 'tab-admin-members');
 
@@ -180,7 +179,7 @@ describe('Homologação Funcional — Issue #51 (Responsividade e Navegação Ad
     assert.ok(tabTemplates, 'Aba Modelos de Culto deve estar presente');
     assert.ok(tabActivities, 'Aba Atividades e Durações deve estar presente');
     assert.ok(tabReasons, 'Aba Motivos de Cancelamento deve estar presente');
-    assert.ok(tabInvites, 'Aba Convites de Acesso deve estar presente');
+    assert.equal(findElementById(renderer.root, 'tab-admin-invites'), null, 'Aba Convites de Acesso local não deve existir no ambiente real (#90)');
     assert.ok(tabLiturgy, 'Aba Designação da Liturgia deve estar presente');
     assert.ok(tabMembers, 'Aba Membros e Aptidões deve estar presente');
 
@@ -195,7 +194,6 @@ describe('Homologação Funcional — Issue #51 (Responsividade e Navegação Ad
       'tab-admin-templates',
       'tab-admin-activities',
       'tab-admin-reasons',
-      'tab-admin-invites',
       'tab-admin-liturgy',
       'tab-admin-members'
     ], 'As abas devem seguir a ordem de prioridade acordada');
