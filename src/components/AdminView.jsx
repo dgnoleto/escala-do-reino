@@ -212,6 +212,7 @@ export default function AdminView({ onBack, initialTab = 'event_types' } = {}) {
   const [selectedLiturgyLeader, setSelectedLiturgyLeader] = useState(() => (targetEventForLiturgy?.liturgyLeaderId || ''));
   const [liturgySuccess, setLiturgySuccess] = useState('');
   const [liturgyError, setLiturgyError] = useState('');
+  const [isDesignatingLeader, setIsDesignatingLeader] = useState(false);
 
   // Histórico de atividades conhecidas da igreja para integridade cadastral de motivos (Issue #26)
   const knownActivities = React.useMemo(() => {
@@ -818,17 +819,32 @@ export default function AdminView({ onBack, initialTab = 'event_types' } = {}) {
     return `${String(startH).padStart(2, '0')}:${String(startM).padStart(2, '0')}`;
   };
 
-  const handleDesignateLeader = () => {
+  const handleDesignateLeader = async () => {
     setLiturgySuccess('');
     setLiturgyError('');
     if (!targetEventForLiturgy?.id) {
       setLiturgyError('Nenhum evento selecionado para designação.');
       return;
     }
-    designateLiturgyLeader(selectedLiturgyLeader, targetEventForLiturgy.id);
-    const memberName = members.find(m => m.id === selectedLiturgyLeader)?.name || 'Membro';
-    setLiturgySuccess(`Liderança da Liturgia do evento '${targetEventForLiturgy.title || 'Culto'}' atualizada com sucesso para ${memberName}!`);
-    setTimeout(() => setLiturgySuccess(''), 4000);
+    setIsDesignatingLeader(true);
+    try {
+      const res = await designateLiturgyLeader(
+        selectedLiturgyLeader,
+        targetEventForLiturgy.id,
+        targetEventForLiturgy.version
+      );
+      if (res && res.success) {
+        const memberName = members.find(m => m.id === selectedLiturgyLeader)?.name || 'Membro';
+        setLiturgySuccess(`Liderança da Liturgia do evento '${targetEventForLiturgy.title || 'Culto'}' atualizada com sucesso para ${memberName}!`);
+        setTimeout(() => setLiturgySuccess(''), 4000);
+      } else {
+        setLiturgyError(res?.error || 'Falha ao designar liderança da liturgia.');
+      }
+    } catch (err) {
+      setLiturgyError(err?.message || 'Falha ao designar liderança da liturgia.');
+    } finally {
+      setIsDesignatingLeader(false);
+    }
   };
 
   const isControlsDisabled = !isOnline || isDataStale;
@@ -1172,7 +1188,7 @@ export default function AdminView({ onBack, initialTab = 'event_types' } = {}) {
                   id="btn-save-admin-liturgy-designation"
                   className="btn btn-primary"
                   onClick={handleDesignateLeader}
-                  disabled={isControlsDisabled}
+                  disabled={isControlsDisabled || isDesignatingLeader}
                   style={{ marginTop: '22px' }}
                 >
                   Salvar Designação do Culto

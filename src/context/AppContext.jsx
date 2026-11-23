@@ -108,6 +108,9 @@ import {
   canAppendEventItemsToEvent,
   getAppendEventItemsBlockReason,
 } from '../utils/eventItemService';
+import {
+  assignEventLiturgyLeader,
+} from '../utils/liturgicalCommandService';
 
 export const AppContext = createContext(null);
 
@@ -2587,9 +2590,94 @@ export function AppProvider({
     addAuditLog("Convite de Acesso", `Convite de acesso à igreja enviado para ${email} (Membro: ${memberName}).`);
   };
 
-  const designateLiturgyLeader = (newLeaderId, targetEventId = null) => {
-    if (!isAdmin) return;
-    const targetId = targetEventId || event.id;
+  const designateLiturgyLeader = async (newLeaderId, targetEventId = null, explicitExpectedVersion = undefined) => {
+    if (!isAdmin) {
+      return { success: false, error: "Apenas administradores podem designar a liderança da liturgia." };
+    }
+    const targetId = targetEventId || event?.id || events?.[0]?.id;
+    if (!targetId) {
+      return { success: false, error: "Nenhum evento selecionado para designação." };
+    }
+    if (!newLeaderId) {
+      return { success: false, error: "Nenhum líder da liturgia selecionado." };
+    }
+
+    const authCheck = ensureAuthorizedContext();
+    if (!authCheck.allowed) return { success: false, error: authCheck.error };
+
+    const targetEv = events.find(ev => ev.id === targetId) || (event?.id === targetId ? event : null);
+    const expectedVersion = explicitExpectedVersion !== undefined
+      ? explicitExpectedVersion
+      : (targetEv?.version ?? null);
+
+    if (!authCheck.inMemory) {
+      if (expectedVersion === null || expectedVersion === undefined) {
+        return {
+          success: false,
+          error: "Versão do evento não informada. Recarregue os dados antes de designar a liderança.",
+        };
+      }
+
+      const commandKey = `assign-leader:${effectiveChurchId}:${targetId}:${newLeaderId}`;
+      let cmdId = pendingProgramLifecycleCommandsRef.current.get(commandKey);
+      if (!cmdId) {
+        cmdId = generateCommandUuid();
+      }
+
+      try {
+        const res = await assignEventLiturgyLeader({
+          supabase: effectiveClient,
+          churchId: effectiveChurchId,
+          commandId: cmdId,
+          eventId: targetId,
+          newLiturgyLeaderMemberId: newLeaderId,
+          expectedVersion,
+        });
+
+        if (res.status === 'UNCERTAIN' || res.uncertain) {
+          pendingProgramLifecycleCommandsRef.current.set(commandKey, cmdId);
+          return {
+            success: false,
+            uncertain: true,
+            error: res.message || res.error?.message || "Operação não confirmada pelo servidor. Tente novamente para confirmar.",
+          };
+        }
+
+        // Em sucesso ou erro definitivo: apaga a chave de comando pendente
+        pendingProgramLifecycleCommandsRef.current.delete(commandKey);
+
+        if (res.status === 'SUCCESS' || res.success) {
+          await reloadRemoteData();
+          return { success: true };
+        }
+
+        // Erro definitivo
+        const errCode = String(res.code || res.error?.code || '');
+        const errMsg = res.message || res.error?.message || '';
+        const lowerMsg = errMsg.toLowerCase();
+
+        let friendlyError = errMsg || "Falha ao designar liderança da liturgia no servidor.";
+        if (errCode === '42501' || lowerMsg.includes('não autorizado') || lowerMsg.includes('apenas administradores') || lowerMsg.includes('permissão insuficiente')) {
+          friendlyError = "Permissão insuficiente. Apenas administradores ativos podem designar a liderança da liturgia.";
+        } else if ((errCode === 'P0020' && (lowerMsg.includes('versão') || lowerMsg.includes('conflito'))) || lowerMsg.includes('versão esperada divergente')) {
+          friendlyError = "Versão esperada divergente da versão atual do evento. Recarregue os dados e tente novamente.";
+        }
+
+        return {
+          success: false,
+          error: friendlyError,
+        };
+      } catch (err) {
+        pendingProgramLifecycleCommandsRef.current.set(commandKey, cmdId);
+        return {
+          success: false,
+          uncertain: true,
+          error: err?.message || "Falha na comunicação com o servidor ao designar liturgia.",
+        };
+      }
+    }
+
+    // Modo sem conexão com memória permitida (inMemory === true)
     const leader = members.find(m => m.id === newLeaderId);
     setEvents(prev => prev.map(ev => {
       if (ev.id === targetId) {
@@ -2604,6 +2692,7 @@ export function AppProvider({
       "Designação da Liturgia",
       `${currentUser?.name || 'Administrador'} designou ${leader?.name || 'Membro'} como Líder da Liturgia para o evento.`
     );
+    return { success: true };
   };
 
   // Criação de Nova Edição de Culto (Issue #28)
