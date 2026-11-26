@@ -2650,18 +2650,22 @@ export function AppProvider({
       : (targetEv?.version ?? null);
 
     if (!authCheck.inMemory) {
-      if (expectedVersion === null || expectedVersion === undefined) {
+      const commandKey = `assign-leader:${effectiveChurchId}:${targetId}:${newLeaderId}`;
+      const pendingCmd = pendingProgramLifecycleCommandsRef.current.get(commandKey);
+      const effectiveExpectedVersion = (pendingCmd && typeof pendingCmd === 'object' && pendingCmd.expectedVersion !== undefined)
+        ? pendingCmd.expectedVersion
+        : expectedVersion;
+
+      if (effectiveExpectedVersion === null || effectiveExpectedVersion === undefined) {
         return {
           success: false,
           error: "Versão do evento não informada. Recarregue os dados antes de designar a liderança.",
         };
       }
 
-      const commandKey = `assign-leader:${effectiveChurchId}:${targetId}:${newLeaderId}`;
-      let cmdId = pendingProgramLifecycleCommandsRef.current.get(commandKey);
-      if (!cmdId) {
-        cmdId = generateCommandUuid();
-      }
+      const cmdId = (pendingCmd && typeof pendingCmd === 'object' && pendingCmd.cmdId)
+        ? pendingCmd.cmdId
+        : (typeof pendingCmd === 'string' ? pendingCmd : generateCommandUuid());
 
       try {
         const res = await assignEventLiturgyLeader({
@@ -2670,11 +2674,14 @@ export function AppProvider({
           commandId: cmdId,
           eventId: targetId,
           newLiturgyLeaderMemberId: newLeaderId,
-          expectedVersion,
+          expectedVersion: effectiveExpectedVersion,
         });
 
         if (res.status === 'UNCERTAIN' || res.uncertain) {
-          pendingProgramLifecycleCommandsRef.current.set(commandKey, cmdId);
+          pendingProgramLifecycleCommandsRef.current.set(commandKey, {
+            cmdId,
+            expectedVersion: effectiveExpectedVersion,
+          });
           return {
             success: false,
             uncertain: true,
@@ -2707,7 +2714,10 @@ export function AppProvider({
           error: friendlyError,
         };
       } catch (err) {
-        pendingProgramLifecycleCommandsRef.current.set(commandKey, cmdId);
+        pendingProgramLifecycleCommandsRef.current.set(commandKey, {
+          cmdId,
+          expectedVersion: effectiveExpectedVersion,
+        });
         return {
           success: false,
           uncertain: true,

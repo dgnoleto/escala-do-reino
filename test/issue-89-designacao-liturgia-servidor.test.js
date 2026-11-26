@@ -553,4 +553,239 @@ describe('Issue #89 — Designação da Liturgia com Gravação no Servidor (RPC
     assert.equal(rpcCalled, false, 'assign_event_liturgy_leader NÃO pode ser chamada se version estiver ausente');
   });
 
+  test('(ix) Repetição de comando incerto após gravação no servidor: reutiliza expectedVersion original mesmo após reloadRemoteData atualizar versão', async () => {
+    let currentVersion = 1;
+    let currentLeader = OLD_LEADER_ID;
+    const receipts = new Map();
+    const calls = [];
+
+    const computeParamsHash = (params) => {
+      return JSON.stringify({
+        action: 'assign_event_liturgy_leader',
+        church_id: params.p_church_id,
+        event_id: params.p_event_id,
+        new_liturgy_leader_member_id: params.p_new_liturgy_leader_member_id,
+        expected_version: params.p_expected_version,
+      });
+    };
+
+    let firstAttempt = true;
+
+    const mockClient = createMockSupabase(async (fn, params) => {
+      if (fn === 'list_church_events') {
+        return {
+          data: [{
+            events: [{
+              ...sampleEvent,
+              liturgy_leader_member_id: currentLeader,
+              liturgy_leader_name: currentLeader === NEW_LEADER_ID ? 'Novo Líder' : 'Líder Antigo',
+              version: currentVersion,
+            }],
+            total_count: 1,
+          }],
+          error: null,
+        };
+      }
+
+      if (fn === 'assign_event_liturgy_leader') {
+        calls.push(params);
+        const hash = computeParamsHash(params);
+
+        const existing = receipts.get(params.p_command_id);
+        if (existing) {
+          if (existing.hash !== hash) {
+            return {
+              data: null,
+              error: {
+                code: 'P0020',
+                message: 'Comando já executado com parâmetros divergentes.',
+              },
+            };
+          }
+          return { data: [existing.receipt], error: null };
+        }
+
+        if (params.p_expected_version !== currentVersion) {
+          return {
+            data: null,
+            error: {
+              code: 'P0020',
+              message: 'Versão esperada divergente da versão atual do evento.',
+            },
+          };
+        }
+
+        currentVersion = currentVersion + 1;
+        currentLeader = params.p_new_liturgy_leader_member_id;
+
+        const receipt = {
+          command_id: params.p_command_id,
+          action: 'assign_event_liturgy_leader',
+          church_id: params.p_church_id,
+          result_entity_id: params.p_event_id,
+          result_payload: {
+            id: params.p_event_id,
+            event_id: params.p_event_id,
+            previous_liturgy_leader_member_id: OLD_LEADER_ID,
+            new_liturgy_leader_member_id: params.p_new_liturgy_leader_member_id,
+            version: currentVersion,
+          },
+          created_at: new Date().toISOString(),
+        };
+
+        receipts.set(params.p_command_id, { hash, receipt });
+
+        if (firstAttempt) {
+          firstAttempt = false;
+          return {
+            data: null,
+            error: { message: 'Network timeout: connection lost while awaiting response' },
+          };
+        }
+
+        return { data: [receipt], error: null };
+      }
+
+      return { data: [], error: null };
+    });
+
+    let appCtx = null;
+    function Consumer() {
+      appCtx = useApp();
+      return null;
+    }
+
+    await act(async () => {
+      TestRenderer.create(
+        React.createElement(AppProvider, {
+          initialUserId: 'marcos',
+          churchId: CHURCH_ID,
+          supabaseClient: mockClient,
+          allowMemoryFallback: false,
+        }, React.createElement(Consumer))
+      );
+    });
+
+    assert.equal(appCtx.events[0].version, 1);
+
+    // 1ª chamada -> grava no servidor, versão vira 2, mas resposta se perde
+    let res1;
+    await act(async () => {
+      res1 = await appCtx.designateLiturgyLeader(NEW_LEADER_ID, EVENT_ID);
+    });
+    assert.equal(res1?.success, false);
+    assert.equal(res1?.uncertain, true);
+
+    // Usuário recarrega os dados (traz versão 2 do servidor)
+    await act(async () => {
+      await appCtx.reloadRemoteData();
+    });
+    assert.equal(appCtx.events[0].version, 2, 'reloadRemoteData trouxe evento na versão 2');
+
+    // 2ª chamada (repetição): deve reutilizar commandId E p_expected_version = 1
+    let res2;
+    await act(async () => {
+      res2 = await appCtx.designateLiturgyLeader(NEW_LEADER_ID, EVENT_ID);
+    });
+
+    assert.equal(res2?.success, true, 'Repetição com expectedVersion original deve ter sucesso via recibo');
+    assert.equal(calls.length, 2);
+    assert.equal(calls[0].p_command_id, calls[1].p_command_id, 'Deve reutilizar o mesmo command_id');
+    assert.equal(calls[0].p_expected_version, 1);
+    assert.equal(calls[1].p_expected_version, 1, 'Repetição DEVE usar p_expected_version = 1 (mesmo com evento na versão 2)');
+    assert.equal(appCtx.events[0].liturgyLeaderId, NEW_LEADER_ID);
+  });
+
+  test('(x) Repetição de comando incerto quando 1ª tentativa nunca chegou ao servidor: aplica normalmente com expectedVersion original', async () => {
+    let currentVersion = 1;
+    let currentLeader = OLD_LEADER_ID;
+    const calls = [];
+    let firstAttempt = true;
+
+    const mockClient = createMockSupabase(async (fn, params) => {
+      if (fn === 'list_church_events') {
+        return {
+          data: [{
+            events: [{
+              ...sampleEvent,
+              liturgy_leader_member_id: currentLeader,
+              liturgy_leader_name: currentLeader === NEW_LEADER_ID ? 'Novo Líder' : 'Líder Antigo',
+              version: currentVersion,
+            }],
+            total_count: 1,
+          }],
+          error: null,
+        };
+      }
+
+      if (fn === 'assign_event_liturgy_leader') {
+        calls.push(params);
+        if (firstAttempt) {
+          firstAttempt = false;
+          return {
+            data: null,
+            error: { message: 'FetchError: Failed to fetch (connection refused)' },
+          };
+        }
+
+        if (params.p_expected_version !== currentVersion) {
+          return {
+            data: null,
+            error: {
+              code: 'P0020',
+              message: 'Versão esperada divergente da versão atual do evento.',
+            },
+          };
+        }
+
+        currentVersion = currentVersion + 1;
+        currentLeader = params.p_new_liturgy_leader_member_id;
+        return canonicalLiturgyReceipt(params, params.p_event_id, currentVersion);
+      }
+
+      return { data: [], error: null };
+    });
+
+    let appCtx = null;
+    function Consumer() {
+      appCtx = useApp();
+      return null;
+    }
+
+    await act(async () => {
+      TestRenderer.create(
+        React.createElement(AppProvider, {
+          initialUserId: 'marcos',
+          churchId: CHURCH_ID,
+          supabaseClient: mockClient,
+          allowMemoryFallback: false,
+        }, React.createElement(Consumer))
+      );
+    });
+
+    assert.equal(appCtx.events[0].version, 1);
+
+    // 1ª tentativa -> nunca chegou ao servidor (servidor continua na versão 1)
+    let res1;
+    await act(async () => {
+      res1 = await appCtx.designateLiturgyLeader(NEW_LEADER_ID, EVENT_ID);
+    });
+    assert.equal(res1?.success, false);
+    assert.equal(res1?.uncertain, true);
+
+    // 2ª tentativa -> aplica normalmente com expectedVersion = 1
+    let res2;
+    await act(async () => {
+      res2 = await appCtx.designateLiturgyLeader(NEW_LEADER_ID, EVENT_ID);
+    });
+
+    assert.equal(res2?.success, true, 'Repetição aplica com sucesso no servidor');
+    assert.equal(calls.length, 2);
+    assert.equal(calls[0].p_command_id, calls[1].p_command_id);
+    assert.equal(calls[0].p_expected_version, 1);
+    assert.equal(calls[1].p_expected_version, 1);
+    assert.equal(appCtx.events[0].liturgyLeaderId, NEW_LEADER_ID);
+    assert.equal(appCtx.events[0].version, 2);
+  });
+
 });
