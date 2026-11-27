@@ -788,4 +788,70 @@ describe('Issue #89 — Designação da Liturgia com Gravação no Servidor (RPC
     assert.equal(appCtx.events[0].version, 2);
   });
 
+  test('(xi) Chamadas concorrentes da mesma designação com a 1ª ainda em voo: uma única tentativa no servidor e o mesmo command_id', async () => {
+    let currentVersion = 1;
+    let currentLeader = OLD_LEADER_ID;
+    const assignCalls = [];
+    let releaseGate;
+    const gate = new Promise((resolve) => { releaseGate = resolve; });
+
+    const mockClient = createMockSupabase(async (fn, params) => {
+      if (fn === 'list_church_events') {
+        return {
+          data: [{
+            events: [{
+              ...sampleEvent,
+              liturgy_leader_member_id: currentLeader,
+              liturgy_leader_name: currentLeader === NEW_LEADER_ID ? 'Novo Líder' : 'Líder Antigo',
+              version: currentVersion,
+            }],
+            total_count: 1,
+          }],
+          error: null,
+        };
+      }
+      if (fn === 'assign_event_liturgy_leader') {
+        assignCalls.push(params);
+        await gate;
+        currentLeader = params.p_new_liturgy_leader_member_id;
+        currentVersion = params.p_expected_version + 1;
+        return canonicalLiturgyReceipt(params, params.p_event_id, currentVersion);
+      }
+      return { data: [], error: null };
+    });
+
+    let appCtx = null;
+    function Consumer() {
+      appCtx = useApp();
+      return null;
+    }
+
+    await act(async () => {
+      TestRenderer.create(
+        React.createElement(AppProvider, {
+          initialUserId: 'marcos',
+          churchId: CHURCH_ID,
+          supabaseClient: mockClient,
+          allowMemoryFallback: false,
+        }, React.createElement(Consumer))
+      );
+    });
+
+    let p1;
+    let p2;
+    await act(async () => {
+      p1 = appCtx.designateLiturgyLeader(NEW_LEADER_ID, EVENT_ID);
+      p2 = appCtx.designateLiturgyLeader(NEW_LEADER_ID, EVENT_ID);
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      releaseGate();
+    });
+
+    const [r1, r2] = await Promise.all([p1, p2]);
+
+    assert.equal(assignCalls.length, 1, 'Chamadas concorrentes não podem gerar duas tentativas no servidor');
+    assert.equal(r1?.success, true);
+    assert.equal(r2?.success, true, 'A segunda chamada recebe o mesmo resultado da tentativa em voo');
+    assert.equal(appCtx.events[0].liturgyLeaderId, NEW_LEADER_ID);
+  });
+
 });

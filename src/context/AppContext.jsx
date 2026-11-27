@@ -155,6 +155,8 @@ export function AppProvider({
   const pendingReorderCommandsRef = useRef(new Map());
   // Comandos de ciclo de vida da programação sem confirmação (idempotência B3)
   const pendingProgramLifecycleCommandsRef = useRef(new Map());
+  // Designações de líder em voo (#89): chamadas concorrentes da mesma designação compartilham a mesma tentativa
+  const leaderAssignInFlightRef = useRef(new Map());
   // Mapa de requisições ativas de carregamento indexado por churchId:eventId
   const programLoadRequestsRef = useRef(new Map());
   const currentEventIdRef = useRef(null);
@@ -2651,6 +2653,12 @@ export function AppProvider({
 
     if (!authCheck.inMemory) {
       const commandKey = `assign-leader:${effectiveChurchId}:${targetId}:${newLeaderId}`;
+      // Coalescência (#89): enquanto a tentativa anterior estiver em voo, a nova chamada aguarda o mesmo
+      // comando, em vez de gerar outro command_id que o servidor não reconheceria como repetição.
+      const inFlightAttempt = leaderAssignInFlightRef.current.get(commandKey);
+      if (inFlightAttempt) return inFlightAttempt;
+
+      const attempt = (async () => {
       const pendingCmd = pendingProgramLifecycleCommandsRef.current.get(commandKey);
       const effectiveExpectedVersion = (pendingCmd && typeof pendingCmd === 'object' && pendingCmd.expectedVersion !== undefined)
         ? pendingCmd.expectedVersion
@@ -2724,6 +2732,15 @@ export function AppProvider({
           error: err?.message || "Falha na comunicação com o servidor ao designar liturgia.",
         };
       }
+      })();
+
+      leaderAssignInFlightRef.current.set(commandKey, attempt);
+      attempt.finally(() => {
+        if (leaderAssignInFlightRef.current.get(commandKey) === attempt) {
+          leaderAssignInFlightRef.current.delete(commandKey);
+        }
+      });
+      return attempt;
     }
 
     // Modo sem conexão com memória permitida (inMemory === true)
