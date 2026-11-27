@@ -2735,11 +2735,12 @@ export function AppProvider({
       })();
 
       leaderAssignInFlightRef.current.set(commandKey, attempt);
+      // A promessa derivada só faz a limpeza; .catch evita rejeição não tratada quando a tentativa falha antes do try.
       attempt.finally(() => {
         if (leaderAssignInFlightRef.current.get(commandKey) === attempt) {
           leaderAssignInFlightRef.current.delete(commandKey);
         }
-      });
+      }).catch(() => {});
       return attempt;
     }
 
