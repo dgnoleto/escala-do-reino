@@ -155,6 +155,8 @@ export function AppProvider({
   const pendingReorderCommandsRef = useRef(new Map());
   // Comandos de ciclo de vida da programação sem confirmação (idempotência B3)
   const pendingProgramLifecycleCommandsRef = useRef(new Map());
+  // Designações de líder em voo (#89): chamadas concorrentes da mesma designação compartilham a mesma tentativa
+  const leaderAssignInFlightRef = useRef(new Map());
   // Mapa de requisições ativas de carregamento indexado por churchId:eventId
   const programLoadRequestsRef = useRef(new Map());
   const currentEventIdRef = useRef(null);
@@ -2650,18 +2652,28 @@ export function AppProvider({
       : (targetEv?.version ?? null);
 
     if (!authCheck.inMemory) {
-      if (expectedVersion === null || expectedVersion === undefined) {
+      const commandKey = `assign-leader:${effectiveChurchId}:${targetId}:${newLeaderId}`;
+      // Coalescência (#89): enquanto a tentativa anterior estiver em voo, a nova chamada aguarda o mesmo
+      // comando, em vez de gerar outro command_id que o servidor não reconheceria como repetição.
+      const inFlightAttempt = leaderAssignInFlightRef.current.get(commandKey);
+      if (inFlightAttempt) return inFlightAttempt;
+
+      const attempt = (async () => {
+      const pendingCmd = pendingProgramLifecycleCommandsRef.current.get(commandKey);
+      const effectiveExpectedVersion = (pendingCmd && typeof pendingCmd === 'object' && pendingCmd.expectedVersion !== undefined)
+        ? pendingCmd.expectedVersion
+        : expectedVersion;
+
+      if (effectiveExpectedVersion === null || effectiveExpectedVersion === undefined) {
         return {
           success: false,
           error: "Versão do evento não informada. Recarregue os dados antes de designar a liderança.",
         };
       }
 
-      const commandKey = `assign-leader:${effectiveChurchId}:${targetId}:${newLeaderId}`;
-      let cmdId = pendingProgramLifecycleCommandsRef.current.get(commandKey);
-      if (!cmdId) {
-        cmdId = generateCommandUuid();
-      }
+      const cmdId = (pendingCmd && typeof pendingCmd === 'object' && pendingCmd.cmdId)
+        ? pendingCmd.cmdId
+        : (typeof pendingCmd === 'string' ? pendingCmd : generateCommandUuid());
 
       try {
         const res = await assignEventLiturgyLeader({
@@ -2670,11 +2682,14 @@ export function AppProvider({
           commandId: cmdId,
           eventId: targetId,
           newLiturgyLeaderMemberId: newLeaderId,
-          expectedVersion,
+          expectedVersion: effectiveExpectedVersion,
         });
 
         if (res.status === 'UNCERTAIN' || res.uncertain) {
-          pendingProgramLifecycleCommandsRef.current.set(commandKey, cmdId);
+          pendingProgramLifecycleCommandsRef.current.set(commandKey, {
+            cmdId,
+            expectedVersion: effectiveExpectedVersion,
+          });
           return {
             success: false,
             uncertain: true,
@@ -2707,13 +2722,26 @@ export function AppProvider({
           error: friendlyError,
         };
       } catch (err) {
-        pendingProgramLifecycleCommandsRef.current.set(commandKey, cmdId);
+        pendingProgramLifecycleCommandsRef.current.set(commandKey, {
+          cmdId,
+          expectedVersion: effectiveExpectedVersion,
+        });
         return {
           success: false,
           uncertain: true,
           error: err?.message || "Falha na comunicação com o servidor ao designar liturgia.",
         };
       }
+      })();
+
+      leaderAssignInFlightRef.current.set(commandKey, attempt);
+      // A promessa derivada só faz a limpeza; .catch evita rejeição não tratada quando a tentativa falha antes do try.
+      attempt.finally(() => {
+        if (leaderAssignInFlightRef.current.get(commandKey) === attempt) {
+          leaderAssignInFlightRef.current.delete(commandKey);
+        }
+      }).catch(() => {});
+      return attempt;
     }
 
     // Modo sem conexão com memória permitida (inMemory === true)
