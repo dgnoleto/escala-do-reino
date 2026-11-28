@@ -1,6 +1,6 @@
 # Escala do Reino — Guia de Governança e Papéis Multiagente
 
-Versão vigente: **1.4** — evolução focal em **15/11/2026** (decisões do responsável de 15/11/2026: troca experimental de funções entre Codex e Claude Code na Sprint 3 e registro das conexões MCP do Antigravity) da versão 1.3, preservada em [`docs/operacao/versoes/2026-11-15-AGENTS-v1.3.md`](docs/operacao/versoes/2026-11-15-AGENTS-v1.3.md). O baseline anterior à primeira numeração permanece no [acervo](docs/operacao/versoes/README.md).
+Versão vigente: **1.5.1** — ajuste focal em **27/11/2026** (decisão do responsável de 27/11/2026: sem alteração de regras de segurança, permissões ou limites; ajuste de redação da Etapa 1 do fluxo multiagente quanto à autoridade sobre o escopo, e nota no índice do acervo; ver [`docs/operacao/versoes/README.md`](docs/operacao/versoes/README.md)). Base anterior: versão 1.5 de 26/11/2026 (decisões do responsável de 26/11/2026: Claude passa a orquestrador principal; Codex permanece revisor técnico independente por convocação, com ChatGPT e Codex tratados como o mesmo ator; revogação da troca experimental de funções da seção 2.8) da versão 1.4, preservada em [`docs/operacao/versoes/2026-11-26-AGENTS-v1.4.md`](docs/operacao/versoes/2026-11-26-AGENTS-v1.4.md). O baseline anterior à primeira numeração permanece no [acervo](docs/operacao/versoes/README.md).
 
 Primeira numeração formal adotada para este documento; o baseline anterior não declarava versão numérica e não recebe numeração retroativa.
 
@@ -104,7 +104,7 @@ Nos dois últimos dias corridos da sprint, avisar ao final de uma conversa perti
 Consolida as decisões do responsável de 23 e 24/10/2026 na [issue #59](https://github.com/dgnoleto/escala-do-reino/issues/59), preservando as seções 1.1 a 1.6.
 
 1. **Vínculo obrigatório:** antes de iniciar uma intervenção autorizada, identificar a issue ou subissue que representa o resultado. Na ausência de item adequado, pesquisar duplicatas e propor a criação ou divisão; não executar trabalho órfão de rastreabilidade. O vínculo não substitui a autorização para alterar código, arquivos, dados ou ambientes.
-2. **Registro por agente:** ao concluir cada entrega significativa, descoberta bloqueante, revisão independente ou mudança de estado, registrar na issue vinculada o papel e a identidade funcional do agente, por exemplo **Antigravity (implementação)**, **Codex (auditoria)** ou **ChatGPT (especificação/coordenação)**. Descrever o que foi realmente feito, arquivos afetados, resultados, evidências, limitações e próximo passo. Quem publica o comentário no GitHub continua identificado pela conta autora; o nome do agente no texto não deve simular identidade ou aprovação de outra pessoa.
+2. **Registro por agente:** ao concluir cada entrega significativa, descoberta bloqueante, revisão independente ou mudança de estado, registrar na issue vinculada o papel e a identidade funcional do agente, por exemplo **Antigravity (implementação)**, **Codex (auditoria)** ou **Claude (orquestração/especificação)**. Descrever o que foi realmente feito, arquivos afetados, resultados, evidências, limitações e próximo passo. Quem publica o comentário no GitHub continua identificado pela conta autora; o nome do agente no texto não deve simular identidade ou aprovação de outra pessoa.
 3. **Estado comprovável:** diferenciar proposta, implementação apenas local, revisão estática, teste executado, commit/PR publicado, homologação e aceite humano. Não declarar como publicado, testado ou aprovado algo que ainda não foi comprovado. Vincular commits, PRs, SHAs e documentos somente quando existirem; não expor segredos ou dados pessoais.
 4. **Sem acesso ao GitHub:** quando o agente não tiver permissão ou ferramenta para comentar, apresentar um comentário pronto para publicação e registrar a pendência no relatório ao responsável. Nunca afirmar que sincronizou issue, sprint, status ou subissue nativa sem verificar o resultado.
 5. **Subissues são permitidas e recomendadas:** decompor issues grandes quando houver entregas independentes, critérios distintos, dependências sequenciais, riscos significativos ou necessidade de revisão e aceite separados. Manter relação pai-filhas, critério de conclusão próprio e evitar duplicação. Não criar subissues apenas para fragmentar trabalho simples; propor a divisão e respeitar a decisão do responsável.
@@ -113,7 +113,7 @@ Consolida as decisões do responsável de 23 e 24/10/2026 na [issue #59](https:/
 
 **Preservação do corpo da issue:** registrar decisões, evidências e ressalvas em comentários. Alterar o texto principal apenas para atualizar critérios de aceite, dentro da autorização específica e com diff prévio; não reescrever a descrição para narrar o andamento.
 
-**Gate de paridade contratual:** antes de implementar ou encaminhar uma nova proposta/revisão técnica à auditoria independente, confrontá-la com a issue, decisões ratificadas, PRD/contrato e código/esquema canônicos. Antigravity apresenta o contrato afetado, o delta e uma matriz com fontes verificáveis, proporcional ao risco e à extensão da mudança; contrato novo ou mudança material exige especificação integral, enquanto correção focal exige apenas os pontos afetados e suas consequências diretas. ChatGPT confere a paridade; Codex realiza a revisão técnica independente após o gate, quando exigida pelo risco ou pelo responsável, conforme seção 3. Não substituir o parecer independente pela autoavaliação do executor.
+**Gate de paridade contratual:** antes de implementar ou encaminhar uma nova proposta/revisão técnica à auditoria independente, confrontá-la com a issue, decisões ratificadas, PRD/contrato e código/esquema canônicos. Antigravity apresenta o contrato afetado, o delta e uma matriz com fontes verificáveis, proporcional ao risco e à extensão da mudança; contrato novo ou mudança material exige especificação integral, enquanto correção focal exige apenas os pontos afetados e suas consequências diretas. Claude (orquestrador principal) confere a paridade; Codex realiza a revisão técnica independente após o gate, quando exigida pelo risco ou pelo responsável, conforme seção 3. Não substituir o parecer independente pela autoavaliação do executor.
 
 Conforme o contrato e o risco afetados, a matriz examina assinatura/defaults/retorno, esquema/constraints, permissões e regras funcionais, erros, idempotência/replay, locks, auditoria/efeitos, integrações e critérios pertinentes. Usar os estados **IDÊNTICO**, **ALTERADO AUTORIZADO** (com decisão expressa vinculada), **DIVERGENTE** ou **NÃO VERIFICADO**. Divergência ou não verificação crítica bloqueia o avanço afetado: corrigir o delta ou obter decisão de mudança de contrato, sem ajustar requisitos para acomodar a implementação. Preservar aceites não afetados.
 
@@ -135,22 +135,18 @@ Registrar versão, referências, autor e resultado na issue, dentro da autoriza�
                         +-----------------------------------------+
                         |        Responsável pelo Produto         |
                         |      (Autoridade Final e Decisão)       |
-                        +----+-------------------------------+----+
-                             |                               |
-          +------------------+---------------+               | Convocação
-          |                                  |               | eventual
-          v                                  v               v
-+--------------------------+    +--------------------------+ |  +--------------------------+
-|         ChatGPT          |    |          Codex           | |  |          Claude          |
-|  (Orquestrador Canônico, |    |    (Revisão Técnica      | |  | (Orquestrador Secundário |
-|  Especificação e Riscos) |    |      Independente)       | |  |  Convocável e Riscos)    |
-+------------+-------------+    +-------------+------------+ |  +------------+-------------+
-             |                                ^              |               |
-             | Orienta                        | Auditoria    +---------------+ Orienta
-             | tarefas                        | independente                 | (se convocado)
-             v                                |                              v
-+---------------------------------------------+------------------------------------+
-|                             Camada de Execução                                    |
+                        +--------------------+--------------------+
+                                             |
+                                             v
+                        +-----------------------------------------+
+                        |                 Claude                  |
+                        |  (Orquestrador Principal, Especificação |
+                        |           e Análise de Riscos)          |
+                        +--------------------+--------------------+
+                                             | Orienta tarefas
+                                             v
++----------------------------------------------------------------------------------+
+|                             Camada de Execução                                   |
 |  +-------------------------------------+   +----------------------------------+  |
 |  |             Antigravity             |   |      Executores Complementares   |  |
 |  |        (Executor Principal;         |   |       e Revisores Auxiliares     |  |
@@ -159,7 +155,13 @@ Registrar versão, referências, autor e resultado na issue, dentro da autoriza�
 |  +------------------+------------------+   +------------------+---------------+  |
 |                     ^                                         |                  |
 |                     +--- repassa arquivos, hashes e testes ---+                  |
-+----------------------------------------------------------------------------------+
++---------------------------------------------+------------------------------------+
+                                              ^
+                                              | Auditoria independente (por convocação)
+                        +---------------------+-------------------+
+                        |         Codex (ChatGPT/Codex)           |
+                        |   Revisão Técnica Independente          |
+                        +-----------------------------------------+
 ```
 
 ### 2.1 Responsável pelo Produto (Humano / Autoridade Final)
@@ -168,13 +170,14 @@ Registrar versão, referências, autor e resultado na issue, dentro da autoriza�
 - Concede autorização prévia e delimitada para cada intervenção no código, no banco ou no repositório.
 - Arbitra eventuais divergências de especificação ou de arquitetura.
 
-### 2.2 ChatGPT (Especificação, Orquestração e Análise de Riscos)
+### 2.2 Claude (Orquestrador Principal, Especificação e Análise de Riscos)
+- **Decisão do responsável em 26/11/2026:** o Claude é o **orquestrador principal** do projeto, sem prazo temporário e sem retorno automático da orquestração a outro agente.
 - Atua no planejamento de alto nível, refinamento de requisitos e desenho de contratos técnicos.
-- Elabora especificações estruturadas, matrizes de casos de ensaio e prompts operacionais para os executores.
+- Elabora especificações estruturadas, matrizes de casos de ensaio e prompts operacionais para os executores, cada um iniciado pelo cabeçalho que nomeia o agente responsável.
 - Realiza análise crítica de riscos antes de operações delicadas (ex.: concorrência, migrações de banco, ciclo de vida de dados).
 - Não presume acesso direto ou automático ao repositório local; opera com base no contexto transmitido pelo responsável ou em conexões explicitamente autorizadas.
-- Atua como o **orquestrador canônico** contínuo do projeto.
-- Quando houver orquestração secundária temporária convocada pelo responsável, o ChatGPT recebe a passagem formal de volta e revalida a continuidade da sprint.
+- A orquestração não concede novas permissões operacionais: toda ação externa e toda escrita no ambiente real continuam exigindo autorização expressa e delimitada do responsável (seções 1.3, 4 e 5).
+- Suas validações e pareceres constituem validação interna de projeto e não substituem a revisão técnica independente do Codex (seção 3, item 6).
 
 ### 2.3 Antigravity (Executor Principal de Implementação e Testes)
 - Opera no ambiente local de desenvolvimento (IDE / CLI do repositório).
@@ -184,18 +187,16 @@ Registrar versão, referências, autor e resultado na issue, dentro da autoriza�
 - Prepara o empacotamento de commits e documentação, sem publicá-los sem autorização.
 - **Decisão do responsável em 15/11/2026:** as conexões MCP do Antigravity operam com leitura e escrita. A exceção é exclusiva dele, não se estende a outros agentes ou interfaces e não dispensa a autorização expressa para operações em banco, laboratório ou piloto (seções 1, 4 e 5).
 
-### 2.4 Codex (Revisor Técnico Independente)
+### 2.4 Codex (Revisor Técnico Independente, por convocação)
 - Realiza auditoria e revisão técnica independente de diffs, implementações e transcripts de execução.
 - Inspeciona o código com olhar adversarial para identificar falhas de isolamento, vulnerabilidades de segurança, furos de concorrência e quebra de contratos.
 - Emite parecer formal objetivo: **Aprovado**, **Aceito com Ressalvas** ou **Rejeitado**.
 - **Independência Operacional:** o terminal usado não comprova nem invalida, por si só, a independência. O Codex deve delimitar o escopo, ler diretamente as fontes e evidências brutas pertinentes e emitir parecer próprio, sem tomar o resumo do executor como prova. Quando o responsável exigir sessão separada, preparar um prompt para essa sessão e não acionar o Codex internamente pelo executor.
+- **Decisão do responsável em 26/11/2026:** ChatGPT e Codex são tratados, na prática, como o mesmo ator. O Codex passa a revisor técnico independente **acionado por convocação** (casos selecionados e os casos de revisão obrigatória da seção 3, item 1), sem exercer a orquestração principal.
+- **Independência reduzida a registrar:** o Codex exerceu a orquestração do projeto até 20/11/2026, quando o Claude assumiu a orquestração temporária (tornada definitiva pela decisão de 26/11/2026); em frentes que ele especificou ou decidiu materialmente, aplica-se a seção 3, item 6, e a independência de sua revisão deve ser avaliada e registrada caso a caso.
 
-### 2.5 Claude (Orquestrador Secundário Convocável e Análise de Riscos)
-- Claude atua como **orquestrador secundário** somente quando expressamente convocado pelo responsável pelo produto.
-- A convocação pode ocorrer por contingência, capacidade ou adequação técnica fundamentada para tarefa especializada.
-- Realiza análises estruturadas de risco e refinamento de escopo no mesmo rigor técnico exigido do orquestrador canônico.
-- A convocação não concede novas permissões operacionais; ao término de sua atuação, deve emitir passagem formal de contexto para a retomada do orquestrador canônico.
-- Suas revisões ou pareceres constituem validação interna de projeto e não substituem a revisão técnica independente do Codex.
+### 2.5 (Reservada — antigo orquestrador secundário convocável)
+- Seção reservada para preservar a numeração e os vínculos. Em 26/11/2026 o responsável tornou o Claude orquestrador principal (seção 2.2), e a figura do orquestrador secundário convocável deixou de existir. O texto anterior permanece na versão 1.4, preservada em [`docs/operacao/versoes/2026-11-26-AGENTS-v1.4.md`](docs/operacao/versoes/2026-11-26-AGENTS-v1.4.md).
 
 ### 2.6 Claude Code — Interface para Execução Complementar e Revisão Auxiliar
 - O Claude Code é uma **interface operacional de terminal/CLI**, não constituindo, por si só, identidade de agente ou garantia de modelo subjacente.
@@ -224,16 +225,10 @@ Registrar versão, referências, autor e resultado na issue, dentro da autoriza�
   6. Os riscos, custos contextuais e autorizações operacionais que seriam necessárias.
 - **Poder decisório:** a sugestão não implica convocação automática nem concessão de autorizações. A decisão de convocar, manter o executor atual ou mudar de abordagem é prerrogativa exclusiva do responsável pelo produto.
 
-### 2.8 Troca experimental de funções na Sprint 3
-**Decisão do responsável em 15/11/2026.** Durante a Sprint 3 (início em 16/11/2026), em caráter experimental:
-
-- A **revisão técnica independente** (seção 2.4 e seção 3) é exercida por **Claude, operando via Claude Code**, em sessão aberta pelo responsável com prompt próprio, lendo diretamente as fontes e evidências brutas.
-- O **Codex** exerce a **execução complementar e a revisão auxiliar** descritas na seção 2.6, sob as mesmas regras de escopo, checkout e entrega ao Antigravity.
-- O **ChatGPT** permanece como orquestrador canônico e o **Antigravity** como executor principal.
-- Enquanto esta seção vigorar, as menções ao Codex como revisor técnico independente nas seções 1.7, 2.4, 2.5, 2.6, 2.7 e 3 leem-se como referidas ao revisor designado nesta seção, e as menções da seção 2.6 ao agente que opera via Claude Code leem-se como referidas ao Codex.
-- **Independência preservada:** a seção 3, item 6, continua valendo integralmente. O Claude não atua como revisor independente em frente de cuja especificação, implementação ou decisão técnica material tenha participado, ainda que em outra sessão ou com outro modelo. Por isso, as frentes **B1 (issues #28 e #29) e B2 (pacote SQL do planejamento)** permanecem com revisão técnica independente do Codex, que nelas não acumula execução complementar. Se o Claude for convocado como orquestrador secundário (seção 2.5) em uma frente, não a revisa como independente.
-- **Sem novas permissões:** a troca não concede autorização para arquivos, banco de dados, Git ou publicação, nem transfere autorizações antigas.
-- **Avaliação e reversão:** ao encerrar a Sprint 3, o responsável avalia o resultado por frente revisada, considerando defeitos confirmados encontrados, defeitos que escaparam à revisão e foram achados depois, e rodadas até o aceite. Sem decisão expressa de manutenção registrada no acompanhamento da sprint, esta seção perde efeito no encerramento da Sprint 3 e as seções 2.4 e 2.6 voltam a valer como escritas.
+### 2.8 Troca experimental de funções na Sprint 3 — REVOGADA
+- **Revogada pelo responsável em 26/11/2026**, antes do encerramento previsto da Sprint 3. Com o Claude como orquestrador principal (seção 2.2), ele não atua como revisor técnico independente de frente que orquestrou (seção 3, item 6). Voltam a valer as seções 2.4 e 2.6 como escritas, e as menções ao Codex como revisor técnico independente nas seções 1.7, 2.4, 2.6, 2.7 e 3 deixam de ter a leitura alternativa da versão 1.4.
+- A seção não concedeu nem concede permissões. A avaliação prevista para o encerramento da Sprint 3 deixa de ser exigida por esta seção; os dados disponíveis (por exemplo, o defeito P2 da issue #89 achado pela revisão do Codex depois da validação interna) podem ser registrados no ACOMPANHAMENTO da sprint a critério do responsável.
+- O texto integral da seção está preservado na versão 1.4.
 
 ---
 
@@ -241,7 +236,7 @@ Registrar versão, referências, autor e resultado na issue, dentro da autoriza�
 
 A revisão técnica independente pelo Codex não é obrigatória para todo e qualquer fechamento formal de gate, sendo calibrada proporcionalmente ao risco e ao impacto das alterações para manter a eficiência operacional sem comprometer a segurança do produto:
 
-1. **Revisão Obrigatória:** mudanças críticas de segurança, isolamento e autorização multi-tenant (`church_id`), funções RPC com `SECURITY DEFINER` ou parâmetros sensíveis, operações concorrentes de escrita (locks, idempotência, recibos transacionais) e integridade estrutural de dados no banco.
+1. **Revisão Obrigatória:** mudanças críticas de segurança, isolamento e autorização multi-tenant (`church_id`), funções RPC com `SECURITY DEFINER` ou parâmetros sensíveis, operações concorrentes de escrita (locks, idempotência, recibos transacionais) e integridade estrutural de dados no banco. **Indisponibilidade do Codex (decisão do responsável em 26/11/2026):** a revisão continua obrigatória, mas a espera pelo Codex bloqueia apenas o **merge e o aceite final** dos itens deste item 1; não impede implementação, abertura de PR, validação interna e aceite dos demais itens, e o projeto não deve aguardar o Codex para seguir com o restante.
 2. **Revisão Proporcional ao Risco:** em outras entregas de frontend ou lógica de negócio, a necessidade de revisão técnica é avaliada pelo risco e pela complexidade do componente modificado.
 3. **Isenção de Revisão Automática:** alterações puramente documentais, ajustes cosméticos de CSS, refinamentos visuais de interface ou correções triviais de redação não exigem a convocação do Codex.
 4. **Estabilidade de Gates Aprovados:** marcos e gates aprovados formalmente pelo responsável não devem ser reabertos sem um fato técnico novo, evidência concreta de falha ou regressão comprovada em testes.
