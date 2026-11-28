@@ -219,6 +219,19 @@ export default function AdminView({ onBack, initialTab = 'event_types' } = {}) {
   const [selectedLiturgyLeader, setSelectedLiturgyLeader] = useState(() => (targetEventForLiturgy?.liturgyLeaderId || ''));
   const [liturgySuccess, setLiturgySuccess] = useState('');
   const [liturgyError, setLiturgyError] = useState('');
+  // #101: o administrador escolheu algo no seletor (liturgyTouched). O líder que ele viu ao escolher fica em
+  // liturgyLeaderSeen. Se o líder atual mudar depois disso, o salvamento pede confirmação antes de sobrescrever.
+  const [liturgyTouched, setLiturgyTouched] = useState(false);
+  const [liturgyLeaderSeen, setLiturgyLeaderSeen] = useState(() => (targetEventForLiturgy?.liturgyLeaderId || ''));
+  const [liturgyStaleLeader, setLiturgyStaleLeader] = useState(null);
+  React.useEffect(() => {
+    // Sem escolha do administrador, o seletor acompanha o líder atual dos dados recarregados.
+    if (!liturgyTouched) {
+      const current = targetEventForLiturgy?.liturgyLeaderId || '';
+      setLiturgyLeaderSeen(current);
+      setSelectedLiturgyLeader(current);
+    }
+  }, [targetEventForLiturgy?.id, targetEventForLiturgy?.liturgyLeaderId, liturgyTouched]);
   const [isDesignatingLeader, setIsDesignatingLeader] = useState(false);
 
   // Histórico de atividades conhecidas da igreja para integridade cadastral de motivos (Issue #26)
@@ -834,6 +847,12 @@ export default function AdminView({ onBack, initialTab = 'event_types' } = {}) {
       setLiturgyError('Nenhum evento selecionado para designação.');
       return;
     }
+    // #101: se o líder atual mudou desde a última escolha do administrador, pede confirmação antes de sobrescrever.
+    const currentLeaderId = targetEventForLiturgy.liturgyLeaderId || '';
+    if (liturgyTouched && currentLeaderId !== liturgyLeaderSeen && liturgyStaleLeader !== currentLeaderId) {
+      setLiturgyStaleLeader(currentLeaderId);
+      return;
+    }
     setIsDesignatingLeader(true);
     try {
       const res = await designateLiturgyLeader(
@@ -844,6 +863,8 @@ export default function AdminView({ onBack, initialTab = 'event_types' } = {}) {
       if (res && res.success) {
         const memberName = members.find(m => m.id === selectedLiturgyLeader)?.name || 'Membro';
         setLiturgySuccess(`Liderança da Liturgia do evento '${targetEventForLiturgy.title || 'Culto'}' atualizada com sucesso para ${memberName}!`);
+        setLiturgyTouched(false);
+        setLiturgyStaleLeader(null);
         setTimeout(() => setLiturgySuccess(''), 4000);
       } else {
         setLiturgyError(res?.error || 'Falha ao designar liderança da liturgia.');
@@ -1145,6 +1166,11 @@ export default function AdminView({ onBack, initialTab = 'event_types' } = {}) {
               <AlertCircle size={16} /> {liturgyError}
             </div>
           )}
+          {liturgyStaleLeader !== null && (
+            <div className="error-banner" role="alert" style={{ marginBottom: '1rem', color: '#b45309' }}>
+              <AlertCircle size={16} /> O líder atual do evento mudou para {members.find(m => m.id === liturgyStaleLeader)?.name || 'outro membro'} desde a sua escolha. Clique de novo em "Salvar Designação do Culto" para sobrescrever, ou recarregue a tela antes.
+            </div>
+          )}
 
           {events.length === 0 ? (
             <div style={{ padding: '1.25rem', background: 'var(--bg-inset)', border: '1px solid var(--border-subtle)', borderRadius: '8px', color: 'var(--text-secondary)' }}>
@@ -1161,7 +1187,12 @@ export default function AdminView({ onBack, initialTab = 'event_types' } = {}) {
                   onChange={e => {
                     setSelectedEventIdForLiturgy(e.target.value);
                     const ev = events.find(item => item.id === e.target.value);
-                    if (ev) setSelectedLiturgyLeader(ev.liturgyLeaderId);
+                    if (ev) {
+                      setSelectedLiturgyLeader(ev.liturgyLeaderId);
+                      setLiturgyLeaderSeen(ev.liturgyLeaderId || '');
+                    }
+                    setLiturgyTouched(true);
+                    setLiturgyStaleLeader(null);
                   }}
                   disabled={isControlsDisabled}
                 >
@@ -1184,7 +1215,11 @@ export default function AdminView({ onBack, initialTab = 'event_types' } = {}) {
                     id="select-admin-liturgy-leader"
                     className="form-select"
                     value={selectedLiturgyLeader}
-                    onChange={e => setSelectedLiturgyLeader(e.target.value)}
+                    onChange={e => {
+                      setSelectedLiturgyLeader(e.target.value);
+                      setLiturgyTouched(true);
+                      setLiturgyStaleLeader(null);
+                    }}
                     disabled={isControlsDisabled}
                   >
                     {members.map(m => (
