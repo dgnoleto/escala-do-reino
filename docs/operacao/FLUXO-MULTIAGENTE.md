@@ -1,6 +1,6 @@
 # Escala do Reino — Fluxo Operacional Multiagente
 
-Versão vigente: **1.5** — evolução focal em **26/11/2026** (decisões do responsável de 26/11/2026: Claude como orquestrador principal; Codex revisor técnico independente por convocação; revogação da designação temporária da Sprint 3, conforme [AGENTS.md, seções 2.2, 2.4 e 2.8](../../AGENTS.md)) da versão 1.4, preservada em [`versoes/2026-11-26-FLUXO-MULTIAGENTE-v1.4.md`](versoes/2026-11-26-FLUXO-MULTIAGENTE-v1.4.md). O baseline anterior à primeira numeração permanece no [acervo](versoes/README.md). Entrada normativa: [AGENTS.md](../../AGENTS.md).
+Versão vigente: **1.5.1** — ajuste focal em **27/11/2026** (decisão do responsável de 27/11/2026: a Etapa 1 separa autoridade sobre o escopo, que cabe ao responsável, da proposta de Claude como orquestrador principal; ver também a nota de índice em [`versoes/README.md`](versoes/README.md)). Base anterior: versão 1.5 de 26/11/2026 (decisões do responsável de 26/11/2026: Claude como orquestrador principal; Codex revisor técnico independente por convocação; revogação da designação temporária da Sprint 3, conforme [AGENTS.md, seções 2.2, 2.4 e 2.8](../../AGENTS.md)) da versão 1.4, preservada em [`versoes/2026-11-26-FLUXO-MULTIAGENTE-v1.4.md`](versoes/2026-11-26-FLUXO-MULTIAGENTE-v1.4.md). O baseline anterior à primeira numeração permanece no [acervo](versoes/README.md). Entrada normativa: [AGENTS.md](../../AGENTS.md).
 
 Este documento descreve o ciclo de trabalho recomendado para a colaboração entre o **responsável pelo produto**, **Claude** (orquestrador principal), **Antigravity** (executor principal), executores complementares autorizados e **Codex** (revisor técnico independente, por convocação), detalhando as etapas de desenvolvimento, critérios de eficiência e o protocolo para retomada segura de contexto.
 
@@ -31,7 +31,7 @@ Uma correção não segue diretamente para aceite: a verificação afetada deve 
 - **Antes da implementação e da auditoria:** aplicar o gate de paridade contratual de [AGENTS.md, seção 1.7](../../AGENTS.md#17-rastreabilidade-por-issue-e-paridade-contratual). Exigir especificação/delta e matriz por fonte de verdade; não avançar com divergência ou não verificação crítica. Registrar a paridade separadamente de auditoria, execução, homologação e autorização de publicação.
 
 ### Etapa 1: Definição Clara da Tarefa e Escopo
-- O responsável ou Claude (orquestrador principal) define a meta pontual, os limites operacionais, arquivos autorizados e critérios de aceitação.
+- O responsável define a meta pontual, os limites operacionais, os arquivos autorizados e os critérios de aceitação. Claude (orquestrador principal) propõe e detalha a meta e os critérios dentro desse escopo autorizado, sem ampliá-lo ([AGENTS.md, seções 1, 1.3 e 2.2](../../AGENTS.md)).
 - O escopo deve ser delimitado: tarefas focais produzem resultados mais rápidos, fáceis de auditar e livres de contaminação de contexto.
 - Na passagem existente, explicitar o resultado que encerra a tarefa, a verificação mínima e os limites, conforme [AGENTS.md, seção 1.3](../../AGENTS.md#13-decisão-autorização-e-contenção-de-escopo). Se surgir ferramental adicional, confrontá-lo com esse resultado antes de ampliar a implementação.
 
